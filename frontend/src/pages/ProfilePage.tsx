@@ -5,6 +5,7 @@ import { MapsLink } from "../components/MapsLink";
 import { offerKindLabel } from "../components/ProviderTrust";
 import { mediaSrc } from "../components/Attachments";
 import { api } from "../services/api";
+import { reverseGeocodeDetails } from "../services/geo";
 import { useAuth } from "../store/auth";
 import type { CategoryTree, OfferKind, ProviderProfile, User } from "../types";
 
@@ -17,6 +18,7 @@ export function ProfilePage() {
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showSavedPopup, setShowSavedPopup] = useState(false);
   const [categoryIds, setCategoryIds] = useState<number[]>([]);
   const [form, setForm] = useState({
     full_name: "",
@@ -63,6 +65,25 @@ export function ProfilePage() {
       latitude: user.latitude != null ? String(user.latitude) : "",
       longitude: user.longitude != null ? String(user.longitude) : "",
     });
+    if (
+      user.latitude != null &&
+      user.longitude != null &&
+      (!user.state || !user.city || !user.pincode)
+    ) {
+      void reverseGeocodeDetails(user.latitude, user.longitude).then((details) => {
+        if (!details) return;
+        setForm((f) => ({
+          ...f,
+          city: f.city || details.city?.trim() || "",
+          state: f.state || details.state?.trim() || "",
+          pincode: f.pincode || details.pincode?.trim() || "",
+          location_label:
+            f.location_label ||
+            details.location_label?.trim() ||
+            f.location_label,
+        }));
+      });
+    }
     if (isProvider) {
       const [p, cats] = await Promise.all([
         api.get<ProviderProfile>("/providers/me"),
@@ -97,15 +118,35 @@ export function ProfilePage() {
       setError("Geolocation not supported on this device");
       return;
     }
+    setNote("Detecting location…");
+    setError("");
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
         setForm((f) => ({
           ...f,
-          latitude: String(pos.coords.latitude),
-          longitude: String(pos.coords.longitude),
-          location_label: f.location_label || "Detected from device",
+          latitude: String(lat),
+          longitude: String(lng),
         }));
-        setNote("Coordinates updated from device");
+        setNote("Resolving place name…");
+        void reverseGeocodeDetails(lat, lng).then((details) => {
+          const coordsText = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+          const cityName = details?.city?.trim() || "";
+          const place =
+            details?.location_label?.trim() ||
+            (cityName ? `${cityName} · ${coordsText}` : coordsText);
+          setForm((f) => ({
+            ...f,
+            latitude: String(lat),
+            longitude: String(lng),
+            location_label: place,
+            city: cityName || f.city,
+            state: details?.state?.trim() || f.state,
+            pincode: details?.pincode?.trim() || f.pincode,
+          }));
+          setNote(`Location updated · ${place}`);
+        });
       },
       () => setError("Could not detect location"),
       { enableHighAccuracy: true, timeout: 12000 },
@@ -131,7 +172,8 @@ export function ProfilePage() {
         longitude: form.longitude ? Number(form.longitude) : null,
       });
       if (token) setSession(token, data);
-      setNote("Profile saved");
+      setNote("");
+      setShowSavedPopup(true);
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
@@ -331,14 +373,52 @@ export function ProfilePage() {
             label={form.location_label || undefined}
           />
           <div className="nav-actions" style={{ marginTop: "0.75rem" }}>
-            <button className="btn secondary" type="button" onClick={detectLocation}>
+            <button className="btn secondary btn-with-icon" type="button" onClick={detectLocation}>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                aria-hidden="true"
+              >
+                <path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" />
+                <circle cx="12" cy="10" r="2.5" />
+              </svg>
               Detect location
             </button>
             <button className="btn" type="submit" disabled={busy}>
-              Save contact &amp; address
+              Save
             </button>
           </div>
         </form>
+
+        {showSavedPopup && (
+          <div
+            className="modal-backdrop"
+            role="presentation"
+            onClick={() => setShowSavedPopup(false)}
+          >
+            <div
+              className="modal-dialog card"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="profile-saved-title"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 id="profile-saved-title" style={{ margin: "0 0 0.5rem" }}>
+                Profile Updated Successfully
+              </h3>
+              <p className="muted" style={{ margin: "0 0 1rem" }}>
+                Your contact and address details have been saved.
+              </p>
+              <button className="btn" type="button" onClick={() => setShowSavedPopup(false)}>
+                OK
+              </button>
+            </div>
+          </div>
+        )}
 
         {isProvider && (
           <>

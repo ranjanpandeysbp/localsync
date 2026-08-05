@@ -13,7 +13,7 @@ from app.db.models import OfferKind, ProviderProfile, User, UserRole, Verificati
 from app.db.session import get_db
 from app.schemas import Token, UserLogin, UserLocationUpdate, UserOut, UserProfileUpdate
 from app.services.geo import make_point, normalize_lat_lon
-from app.services.maps import google_maps_url
+from app.services.maps import google_maps_url, reverse_geocode_details
 from app.services.provider_catalog import set_provider_categories
 from app.services.uploads import media_url, save_upload_file
 
@@ -107,6 +107,7 @@ async def register(
     longitude: float | None = Form(None),
     location_label: str | None = Form(None),
     pincode: str | None = Form(None),
+    city: str | None = Form(None),
     gst_number: str | None = Form(None),
     business_name: str | None = Form(None),
     description: str | None = Form(None),
@@ -174,6 +175,20 @@ async def register(
     if lat is not None and lon is not None:
         lon, lat = normalize_lat_lon(lon, lat)
 
+    label = (location_label or "").strip() or None
+    if label and label.casefold() in {"detected from device", "current location"}:
+        label = None
+    city_norm = (city or "").strip() or None
+    pin_norm = (pincode or "").strip() or None
+    if lat is not None and lon is not None and (not label or not city_norm or not pin_norm):
+        details = reverse_geocode_details(lat, lon)
+        if not label:
+            label = details.location_label
+        if not city_norm:
+            city_norm = details.city
+        if not pin_norm:
+            pin_norm = details.pincode
+
     user = User(
         role=role,
         phone_number=phone_number,
@@ -183,16 +198,20 @@ async def register(
         is_verified=role == UserRole.CONSUMER,
         latitude=lat,
         longitude=lon,
-        location_label=location_label,
-        pincode=pincode,
+        location_label=label,
+        city=city_norm,
+        pincode=pin_norm,
     )
     db.add(user)
     db.flush()
 
     if role == UserRole.PROVIDER:
+        from app.services.slugs import allocate_public_slug
+
         profile = ProviderProfile(
             user_id=user.id,
             business_name=biz_name,
+            public_slug=allocate_public_slug(db, biz_name),
             offer_kind=kind,
             description=about,
             offerings_detail=offerings,
@@ -279,6 +298,25 @@ def update_my_profile(
         lon, lat = normalize_lat_lon(current_user.longitude, current_user.latitude)
         current_user.longitude = lon
         current_user.latitude = lat
+
+    label = (current_user.location_label or "").strip() or None
+    if label and label.casefold() in {"detected from device", "current location"}:
+        label = None
+        current_user.location_label = None
+    if (
+        current_user.latitude is not None
+        and current_user.longitude is not None
+        and ("latitude" in data or "longitude" in data or "location_label" in data)
+    ):
+        details = reverse_geocode_details(current_user.latitude, current_user.longitude)
+        if not label:
+            current_user.location_label = details.location_label
+        if not (current_user.city or "").strip() and details.city:
+            current_user.city = details.city
+        if not (current_user.state or "").strip() and details.state:
+            current_user.state = details.state
+        if not (current_user.pincode or "").strip() and details.pincode:
+            current_user.pincode = details.pincode
 
     if "latitude" in data or "longitude" in data:
         _sync_provider_location(db, current_user)

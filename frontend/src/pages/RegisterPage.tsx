@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { CategoryMultiSelect } from "../components/CategoryMultiSelect";
 import { offerKindLabel } from "../components/ProviderTrust";
 import { api, apiErrorMessage } from "../services/api";
+import { reverseGeocodeDetails } from "../services/geo";
 import { useAuth } from "../store/auth";
 import type { CategoryTree, OfferKind, UserRole } from "../types";
 
@@ -22,6 +23,7 @@ export function RegisterPage() {
     email: "",
     password: "",
     confirm_password: "",
+    city: "",
     pincode: "",
     gst_number: "",
     offer_kind: "BOTH" as OfferKind,
@@ -48,25 +50,41 @@ export function RegisterPage() {
     setLocStatus(message);
   }
 
-  function onLocationOk(lat: number, lng: number) {
-    setCoords({
-      latitude: lat,
-      longitude: lng,
-      label: "Detected from device",
-    });
-    setLocStatus(`Location captured · ${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+  async function onLocationOk(lat: number, lng: number) {
+    const coordsText = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+    setCoords({ latitude: lat, longitude: lng, label: "" });
+    setLocStatus(`Resolving place name · ${coordsText}`);
+    const details = await reverseGeocodeDetails(lat, lng);
+    const cityName = details?.city?.trim() || "";
+    const label =
+      details?.location_label?.trim() ||
+      (cityName ? `${cityName} · ${coordsText}` : coordsText);
+    setCoords({ latitude: lat, longitude: lng, label });
+    setForm((f) => ({
+      ...f,
+      city: cityName || f.city,
+      pincode: details?.pincode?.trim() || f.pincode,
+    }));
+    setLocStatus(label);
   }
 
-  useEffect(() => {
+  function requestLocation() {
+    setLocStatus("Detecting location…");
     if (!navigator.geolocation) {
       onLocationFail("Location unavailable — enter your pincode below.");
       return;
     }
     navigator.geolocation.getCurrentPosition(
-      (pos) => onLocationOk(pos.coords.latitude, pos.coords.longitude),
+      (pos) => {
+        void onLocationOk(pos.coords.latitude, pos.coords.longitude);
+      },
       () => onLocationFail("Could not detect location — enter your pincode below."),
       { enableHighAccuracy: true, timeout: 12000 },
     );
+  }
+
+  useEffect(() => {
+    requestLocation();
   }, []);
 
   useEffect(() => {
@@ -87,13 +105,19 @@ export function RegisterPage() {
         setBusy(false);
         return;
       }
-      if (needsPincode) {
-        const pin = form.pincode.trim();
-        if (!/^\d{6}$/.test(pin)) {
-          setError("Enter a valid 6-digit pincode so we can match you nearby");
-          setBusy(false);
-          return;
-        }
+      if (!form.city.trim()) {
+        setError("Enter your city / locality");
+        setBusy(false);
+        return;
+      }
+      if (!/^\d{6}$/.test(form.pincode.trim())) {
+        setError(
+          needsPincode
+            ? "Enter a valid 6-digit pincode so we can match you nearby"
+            : "Enter a valid 6-digit pincode",
+        );
+        setBusy(false);
+        return;
       }
       if (isProvider && !form.email.trim()) {
         setError("Email is required for provider registration");
@@ -130,6 +154,7 @@ export function RegisterPage() {
       if (coords.latitude != null) body.append("latitude", String(coords.latitude));
       if (coords.longitude != null) body.append("longitude", String(coords.longitude));
       if (coords.label) body.append("location_label", coords.label);
+      if (form.city.trim()) body.append("city", form.city.trim());
       if (form.pincode.trim()) body.append("pincode", form.pincode.trim());
       if (isProvider) {
         body.append("business_name", form.business_name.trim() || form.full_name.trim());
@@ -160,6 +185,9 @@ export function RegisterPage() {
   if (providerPending) {
     return (
       <div className="auth-wrap">
+        <Link to="/" className="auth-home-link" aria-label="Back to home">
+          <HomeIcon />
+        </Link>
         <div className="card auth-card" style={{ maxWidth: 520 }}>
           <h1 className="brand">
             <Link to="/">LocalSync</Link>
@@ -168,9 +196,6 @@ export function RegisterPage() {
           <p>{PROVIDER_PENDING_MSG}</p>
           <p className="muted">You will be able to sign in after an admin approves your account.</p>
           <div className="nav-actions" style={{ marginTop: "1.25rem" }}>
-            <Link className="btn" to="/">
-              Back to landing
-            </Link>
             <Link className="btn secondary" to="/login">
               Sign in later
             </Link>
@@ -181,11 +206,11 @@ export function RegisterPage() {
   }
 
   return (
-    <div className={`auth-wrap ${isProvider ? "auth-wrap-wide" : ""}`}>
-      <form
-        className={`card auth-card ${isProvider ? "auth-card-wide" : ""}`}
-        onSubmit={onSubmit}
-      >
+    <div className="auth-wrap auth-wrap-wide">
+      <Link to="/" className="auth-home-link" aria-label="Back to home">
+        <HomeIcon />
+      </Link>
+      <form className="card auth-card auth-card-wide" onSubmit={onSubmit}>
         <div className="register-header">
           <h1 className="brand">
             <Link to="/">Join LocalSync</Link>
@@ -197,7 +222,7 @@ export function RegisterPage() {
           </p>
         </div>
 
-        <div className="field" style={{ maxWidth: isProvider ? 320 : undefined }}>
+        <div className="field" style={{ maxWidth: 320 }}>
           <label>I am a</label>
           <select
             value={role}
@@ -213,115 +238,192 @@ export function RegisterPage() {
         </div>
 
         <div className={isProvider ? "register-grid" : undefined}>
-          <section className={isProvider ? "register-section" : undefined}>
-            {isProvider && <h2>Account details</h2>}
-            <div className="field">
-              <label>Full name</label>
-              <input
-                required
-                value={form.full_name}
-                onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-              />
-            </div>
-            {isProvider && (
+          <section className="register-section">
+            <h2>Account details</h2>
+            <div className={isProvider ? undefined : "grid grid-2"}>
               <div className="field">
-                <label>Business / shop name</label>
+                <label>Full name</label>
                 <input
                   required
-                  value={form.business_name}
-                  onChange={(e) => setForm({ ...form, business_name: e.target.value })}
-                  placeholder="Shown on your public page"
+                  value={form.full_name}
+                  onChange={(e) => setForm({ ...form, full_name: e.target.value })}
                 />
               </div>
-            )}
-            <div className="field">
-              <label>Mobile number</label>
-              <input
-                required
-                inputMode="tel"
-                value={form.phone_number}
-                onChange={(e) => setForm({ ...form, phone_number: e.target.value })}
-                placeholder="10-digit mobile"
-              />
-            </div>
-            <div className="field">
-              <label>Email{isProvider ? "" : " (optional)"}</label>
-              <input
-                type="email"
-                required={isProvider}
-                value={form.email}
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
-                placeholder="you@example.com"
-              />
               {isProvider && (
-                <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
-                  Required so we can email you within 24 hours about approval.
-                </p>
+                <div className="field">
+                  <label>Business / shop name</label>
+                  <input
+                    required
+                    value={form.business_name}
+                    onChange={(e) => setForm({ ...form, business_name: e.target.value })}
+                    placeholder="Shown on your public page"
+                  />
+                </div>
               )}
-            </div>
-            <div className="grid grid-2">
               <div className="field">
-                <label>Password</label>
+                <label>Mobile number</label>
                 <input
-                  type="password"
                   required
-                  minLength={6}
-                  value={form.password}
-                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  inputMode="tel"
+                  value={form.phone_number}
+                  onChange={(e) => setForm({ ...form, phone_number: e.target.value })}
+                  placeholder="10-digit mobile"
                 />
               </div>
-              <div className="field">
-                <label>Confirm password</label>
-                <input
-                  type="password"
-                  required
-                  minLength={6}
-                  value={form.confirm_password}
-                  onChange={(e) => setForm({ ...form, confirm_password: e.target.value })}
-                />
-              </div>
-            </div>
-            <div className="field">
-              <label>Location</label>
-              <p className="muted" style={{ margin: 0 }}>
-                {locStatus}
-              </p>
-              <button
-                className="btn secondary"
-                type="button"
-                style={{ marginTop: "0.5rem" }}
-                onClick={() => {
-                  setLocStatus("Detecting location…");
-                  if (!navigator.geolocation) {
-                    onLocationFail("Location unavailable — enter your pincode below.");
-                    return;
-                  }
-                  navigator.geolocation.getCurrentPosition(
-                    (pos) => onLocationOk(pos.coords.latitude, pos.coords.longitude),
-                    () => onLocationFail("Could not detect location — enter your pincode below."),
-                    { enableHighAccuracy: true, timeout: 12000 },
-                  );
-                }}
+              <div
+                className="field"
+                style={!isProvider ? { gridColumn: "1 / -1" } : undefined}
               >
-                Retry location
-              </button>
-            </div>
-            {needsPincode && (
-              <div className="field">
-                <label>Pincode</label>
+                <label>Email{isProvider ? "" : " (optional)"}</label>
                 <input
-                  inputMode="numeric"
-                  pattern="\d{6}"
-                  maxLength={6}
-                  required
-                  value={form.pincode}
-                  onChange={(e) =>
-                    setForm({ ...form, pincode: e.target.value.replace(/\D/g, "").slice(0, 6) })
-                  }
-                  placeholder="6-digit pincode"
+                  type="email"
+                  required={isProvider}
+                  value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  placeholder="you@example.com"
                 />
+                {isProvider && (
+                  <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
+                    Required so we can email you within 24 hours about approval.
+                  </p>
+                )}
               </div>
-            )}
+              {isProvider ? (
+                <div className="grid grid-2">
+                  <div className="field">
+                    <label>Password</label>
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      value={form.password}
+                      onChange={(e) => setForm({ ...form, password: e.target.value })}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Confirm password</label>
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      value={form.confirm_password}
+                      onChange={(e) => setForm({ ...form, confirm_password: e.target.value })}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="field">
+                    <label>Password</label>
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      value={form.password}
+                      onChange={(e) => setForm({ ...form, password: e.target.value })}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Confirm password</label>
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      value={form.confirm_password}
+                      onChange={(e) => setForm({ ...form, confirm_password: e.target.value })}
+                    />
+                  </div>
+                </>
+              )}
+              {isProvider ? (
+                <div className="grid grid-2">
+                  <div className="field">
+                    <label>City / locality</label>
+                    <input
+                      required
+                      value={form.city}
+                      onChange={(e) => setForm({ ...form, city: e.target.value })}
+                      placeholder="e.g. Indiranagar"
+                    />
+                    <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
+                      Auto-filled from GPS — edit if needed.
+                    </p>
+                  </div>
+                  <div className="field">
+                    <label>Pincode</label>
+                    <input
+                      required
+                      inputMode="numeric"
+                      pattern="\d{6}"
+                      maxLength={6}
+                      value={form.pincode}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          pincode: e.target.value.replace(/\D/g, "").slice(0, 6),
+                        })
+                      }
+                      placeholder="6-digit pincode"
+                    />
+                    <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
+                      Auto-filled from GPS — edit if needed.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="field">
+                    <label>City / locality</label>
+                    <input
+                      required
+                      value={form.city}
+                      onChange={(e) => setForm({ ...form, city: e.target.value })}
+                      placeholder="e.g. Indiranagar"
+                    />
+                    <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
+                      Auto-filled from GPS — edit if needed.
+                    </p>
+                  </div>
+                  <div className="field">
+                    <label>Pincode</label>
+                    <input
+                      required
+                      inputMode="numeric"
+                      pattern="\d{6}"
+                      maxLength={6}
+                      value={form.pincode}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          pincode: e.target.value.replace(/\D/g, "").slice(0, 6),
+                        })
+                      }
+                      placeholder="6-digit pincode"
+                    />
+                    <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
+                      Auto-filled from GPS — edit if needed.
+                    </p>
+                  </div>
+                </>
+              )}
+              <div
+                className="field"
+                style={!isProvider ? { gridColumn: "1 / -1" } : undefined}
+              >
+                <label>Location</label>
+                <p className="muted" style={{ margin: 0 }}>
+                  {locStatus}
+                </p>
+                <button
+                  className="btn secondary"
+                  type="button"
+                  style={{ marginTop: "0.5rem" }}
+                  onClick={requestLocation}
+                >
+                  Retry location
+                </button>
+              </div>
+            </div>
           </section>
 
           {isProvider && (
@@ -420,12 +522,33 @@ export function RegisterPage() {
             {busy ? "Creating…" : "Create account"}
           </button>
           <p className="muted" style={{ margin: 0 }}>
-            Already registered? <Link to="/login">Sign in</Link>
-            {" · "}
-            <Link to="/">Back to landing</Link>
+            Already registered?{" "}
+            <Link className="link-blue" to="/login">
+              Sign in
+            </Link>
           </p>
         </div>
       </form>
     </div>
+  );
+}
+
+function HomeIcon() {
+  return (
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 10.5 12 3l9 7.5" />
+      <path d="M5 10v10h14V10" />
+      <path d="M10 20v-6h4v6" />
+    </svg>
   );
 }

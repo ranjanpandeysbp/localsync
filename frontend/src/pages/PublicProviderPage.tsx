@@ -7,7 +7,7 @@ import { useAuth } from "../store/auth";
 import type { ProviderPublicProfile } from "../types";
 
 export function PublicProviderPage() {
-  const { userId } = useParams<{ userId: string }>();
+  const { slugOrId } = useParams<{ slugOrId: string }>();
   const { user, token } = useAuth();
   const [profile, setProfile] = useState<ProviderPublicProfile | null>(null);
   const [error, setError] = useState("");
@@ -15,11 +15,11 @@ export function PublicProviderPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!userId) return;
+    if (!slugOrId) return;
     setLoading(true);
     setError("");
     void api
-      .get<ProviderPublicProfile>(`/providers/public/${userId}`)
+      .get<ProviderPublicProfile>(`/providers/public/${slugOrId}`)
       .then((res) => setProfile(res.data))
       .catch((err: unknown) => {
         const msg =
@@ -29,7 +29,7 @@ export function PublicProviderPage() {
         setProfile(null);
       })
       .finally(() => setLoading(false));
-  }, [userId]);
+  }, [slugOrId]);
 
   const shareUrl =
     typeof window !== "undefined" && profile

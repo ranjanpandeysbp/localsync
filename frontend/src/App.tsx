@@ -30,7 +30,7 @@ export default function App() {
         </Route>
 
         <Route path="/" element={<HomeRedirect />} />
-        <Route path="/p/:userId" element={<PublicProviderPage />} />
+        <Route path="/p/:slugOrId" element={<PublicProviderPage />} />
 
         <Route element={<ProtectedRoute roles={["CONSUMER", "PROVIDER"]} />}>
           <Route path="/profile" element={<ProfilePage />} />

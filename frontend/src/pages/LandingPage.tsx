@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { MapsLink } from "../components/MapsLink";
 import { offerKindLabel } from "../components/ProviderTrust";
 import { api } from "../services/api";
+import { reverseGeocodeDetails } from "../services/geo";
+import { providerPublicPath } from "../utils/providerUrl";
 import type {
   CategoryTree,
   ProviderCatalogItem,
@@ -69,13 +71,29 @@ export function LandingPage() {
     setLoc((s) => ({ ...s, status: "locating" }));
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        const latitude = pos.coords.latitude;
+        const longitude = pos.coords.longitude;
         setLoc((s) => ({
           ...s,
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          label: "Current location",
+          latitude,
+          longitude,
+          label: "Resolving place name…",
           status: "ready",
         }));
+        void reverseGeocodeDetails(latitude, longitude).then((details) => {
+          const place =
+            details?.city?.trim() ||
+            details?.location_label?.split("·")[0]?.trim() ||
+            "Current location";
+          setLoc((s) => ({
+            ...s,
+            latitude,
+            longitude,
+            label: place,
+            pincode: details?.pincode?.trim() || s.pincode,
+            status: "ready",
+          }));
+        });
       },
       () => {
         setLoc((s) => ({
@@ -286,7 +304,7 @@ export function LandingPage() {
                 <div className="topbar" style={{ marginBottom: "0.35rem" }}>
                   <div>
                     <strong>
-                      <Link to={`/p/${p.user_id}`}>{p.business_name}</Link>
+                      <Link to={providerPublicPath(p)}>{p.business_name}</Link>
                     </strong>
                     <div className="muted">{p.full_name}</div>
                   </div>
@@ -302,7 +320,7 @@ export function LandingPage() {
                   <p className="muted">{p.offerings_detail || p.description}</p>
                 )}
                 <div className="landing-cta" style={{ marginTop: "0.85rem" }}>
-                  <Link className="btn" to={`/p/${p.user_id}`}>
+                  <Link className="btn" to={providerPublicPath(p)}>
                     View profile
                   </Link>
                 </div>
@@ -324,8 +342,9 @@ export function LandingPage() {
             <p className="muted" style={{ margin: "0.25rem 0 0" }}>
               {loc.status === "locating"
                 ? "Detecting GPS…"
-                : loc.label || "Location not set yet"}
-              {hasCoords ? ` · ${loc.latitude?.toFixed(4)}, ${loc.longitude?.toFixed(4)}` : ""}
+                : hasCoords
+                  ? `${loc.label || "Current location"} (${loc.latitude?.toFixed(4)}, ${loc.longitude?.toFixed(4)})`
+                  : loc.label || "Location not set yet"}
             </p>
           </div>
           <div className="landing-loc-actions">
@@ -409,7 +428,7 @@ export function LandingPage() {
                   <div className="topbar" style={{ marginBottom: "0.35rem" }}>
                     <div>
                       <strong>
-                        <Link to={`/p/${p.user_id}`}>{p.business_name}</Link>
+                        <Link to={providerPublicPath(p)}>{p.business_name}</Link>
                       </strong>
                       <div className="muted">{p.full_name}</div>
                     </div>
@@ -437,7 +456,7 @@ export function LandingPage() {
                     label={p.location_label || undefined}
                   />
                   <div className="landing-cta" style={{ marginTop: "0.85rem" }}>
-                    <Link className="btn" to={`/p/${p.user_id}`}>
+                    <Link className="btn" to={providerPublicPath(p)}>
                       View profile
                     </Link>
                     <Link className="btn secondary" to="/register">

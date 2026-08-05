@@ -152,6 +152,7 @@ class ProviderProfile(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False
     )
     business_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    public_slug: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True, index=True)
     # Legacy primary category kept for matching fallback; prefer provider_categories
     category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)

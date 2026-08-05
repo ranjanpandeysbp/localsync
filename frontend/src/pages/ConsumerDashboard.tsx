@@ -15,6 +15,7 @@ import { api } from "../services/api";
 import { useAuth } from "../store/auth";
 import { playQuoteBell } from "../services/sounds";
 import { uploadFiles } from "../services/uploads";
+import { providerPublicPath } from "../utils/providerUrl";
 import type {
   CategoryTree,
   Conversation,
@@ -340,7 +341,7 @@ export function ConsumerDashboard() {
                     />
                     <div>
                       <strong>
-                        <Link to={`/p/${p.user_id}`}>{p.business_name}</Link>
+                        <Link to={providerPublicPath(p)}>{p.business_name}</Link>
                       </strong>
                       <div className="muted">{p.full_name}</div>
                     </div>
@@ -371,7 +372,7 @@ export function ConsumerDashboard() {
                   label={p.location_label || undefined}
                 />
                 <div className="nav-actions" style={{ marginTop: "0.6rem" }}>
-                  <Link className="btn secondary" to={`/p/${p.user_id}`}>
+                  <Link className="btn secondary" to={providerPublicPath(p)}>
                     View profile
                   </Link>
                   {p.is_online ? (
@@ -553,7 +554,12 @@ export function ConsumerDashboard() {
 
       {tab === "requests" && (
         <div className="card">
-          <h2>My requests</h2>
+          <div className="page-heading-row">
+            <h2 style={{ margin: 0 }}>My requests</h2>
+            <Link className="btn" to="/consumer/post">
+              Create a Request
+            </Link>
+          </div>
           <div className="list">
             {requests.length === 0 && <p className="muted">No requests yet.</p>}
             {requests.map((r) => (

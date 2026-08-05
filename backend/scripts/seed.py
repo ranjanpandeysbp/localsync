@@ -127,6 +127,7 @@ def seed() -> None:
             profile = ProviderProfile(
                 user_id=provider.id,
                 business_name="QuickFix Plumbing",
+                public_slug="quickfix-plumbing",
                 category_id=plumbing.id if plumbing else (cat_ids[0] if cat_ids else None),
                 description="Trusted neighbourhood plumber",
                 offer_kind=OfferKind.SERVICE,
@@ -152,6 +153,8 @@ def seed() -> None:
                 db.query(ProviderProfile).filter(ProviderProfile.user_id == provider.id).first()
             )
             if profile:
+                if not profile.public_slug:
+                    profile.public_slug = "quickfix-plumbing"
                 if not profile.offerings_detail:
                     profile.offer_kind = OfferKind.SERVICE
                     profile.offerings_detail = (

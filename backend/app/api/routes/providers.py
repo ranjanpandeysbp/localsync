@@ -26,6 +26,11 @@ from app.schemas import (
 )
 from app.services.geo import get_lon_lat_from_profile, make_point, normalize_lat_lon
 from app.services.maps import google_maps_url
+from app.services.slugs import (
+    allocate_public_slug,
+    ensure_profile_public_slug,
+    public_url_path_for,
+)
 from app.services.provider_catalog import (
     provider_category_names,
     provider_matches_category,
@@ -49,10 +54,18 @@ def _to_out(db: Session, profile: ProviderProfile) -> ProviderProfileOut:
     cat_ids = [link.category_id for link in profile.category_links]
     if not cat_ids and profile.category_id:
         cat_ids = [profile.category_id]
+    if not profile.public_slug:
+        profile.public_slug = allocate_public_slug(
+            db, profile.business_name, exclude_profile_id=profile.id
+        )
+        db.commit()
+        db.refresh(profile)
     return ProviderProfileOut(
         id=profile.id,
         user_id=profile.user_id,
         business_name=profile.business_name,
+        public_slug=profile.public_slug,
+        public_url_path=public_url_path_for(profile),
         category_id=profile.category_id,
         category_ids=cat_ids,
         categories=provider_category_names(db, profile),
@@ -192,6 +205,8 @@ def _catalog_items(
                 user_id=user.id,
                 full_name=user.full_name,
                 business_name=profile.business_name,
+                public_slug=profile.public_slug,
+                public_url_path=public_url_path_for(profile),
                 category_id=profile.category_id,
                 category_name=category.name,
                 categories=names,
@@ -352,6 +367,8 @@ def public_search(
                 user_id=user.id,
                 full_name=user.full_name,
                 business_name=profile.business_name,
+                public_slug=profile.public_slug,
+                public_url_path=public_url_path_for(profile),
                 category_id=profile.category_id,
                 category_name=names[0] if names else None,
                 categories=names,
@@ -378,15 +395,25 @@ def public_search(
     return PublicSearchOut(query=query, categories=categories, providers=items)
 
 
-@router.get("/public/{provider_user_id}", response_model=ProviderPublicOut)
+@router.get("/public/{slug_or_id}", response_model=ProviderPublicOut)
 def public_provider_page(
-    provider_user_id: UUID,
+    slug_or_id: str,
     db: Session = Depends(get_db),
 ):
-    """Open public profile for an approved provider."""
-    profile = (
-        db.query(ProviderProfile).filter(ProviderProfile.user_id == provider_user_id).first()
-    )
+    """Open public profile for an approved provider by friendly slug or user id."""
+    profile = None
+    try:
+        user_uuid = UUID(slug_or_id)
+        profile = (
+            db.query(ProviderProfile).filter(ProviderProfile.user_id == user_uuid).first()
+        )
+    except ValueError:
+        profile = (
+            db.query(ProviderProfile)
+            .filter(ProviderProfile.public_slug == slug_or_id.lower())
+            .first()
+        )
+
     if not profile or profile.verification_status != VerificationStatus.APPROVED:
         raise HTTPException(status_code=404, detail="Provider not found")
     user = db.get(User, profile.user_id)
@@ -398,9 +425,15 @@ def public_provider_page(
         lat = user.latitude
         lon = user.longitude
 
+    if not profile.public_slug:
+        ensure_profile_public_slug(db, profile)
+        db.commit()
+        db.refresh(profile)
+
     return ProviderPublicOut(
         user_id=user.id,
         business_name=profile.business_name,
+        public_slug=profile.public_slug,
         full_name=user.full_name,
         description=profile.description,
         offerings_detail=profile.offerings_detail,
@@ -424,7 +457,7 @@ def public_provider_page(
         city=user.city,
         state=user.state,
         pincode=user.pincode,
-        public_url_path=f"/p/{user.id}",
+        public_url_path=public_url_path_for(profile),
     )
 
 
@@ -464,6 +497,13 @@ def update_my_profile(
 
     for key, value in data.items():
         setattr(profile, key, value)
+
+    if "business_name" in data and data["business_name"]:
+        profile.public_slug = allocate_public_slug(
+            db, profile.business_name, exclude_profile_id=profile.id
+        )
+    else:
+        ensure_profile_public_slug(db, profile)
 
     if category_ids is not None:
         if not category_ids:

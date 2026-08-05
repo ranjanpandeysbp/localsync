@@ -68,6 +68,8 @@ export interface ProviderProfile {
   id: string;
   user_id: string;
   business_name: string;
+  public_slug?: string | null;
+  public_url_path?: string | null;
   category_id: number | null;
   category_ids?: number[];
   categories?: string[];
@@ -101,6 +103,8 @@ export interface ProviderCatalogItem {
   user_id: string;
   full_name: string;
   business_name: string;
+  public_slug?: string | null;
+  public_url_path?: string | null;
   category_id: number | null;
   category_name: string | null;
   categories?: string[];
@@ -124,6 +128,7 @@ export interface ProviderCatalogItem {
 export interface ProviderPublicProfile {
   user_id: string;
   business_name: string;
+  public_slug?: string | null;
   full_name: string | null;
   description: string | null;
   offerings_detail: string | null;

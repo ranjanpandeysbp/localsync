@@ -10,9 +10,37 @@ from app.api.router import api_router
 from app.api.routes import ws
 from app.core.config import settings
 from app.db import models  # noqa: F401
-from app.db.session import Base, engine, ensure_postgis
+from app.db.session import Base, SessionLocal, engine, ensure_postgis
 from app.services.redis_pubsub import redis_pubsub
+from app.services.slugs import allocate_public_slug
 from app.services.uploads import ensure_upload_dir
+
+
+def _backfill_provider_public_slugs() -> None:
+    from app.db.models import ProviderProfile
+
+    db = SessionLocal()
+    try:
+        missing = (
+            db.query(ProviderProfile)
+            .filter(
+                (ProviderProfile.public_slug.is_(None))
+                | (ProviderProfile.public_slug == "")
+            )
+            .all()
+        )
+        for profile in missing:
+            profile.public_slug = allocate_public_slug(
+                db, profile.business_name, exclude_profile_id=profile.id
+            )
+        if missing:
+            db.commit()
+            print(f"[startup] backfilled public_slug for {len(missing)} provider(s)")
+    except Exception as exc:
+        db.rollback()
+        print(f"[startup] public_slug backfill failed: {exc}")
+    finally:
+        db.close()
 
 
 def _run_startup_migrations() -> None:
@@ -50,11 +78,22 @@ def _run_startup_migrations() -> None:
             "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS website_url VARCHAR(500)",
             "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS instagram_url VARCHAR(500)",
             "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS youtube_url VARCHAR(500)",
+            "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS public_slug VARCHAR(100)",
         ):
             try:
                 conn.execute(text(stmt))
             except Exception as exc:
                 print(f"[startup] skip: {stmt[:60]}… ({exc})")
+
+        try:
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_profiles_public_slug "
+                    "ON provider_profiles (public_slug) WHERE public_slug IS NOT NULL"
+                )
+            )
+        except Exception as exc:
+            print(f"[startup] public_slug index: {exc}")
 
         try:
             conn.execute(text("ALTER TABLE service_requests ALTER COLUMN request_location DROP NOT NULL"))
@@ -189,6 +228,7 @@ async def lifespan(_: FastAPI):
     ensure_upload_dir()
     try:
         _run_startup_migrations()
+        _backfill_provider_public_slugs()
     except Exception as exc:
         # Never block the API forever on migration issues
         print(f"[startup] migration failed (continuing): {exc}")

@@ -12,10 +12,12 @@ export function LoginPage() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    const phoneTrimmed = phone.trim();
+    setPhone(phoneTrimmed);
     setBusy(true);
     setError("");
     try {
-      const user = await login(phone, password);
+      const user = await login(phoneTrimmed, password);
       navigate(user.role === "PROVIDER" ? "/provider/overview" : user.role === "ADMIN" ? "/admin/providers" : "/consumer/details");
     } catch (err: unknown) {
       const msg =

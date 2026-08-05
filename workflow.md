@@ -35,7 +35,7 @@ Guests land on `/` (public landing). Logged-in users are redirected to their rol
 Guest search / browse
         │
         ▼
-Consumer registers / logs in (+ GPS or pincode)
+Consumer registers / logs in (+ GPS, city, pincode)
         │
         ▼
 Browse providers by category ──► Chat & ask (while provider online)
@@ -61,16 +61,47 @@ Consumer shares OTP → Provider completes → both rate each other
 ## Public / guest flow
 
 1. Open `/` — landing with search and category browse.
-2. Search products/services (`GET /providers/public-search`).
-3. Browse category catalog (`GET /providers/public-catalog`).
-4. Open a provider’s public page at `/p/:userId`.
-5. To chat or request, guest is prompted to **register / log in**.
+2. **Your area** shows the local place name with GPS coordinates in parentheses, e.g. `Indiranagar 1st Stage (12.9784, 77.6408)`. Guests can also enter a pincode.
+3. Search products/services (`GET /providers/public-search`).
+4. Browse category catalog (`GET /providers/public-catalog`).
+5. Open a provider’s public page at `/p/:slug` (friendly shop-name URL; legacy `/p/:userId` still works).
+6. To chat or request, guest is prompted to **register / log in**.
 
 Public provider page shows:
 
 - business name, categories, about, offerings
 - online status, rating, hours, map
 - optional **Website / Instagram / YouTube** links
+- shareable public link with copy action
+
+---
+
+## Auth / registration
+
+### Sign in (`/login`)
+
+- Phone field is **trimmed** (leading/trailing spaces) on Sign in.
+- Demo credentials are shown on the page.
+
+### Register (`/register`)
+
+Wide layout for both consumer and provider. Top-left **home** icon returns to landing. **Sign in** link is styled in blue.
+
+**Shared fields (both roles):**
+
+- Full name, phone, email (required for provider; optional for consumer), password
+- **City / locality** and **Pincode** — always shown, editable; auto-filled from GPS via reverse geocoding
+- **Location** status — local place name with coordinates, e.g. `Indiranagar 1st Stage · 12.97840, 77.64080`
+- Reverse geocode prefers **local** names (neighbourhood / suburb) over generic admin labels, and also fills **state** when available
+
+**Provider-only sections:**
+
+- Business / shop name
+- Services & categories (at least one) + offer kind
+- About + What they offer
+- Aadhaar upload (required) + optional GST
+
+After provider submit: pending-review message; **login blocked** until admin approval. Emails send when Admin SMTP is enabled.
 
 ---
 
@@ -80,11 +111,11 @@ Public provider page shows:
 
 | Route | Purpose |
 |-------|---------|
-| `/consumer/details` | Profile summary |
+| `/consumer/details` | Profile summary → Edit profile |
 | `/consumer/providers` | Browse providers; chat; select for targeted request |
 | `/consumer/inquiries` | Pre-request chats |
 | `/consumer/post` | Create targeted or broadcast request |
-| `/consumer/requests` | Own requests |
+| `/consumer/requests` | Own requests (+ **Create a Request** → `/consumer/post`) |
 | `/consumer/requests/:id` | Quotes for one request; accept deal |
 | `/consumer/quotes` | All quotes received |
 | `/consumer/orders` | Orders list → `/orders/:id` |
@@ -93,14 +124,18 @@ Also: `/profile` for full contact/address edit.
 
 ### 1. Register and location
 
-Consumer signs up with role, name, phone, password, and location.
+Consumer signs up with role, name, phone, password, city, pincode, and GPS when available.
 
-- Device GPS stored when available
-- Otherwise a **6-digit pincode** is needed for matching
+- Device GPS stored when available; city/pincode auto-filled from coordinates
+- City and pincode remain editable
+- Valid 6-digit pincode is required
 
 ### 2. Complete profile (`/profile`)
 
-Address, city/state, pincode, email, alternate phone — improves matching and contactability.
+Address, city, **state** (auto-filled from GPS when possible), pincode, email, alternate phone.
+
+- **Detect location** (with location icon) fills coords, place label, city, state, pincode
+- **Save** shows a popup: **Profile Updated Successfully**
 
 ### 3. Browse providers (`/consumer/providers`)
 
@@ -110,7 +145,7 @@ Each card shows business name, offerings, rating, hours, GST, map link.
 
 Actions:
 
-- **View profile** → `/p/:userId`
+- **View profile** → `/p/:slug` (or user id fallback)
 - **Chat & ask** (online providers only) — pre-request inquiry
 - **Checkbox** — select one or more for a targeted request  
   → **Send request to selected** opens Post with targeted mode
@@ -124,6 +159,8 @@ Inquiry chat is **not** tied to a request/order.
 - Existing threads can continue even if the provider goes offline
 
 ### 5. Post a request (`/consumer/post`)
+
+Also reachable from **My requests → Create a Request**.
 
 Fields: category, title, details, optional attachments, location.
 
@@ -176,7 +213,7 @@ Statuses:
 
 | Route | Purpose |
 |-------|---------|
-| `/provider/overview` | Status, go online, public link |
+| `/provider/overview` | Status, go online, public link, quick location |
 | `/provider/inquiries` | Consumer pre-request chats |
 | `/provider/requests` | Leads (targeted + nearby broadcast) |
 | `/provider/quote` | Submit a quote |
@@ -189,12 +226,15 @@ Also: `/profile` for business onboarding.
 
 Provider registration is a **full-page form** and requires:
 
-- account details (name, business name, phone, email, password, location)
+- account details (name, business name, phone, email, password)
+- city / locality + pincode (GPS auto-fill, editable)
 - **Services & categories** (at least one category) + offer kind
 - **About** (business description)
 - **What they offer** (detailed offerings)
 - **Aadhaar card upload** (image or PDF)
 - **GST number** (optional, if any)
+
+A unique **public slug** is created from the business / shop name (e.g. `quickfix-plumbing`; duplicates get `-2`, `-3`, …).
 
 After submit, the provider sees:
 
@@ -211,7 +251,7 @@ Transactional emails (when Admin SMTP is enabled):
 
 Required for verification / going online:
 
-- Business / shop name
+- Business / shop name (changing it regenerates the public slug if needed)
 - Offer kind: Product / Service / Both
 - Categories & subcategories
 - **About** (short description)
@@ -223,11 +263,21 @@ Required for verification / going online:
 
 Account stays `PENDING` until admin approves.
 
-### 3. Go online (`/provider/overview`)
+### 3. Overview (`/provider/overview`)
 
 Only **APPROVED** providers can go online and receive chat / live leads.
 
-Public page: `/p/{user_id}` (shareable).
+**Public link** (approved only):
+
+- Friendly URL: `/p/{public_slug}` (e.g. `/p/quickfix-plumbing`)
+- Shown as a **blue hyperlink** with an **open-in-new-tab** icon
+- **Copy** icon copies the full URL to the clipboard
+
+**Quick location:**
+
+- Longitude / latitude fields
+- **Detect location** (location icon) — fills coords from GPS
+- **Save** — persists location and travel radius
 
 ### 4. Handle leads (`/provider/requests`)
 
@@ -279,6 +329,18 @@ Providers must be **verified (APPROVED)** to receive broadcast notifications and
 
 ---
 
+## Location / reverse geocoding
+
+| Capability | Detail |
+|------------|--------|
+| API | `GET /geo/reverse?latitude=&longitude=` |
+| Returns | `location_label`, `city` (local name), `state`, `pincode`, coords |
+| Used on | Register, profile Detect location, landing Your area, server-side register fallback |
+
+Local names prefer neighbourhood / suburb / village over generic admin labels (e.g. corporation, urban district).
+
+---
+
 ## Chat systems
 
 | Chat | When | Linked to |
@@ -319,6 +381,7 @@ Also: `DISPUTED`, `CANCELLED` from mid-flow.
 - Completion OTP reduces false “delivered” claims
 - Mutual ratings after completed orders
 - Public profiles for transparency (no sensitive docs exposed)
+- Friendly public URLs without exposing internal UUIDs by default
 
 ---
 
@@ -326,7 +389,7 @@ Also: `DISPUTED`, `CANCELLED` from mid-flow.
 
 | Audience | Paths |
 |----------|--------|
-| Guest | `/`, `/login`, `/register`, `/p/:userId` |
+| Guest | `/`, `/login`, `/register`, `/p/:slug` (or `/p/:userId`) |
 | Consumer | `/consumer/*`, `/profile`, `/orders/:id` |
 | Provider | `/provider/*`, `/profile`, `/orders/:id` |
 | Admin | `/admin/*` |
@@ -341,10 +404,14 @@ Also: `DISPUTED`, `CANCELLED` from mid-flow.
 | Consumer | `9000000002` | `consumer123` |
 | Provider | `9000000003` | `provider123` |
 
+Seeded provider public page example: `/p/quickfix-plumbing`.
+
 ---
 
 ## Notes for operators
 
-- Restart backend after schema updates so startup migrations apply (`target_mode`, `request_targets`, `payment_mode`, social URL columns, SMTP table, etc.).
+- Restart backend after schema updates so startup migrations apply (`public_slug`, `target_mode`, `request_targets`, `payment_mode`, social URL columns, SMTP table, etc.).
+- Existing providers without a slug are backfilled on startup from business name.
 - Provider registration/approval emails need **Admin → Config** SMTP enabled with a valid from-address.
-- Matching quality depends on accurate GPS **or** pincode on both consumer and provider profiles.
+- Matching quality depends on accurate GPS **and/or** pincode (plus city) on both consumer and provider profiles.
+- Reverse geocoding uses OpenStreetMap Nominatim; allow outbound network from the API host.

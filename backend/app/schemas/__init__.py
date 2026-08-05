@@ -139,6 +139,8 @@ class ProviderCatalogItem(BaseModel):
     user_id: UUID
     full_name: str
     business_name: str
+    public_slug: str | None = None
+    public_url_path: str | None = None
     category_id: int | None = None
     category_name: str | None = None
     categories: list[str] = Field(default_factory=list)
@@ -167,6 +169,7 @@ class ProviderPublicOut(BaseModel):
 
     user_id: UUID
     business_name: str
+    public_slug: str | None = None
     full_name: str | None = None
     description: str | None = None
     offerings_detail: str | None = None
@@ -262,6 +265,8 @@ class ProviderProfileOut(BaseModel):
     id: UUID
     user_id: UUID
     business_name: str
+    public_slug: str | None = None
+    public_url_path: str | None = None
     category_id: int | None = None
     category_ids: list[int] = Field(default_factory=list)
     categories: list[str] = Field(default_factory=list)

@@ -56,6 +56,7 @@ export function ProviderDashboard() {
   const [activeChatTitle, setActiveChatTitle] = useState("");
   const [toast, setToast] = useState("");
   const [busy, setBusy] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [loc, setLoc] = useState({ longitude: "77.5946", latitude: "12.9716", max_radius_km: "10" });
   const [quoteForm, setQuoteForm] = useState({
@@ -136,6 +137,26 @@ export function ProviderDashboard() {
     });
     setProfile(data);
     setToast("Location updated");
+  }
+
+  function detectLocation() {
+    if (!navigator.geolocation) {
+      setToast("Geolocation not supported on this device");
+      return;
+    }
+    setToast("Detecting location…");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLoc((s) => ({
+          ...s,
+          latitude: String(pos.coords.latitude),
+          longitude: String(pos.coords.longitude),
+        }));
+        setToast("Coordinates updated from GPS — click Save to apply");
+      },
+      () => setToast("Could not detect location"),
+      { enableHighAccuracy: true, timeout: 12000 },
+    );
   }
 
   async function toggleOnline() {
@@ -277,17 +298,63 @@ export function ProviderDashboard() {
             <Link className="btn" to="/profile">
               Edit My profile
             </Link>
-            {profile?.user_id && profile.verification_status === "APPROVED" && (
-              <Link className="btn secondary" to={`/p/${profile.user_id}`} target="_blank">
-                Open public page
-              </Link>
-            )}
           </div>
           {profile?.user_id && profile.verification_status === "APPROVED" && (
-            <p className="muted" style={{ fontSize: "0.85rem", marginTop: "0.75rem", wordBreak: "break-all" }}>
-              Public link: {typeof window !== "undefined" ? window.location.origin : ""}
-              /p/{profile.user_id}
-            </p>
+            <div className="public-link-row">
+              <p style={{ fontSize: "0.85rem", margin: 0, wordBreak: "break-all" }}>
+                Public link:{" "}
+                <a
+                  className="link-blue public-link-open"
+                  href={profile.public_url_path || `/p/${profile.public_slug || profile.user_id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Open in new tab"
+                >
+                  {typeof window !== "undefined" ? window.location.origin : ""}
+                  {profile.public_url_path || `/p/${profile.public_slug || profile.user_id}`}
+                  <svg
+                    className="external-link-icon"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    aria-hidden="true"
+                  >
+                    <path d="M14 3h7v7" />
+                    <path d="M10 14 21 3" />
+                    <path d="M21 14v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h6" />
+                  </svg>
+                </a>
+              </p>
+              <button
+                className="icon-btn"
+                type="button"
+                title={linkCopied ? "Copied" : "Copy public link"}
+                aria-label={linkCopied ? "Copied" : "Copy public link"}
+                onClick={() => {
+                  const path =
+                    profile.public_url_path || `/p/${profile.public_slug || profile.user_id}`;
+                  const url = `${window.location.origin}${path}`;
+                  void navigator.clipboard.writeText(url).then(() => {
+                    setLinkCopied(true);
+                    window.setTimeout(() => setLinkCopied(false), 2000);
+                  });
+                }}
+              >
+                {linkCopied ? (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <rect x="9" y="9" width="13" height="13" rx="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                )}
+              </button>
+            </div>
           )}
           <form onSubmit={saveLocation} style={{ marginTop: "1.25rem" }}>
             <h3>Quick location</h3>
@@ -315,9 +382,26 @@ export function ProviderDashboard() {
                 onChange={(e) => setLoc({ ...loc, max_radius_km: e.target.value })}
               />
             </div>
-            <button className="btn" type="submit">
-              Save location
-            </button>
+            <div className="nav-actions">
+              <button className="btn secondary btn-with-icon" type="button" onClick={detectLocation}>
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  aria-hidden="true"
+                >
+                  <path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" />
+                  <circle cx="12" cy="10" r="2.5" />
+                </svg>
+                Detect location
+              </button>
+              <button className="btn" type="submit">
+                Save
+              </button>
+            </div>
           </form>
         </div>
       )}
