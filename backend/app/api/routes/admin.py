@@ -1,8 +1,9 @@
+from datetime import date, datetime, time, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import delete, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import delete, func, or_, select
+from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import require_roles
 from app.api.routes.auth import user_to_out
@@ -12,7 +13,10 @@ from app.db.models import (
     ChatMessage,
     Conversation,
     InquiryMessage,
+    AdminConversation,
+    AdminMessage,
     Order,
+    OrderStatus,
     ProviderCategory,
     ProviderProfile,
     Quote,
@@ -23,7 +27,14 @@ from app.db.models import (
 )
 from app.db.session import get_db
 from app.schemas import (
+    AdminAnalyticsBucket,
+    AdminAnalyticsFilterOptions,
+    AdminAnalyticsOut,
+    AdminAnalyticsStatusBucket,
+    AdminAnalyticsSummary,
+    AdminAnalyticsTimelinePoint,
     AdminOrderOut,
+    AdminProviderDetailOut,
     AdminProviderOut,
     SmtpConfigOut,
     SmtpConfigUpdate,
@@ -31,11 +42,121 @@ from app.schemas import (
     UserOut,
 )
 from app.services.email import get_or_create_smtp_config, send_email
-from app.services.geo import get_lon_lat_from_profile
+from app.services.geo import get_lon_lat_from_profile, normalize_pincode
 from app.services.maps import google_maps_url
 from app.services.provider_catalog import provider_category_names
+from app.services.slugs import public_url_path_for
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+_UNKNOWN = "Unknown"
+_GROUP_BY_VALUES = {"state", "city", "area", "pincode"}
+_LOCATION_OF_VALUES = {"consumer", "provider"}
+
+
+def _location_column(group_by: str):
+    if group_by == "state":
+        return User.state
+    if group_by == "city":
+        return User.city
+    if group_by == "area":
+        return User.location_label
+    return User.pincode
+
+
+def _normalize_group_value(group_by: str, raw: str | None) -> tuple[str, str]:
+    """Return (merge_key, display_label)."""
+    if raw is None:
+        return "__unknown__", _UNKNOWN
+    text = str(raw).strip()
+    if not text:
+        return "__unknown__", _UNKNOWN
+    if group_by == "pincode":
+        pin = normalize_pincode(text) or text
+        return pin, pin
+    return text.casefold(), text
+
+
+def _apply_user_location_filters(
+    stmt,
+    *,
+    state: str | None,
+    city: str | None,
+    area: str | None,
+    pincode: str | None,
+    user_model=User,
+):
+    if state:
+        stmt = stmt.where(func.lower(func.trim(user_model.state)) == state.strip().lower())
+    if city:
+        stmt = stmt.where(func.lower(func.trim(user_model.city)) == city.strip().lower())
+    if area:
+        stmt = stmt.where(
+            func.lower(func.trim(user_model.location_label)) == area.strip().lower()
+        )
+    if pincode:
+        pin = normalize_pincode(pincode) or pincode.strip()
+        stmt = stmt.where(user_model.pincode == pin)
+    return stmt
+
+
+def _distinct_location_values(db: Session, column, *, state=None, city=None, area=None, pincode=None):
+    stmt = select(column).where(column.is_not(None), func.trim(column) != "")
+    stmt = _apply_user_location_filters(
+        stmt, state=state, city=city, area=area, pincode=pincode
+    )
+    rows = db.scalars(stmt.distinct().order_by(column.asc())).all()
+    values: list[str] = []
+    seen: set[str] = set()
+    for raw in rows:
+        text = str(raw).strip()
+        if not text:
+            continue
+        if column is User.pincode:
+            text = normalize_pincode(text) or text
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        values.append(text)
+    return values
+
+
+def _admin_provider_base(
+    db: Session,
+    profile: ProviderProfile,
+    user: User,
+    category: Category | None,
+) -> dict:
+    lon, lat = get_lon_lat_from_profile(db, profile)
+    if lat is None:
+        lat = user.latitude
+        lon = user.longitude
+    return dict(
+        user_id=user.id,
+        full_name=user.full_name,
+        phone_number=user.phone_number,
+        username=user.phone_number,
+        email=user.email,
+        business_name=profile.business_name,
+        category_id=profile.category_id,
+        category_name=category.name if category else None,
+        categories=provider_category_names(db, profile),
+        offer_kind=profile.offer_kind,
+        gst_number=profile.gst_number,
+        aadhaar_number=profile.aadhaar_number,
+        aadhaar_doc_url=profile.aadhaar_doc_url,
+        verification_status=profile.verification_status,
+        is_online=profile.is_online,
+        is_active=user.is_active,
+        average_rating=user.average_rating,
+        rating_count=user.rating_count,
+        latitude=lat,
+        longitude=lon,
+        location_label=user.location_label,
+        maps_url=google_maps_url(lat, lon),
+        created_at=user.created_at,
+    )
 
 
 @router.get("/consumers", response_model=list[UserOut])
@@ -73,48 +194,97 @@ def list_providers(
     for profile, user, category in rows:
         if status_filter and profile.verification_status.value != status_filter.upper():
             continue
-        lon, lat = get_lon_lat_from_profile(db, profile)
-        if lat is None:
-            lat = user.latitude
-            lon = user.longitude
-        items.append(
-            AdminProviderOut(
-                user_id=user.id,
-                full_name=user.full_name,
-                phone_number=user.phone_number,
-                email=user.email,
-                business_name=profile.business_name,
-                category_id=profile.category_id,
-                category_name=category.name if category else None,
-                categories=provider_category_names(db, profile),
-                offer_kind=profile.offer_kind,
-                gst_number=profile.gst_number,
-                aadhaar_number=profile.aadhaar_number,
-                aadhaar_doc_url=profile.aadhaar_doc_url,
-                verification_status=profile.verification_status,
-                is_online=profile.is_online,
-                is_active=user.is_active,
-                average_rating=user.average_rating,
-                rating_count=user.rating_count,
-                latitude=lat,
-                longitude=lon,
-                location_label=user.location_label,
-                maps_url=google_maps_url(lat, lon),
-                created_at=user.created_at,
-            )
-        )
+        items.append(AdminProviderOut(**_admin_provider_base(db, profile, user, category)))
     items.sort(
         key=lambda p: (status_rank.get(p.verification_status.value, 9), -p.created_at.timestamp())
     )
     return items
 
 
-@router.get("/orders", response_model=list[AdminOrderOut])
-def list_all_orders(
+@router.get("/providers/{user_id}", response_model=AdminProviderDetailOut)
+def get_provider(
+    user_id: UUID,
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ):
-    rows = db.scalars(select(Order).order_by(Order.created_at.desc())).all()
+    row = db.execute(
+        select(ProviderProfile, User, Category)
+        .join(User, User.id == ProviderProfile.user_id)
+        .join(Category, Category.id == ProviderProfile.category_id, isouter=True)
+        .where(ProviderProfile.user_id == user_id)
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Provider not found")
+    profile, user, category = row
+    order_count = db.scalar(
+        select(func.count()).select_from(Order).where(Order.provider_id == user_id)
+    ) or 0
+    base = _admin_provider_base(db, profile, user, category)
+    return AdminProviderDetailOut(
+        **base,
+        public_slug=profile.public_slug,
+        public_url_path=public_url_path_for(profile),
+        description=profile.description,
+        offerings_detail=profile.offerings_detail,
+        website_url=profile.website_url,
+        instagram_url=profile.instagram_url,
+        youtube_url=profile.youtube_url,
+        opening_time=profile.opening_time,
+        closing_time=profile.closing_time,
+        max_radius_km=profile.max_radius_km,
+        alternate_phone=user.alternate_phone,
+        address_line1=user.address_line1,
+        address_line2=user.address_line2,
+        city=user.city,
+        state=user.state,
+        pincode=user.pincode,
+        government_id_url=profile.government_id_url,
+        business_reg_url=profile.business_reg_url,
+        gst_doc_url=profile.gst_doc_url,
+        tax_id=profile.tax_id,
+        order_count=int(order_count),
+        updated_at=profile.updated_at,
+    )
+
+
+def _parse_bound_date(value: str | None, *, end_of_day: bool = False) -> datetime | None:
+    if not value:
+        return None
+    try:
+        d = date.fromisoformat(value.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid date: {value}") from exc
+    if end_of_day:
+        return datetime.combine(d, time(23, 59, 59, 999999), tzinfo=timezone.utc)
+    return datetime.combine(d, time.min, tzinfo=timezone.utc)
+
+
+def _apply_created_range(stmt, column, *, date_from: datetime | None, date_to: datetime | None):
+    if date_from is not None:
+        stmt = stmt.where(column >= date_from)
+    if date_to is not None:
+        stmt = stmt.where(column <= date_to)
+    return stmt
+
+
+@router.get("/orders", response_model=list[AdminOrderOut])
+def list_all_orders(
+    provider_id: UUID | None = Query(
+        default=None,
+        description="If set, only orders for this provider user id",
+    ),
+    date_from: str | None = Query(default=None, description="YYYY-MM-DD"),
+    date_to: str | None = Query(default=None, description="YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    start = _parse_bound_date(date_from)
+    end = _parse_bound_date(date_to, end_of_day=True)
+    stmt = select(Order).order_by(Order.created_at.desc())
+    if provider_id is not None:
+        stmt = stmt.where(Order.provider_id == provider_id)
+    stmt = _apply_created_range(stmt, Order.created_at, date_from=start, date_to=end)
+    rows = db.scalars(stmt).all()
     items: list[AdminOrderOut] = []
     for order in rows:
         consumer = db.get(User, order.consumer_id)
@@ -143,6 +313,213 @@ def list_all_orders(
     return items
 
 
+@router.get("/analytics", response_model=AdminAnalyticsOut)
+def location_analytics(
+    group_by: str = Query(
+        default="city",
+        description="state | city | area | pincode",
+    ),
+    location_of: str = Query(
+        default="consumer",
+        description="For order geo: consumer | provider",
+    ),
+    state: str | None = Query(default=None),
+    city: str | None = Query(default=None),
+    area: str | None = Query(default=None),
+    pincode: str | None = Query(default=None),
+    date_from: str | None = Query(default=None, description="YYYY-MM-DD"),
+    date_to: str | None = Query(default=None, description="YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    gb = (group_by or "city").strip().lower()
+    loc_of = (location_of or "consumer").strip().lower()
+    if gb not in _GROUP_BY_VALUES:
+        raise HTTPException(status_code=400, detail="Invalid group_by")
+    if loc_of not in _LOCATION_OF_VALUES:
+        raise HTTPException(status_code=400, detail="Invalid location_of")
+
+    start = _parse_bound_date(date_from)
+    end = _parse_bound_date(date_to, end_of_day=True)
+    if start and end and start > end:
+        raise HTTPException(status_code=400, detail="date_from must be on or before date_to")
+
+    loc_col = _location_column(gb)
+    filters = dict(state=state, city=city, area=area, pincode=pincode)
+
+    # --- consumers by location ---
+    consumer_stmt = select(User.id, loc_col).where(User.role == UserRole.CONSUMER)
+    consumer_stmt = _apply_user_location_filters(consumer_stmt, **filters)
+    consumer_stmt = _apply_created_range(
+        consumer_stmt, User.created_at, date_from=start, date_to=end
+    )
+    consumer_rows = db.execute(consumer_stmt).all()
+
+    # --- providers by location (user geo) ---
+    provider_stmt = (
+        select(User.id, loc_col)
+        .join(ProviderProfile, ProviderProfile.user_id == User.id)
+        .where(User.role == UserRole.PROVIDER)
+    )
+    provider_stmt = _apply_user_location_filters(provider_stmt, **filters)
+    provider_stmt = _apply_created_range(
+        provider_stmt, User.created_at, date_from=start, date_to=end
+    )
+    provider_rows = db.execute(provider_stmt).all()
+
+    # --- orders by consumer/provider location ---
+    LocUser = aliased(User)
+    order_loc_col = {
+        "state": LocUser.state,
+        "city": LocUser.city,
+        "area": LocUser.location_label,
+        "pincode": LocUser.pincode,
+    }[gb]
+    join_id = Order.consumer_id if loc_of == "consumer" else Order.provider_id
+    order_stmt = (
+        select(
+            Order.id,
+            Order.status,
+            Order.agreed_price,
+            Order.created_at,
+            order_loc_col,
+            ServiceRequest.request_pincode,
+        )
+        .join(LocUser, LocUser.id == join_id)
+        .join(ServiceRequest, ServiceRequest.id == Order.request_id, isouter=True)
+    )
+    order_stmt = _apply_user_location_filters(
+        order_stmt, **filters, user_model=LocUser
+    )
+    order_stmt = _apply_created_range(
+        order_stmt, Order.created_at, date_from=start, date_to=end
+    )
+    order_rows = db.execute(order_stmt).all()
+
+    buckets_map: dict[str, AdminAnalyticsBucket] = {}
+
+    def ensure_bucket(raw: str | None, *, fallback_pincode: str | None = None) -> AdminAnalyticsBucket:
+        value = raw
+        if gb == "pincode" and (value is None or not str(value).strip()) and fallback_pincode:
+            value = fallback_pincode
+        merge_key, label = _normalize_group_value(gb, value)
+        bucket = buckets_map.get(merge_key)
+        if bucket is None:
+            bucket = AdminAnalyticsBucket(key=merge_key, label=label)
+            if gb == "state":
+                bucket.state = None if merge_key == "__unknown__" else label
+            elif gb == "city":
+                bucket.city = None if merge_key == "__unknown__" else label
+            elif gb == "area":
+                bucket.area = None if merge_key == "__unknown__" else label
+            else:
+                bucket.pincode = None if merge_key == "__unknown__" else label
+            buckets_map[merge_key] = bucket
+        return bucket
+
+    for _, raw in consumer_rows:
+        ensure_bucket(raw).consumers += 1
+
+    for _, raw in provider_rows:
+        ensure_bucket(raw).providers += 1
+
+    status_map: dict[str, AdminAnalyticsStatusBucket] = {}
+    timeline_map: dict[str, AdminAnalyticsTimelinePoint] = {}
+    completed = 0
+    for _, status_val, price, created_at, raw, req_pin in order_rows:
+        status_name = status_val.value if hasattr(status_val, "value") else str(status_val)
+        price_f = float(price or 0)
+        st = status_map.get(status_name)
+        if st is None:
+            st = AdminAnalyticsStatusBucket(status=status_name)
+            status_map[status_name] = st
+        st.orders += 1
+        st.gmv += price_f
+
+        bucket = ensure_bucket(raw, fallback_pincode=req_pin if gb == "pincode" else None)
+        bucket.orders += 1
+        bucket.gmv += price_f
+        is_completed = status_name == OrderStatus.COMPLETED.value or status_name == "COMPLETED"
+        if is_completed:
+            bucket.orders_completed += 1
+            completed += 1
+
+        day_key = created_at.astimezone(timezone.utc).date().isoformat() if created_at else None
+        if day_key:
+            point = timeline_map.get(day_key)
+            if point is None:
+                point = AdminAnalyticsTimelinePoint(date=day_key)
+                timeline_map[day_key] = point
+            point.orders += 1
+            if is_completed:
+                point.completed += 1
+                point.gmv += price_f
+
+    summary_gmv = 0.0
+    for st in status_map.values():
+        if st.status == "COMPLETED":
+            summary_gmv = st.gmv
+            break
+
+    for bucket in buckets_map.values():
+        bucket.gmv = round(bucket.gmv, 2)
+
+    buckets = sorted(
+        buckets_map.values(),
+        key=lambda b: (-(b.orders + b.consumers + b.providers), b.label.casefold()),
+    )
+    unknown = next((b for b in buckets if b.key == "__unknown__"), None)
+
+    timeline = sorted(timeline_map.values(), key=lambda p: p.date)
+    for point in timeline:
+        point.gmv = round(point.gmv, 2)
+
+    # Filter options: cascade from broader to narrower (ignore filters for own dimension)
+    filter_options = AdminAnalyticsFilterOptions(
+        states=_distinct_location_values(
+            db, User.state, city=city, area=area, pincode=pincode
+        ),
+        cities=_distinct_location_values(
+            db, User.city, state=state, area=area, pincode=pincode
+        ),
+        areas=_distinct_location_values(
+            db, User.location_label, state=state, city=city, pincode=pincode
+        ),
+        pincodes=_distinct_location_values(
+            db, User.pincode, state=state, city=city, area=area
+        ),
+    )
+
+    return AdminAnalyticsOut(
+        group_by=gb,
+        location_of=loc_of,
+        date_from=date_from,
+        date_to=date_to,
+        summary=AdminAnalyticsSummary(
+            consumers=len(consumer_rows),
+            providers=len(provider_rows),
+            orders=len(order_rows),
+            orders_completed=completed,
+            gmv=round(summary_gmv, 2),
+            unknown_location=unknown.orders + unknown.consumers + unknown.providers
+            if unknown
+            else 0,
+        ),
+        status_breakdown=sorted(
+            [
+                AdminAnalyticsStatusBucket(
+                    status=s.status, orders=s.orders, gmv=round(s.gmv, 2)
+                )
+                for s in status_map.values()
+            ],
+            key=lambda s: -s.orders,
+        ),
+        buckets=buckets,
+        timeline=timeline,
+        filter_options=filter_options,
+    )
+
+
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_user(
     user_id: UUID,
@@ -169,6 +546,7 @@ def delete_user(
     db.execute(delete(Rating).where(or_(Rating.rater_id == user_id, Rating.ratee_id == user_id)))
     db.execute(delete(ChatMessage).where(ChatMessage.sender_id == user_id))
     db.execute(delete(InquiryMessage).where(InquiryMessage.sender_id == user_id))
+    db.execute(delete(AdminMessage).where(AdminMessage.sender_id == user_id))
 
     conv_ids = db.scalars(
         select(Conversation.id).where(
@@ -178,6 +556,13 @@ def delete_user(
     if conv_ids:
         db.execute(delete(InquiryMessage).where(InquiryMessage.conversation_id.in_(conv_ids)))
         db.execute(delete(Conversation).where(Conversation.id.in_(conv_ids)))
+
+    support_ids = db.scalars(
+        select(AdminConversation.id).where(AdminConversation.provider_id == user_id)
+    ).all()
+    if support_ids:
+        db.execute(delete(AdminMessage).where(AdminMessage.conversation_id.in_(support_ids)))
+        db.execute(delete(AdminConversation).where(AdminConversation.id.in_(support_ids)))
 
     # Quotes / requests / attachments — remove before user so remaining FKs don't block
     quote_ids = db.scalars(select(Quote.id).where(Quote.provider_id == user_id)).all()

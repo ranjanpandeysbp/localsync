@@ -8,11 +8,13 @@ import { offerKindLabel } from "../components/ProviderTrust";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { api } from "../services/api";
 import { uploadFiles } from "../services/uploads";
-import type { Conversation, Order, ProviderProfile, Quote, ServiceRequest } from "../types";
+import { useProviderNav } from "../store/providerNav";
+import type { AdminSupportConversation, Conversation, Order, ProviderProfile, Quote, ServiceRequest } from "../types";
 
 type ProviderSection =
   | "overview"
   | "inquiries"
+  | "support"
   | "requests"
   | "quote"
   | "quotes"
@@ -21,6 +23,7 @@ type ProviderSection =
 const SECTIONS: ProviderSection[] = [
   "overview",
   "inquiries",
+  "support",
   "requests",
   "quote",
   "quotes",
@@ -30,6 +33,7 @@ const SECTIONS: ProviderSection[] = [
 const TITLES: Record<ProviderSection, string> = {
   overview: "Overview",
   inquiries: "Consumer inquiries",
+  support: "Admin messages",
   requests: "Nearby requests",
   quote: "Submit quote",
   quotes: "My sent quotes",
@@ -54,6 +58,11 @@ export function ProviderDashboard() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [activeChatTitle, setActiveChatTitle] = useState("");
+  const [supportThreads, setSupportThreads] = useState<AdminSupportConversation[]>([]);
+  const [activeSupportId, setActiveSupportId] = useState<string | null>(null);
+  const bumpAdminUnread = useProviderNav((s) => s.bumpAdminUnread);
+  const clearAdminUnread = useProviderNav((s) => s.clearAdminUnread);
+  const refreshAdminUnread = useProviderNav((s) => s.refreshAdminUnread);
   const [toast, setToast] = useState("");
   const [busy, setBusy] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -76,11 +85,29 @@ export function ProviderDashboard() {
       setToast("New inquiry from a consumer");
       void loadConversations();
     }
+    if (m.type === "admin_message") {
+      setToast("New message from LocalSync admin");
+      void loadSupportThreads();
+      if (activeSupportId) {
+        clearAdminUnread();
+      } else {
+        bumpAdminUnread(1);
+      }
+    }
   });
 
   async function loadConversations() {
     const { data } = await api.get<Conversation[]>("/conversations");
     setConversations(data);
+  }
+
+  async function loadSupportThreads() {
+    try {
+      const { data } = await api.get<AdminSupportConversation[]>("/support-conversations");
+      setSupportThreads(data);
+    } catch {
+      setSupportThreads([]);
+    }
   }
 
   async function refresh() {
@@ -103,6 +130,8 @@ export function ProviderDashboard() {
         });
       }
       await loadConversations();
+      await loadSupportThreads();
+      await refreshAdminUnread();
     } catch {
       /* profile may be missing */
     }
@@ -432,6 +461,54 @@ export function ProviderDashboard() {
                     }}
                   >
                     Reply
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "support" && (
+        <div className="card">
+          <h2>Admin messages</h2>
+          <p className="muted">Messages from LocalSync admins about your account or listings.</p>
+          {activeSupportId ? (
+            <InquiryChatPanel
+              conversationId={activeSupportId}
+              title="Chat with LocalSync admin"
+              messagesPath={`/support-conversations/${activeSupportId}/messages`}
+              emptyHint="No messages yet."
+              placeholder="Type your reply…"
+              onClose={() => setActiveSupportId(null)}
+            />
+          ) : (
+            <div className="list">
+              {supportThreads.length === 0 && (
+                <p className="muted">No admin messages yet.</p>
+              )}
+              {supportThreads.map((t) => (
+                <div key={t.id} className="list-item">
+                  <strong>{t.admin_name || "LocalSync Admin"}</strong>
+                  <div className="muted">{t.last_message || "Conversation started"}</div>
+                  <p className="muted" style={{ fontSize: "0.85rem" }}>
+                    Updated {new Date(t.updated_at).toLocaleString()}
+                  </p>
+                  <button
+                    className="btn"
+                    type="button"
+                    style={{ marginTop: "0.5rem" }}
+                    onClick={() => {
+                      setActiveSupportId(t.id);
+                      clearAdminUnread();
+                    }}
+                  >
+                    Open chat
+                    {(t.unread_count || 0) > 0 && (
+                      <span className="nav-badge" style={{ marginLeft: "0.4rem" }}>
+                        {t.unread_count}
+                      </span>
+                    )}
                   </button>
                 </div>
               ))}

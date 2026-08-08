@@ -44,6 +44,7 @@ class UserOut(BaseModel):
     id: UUID
     role: UserRole
     phone_number: str
+    username: str
     email: str | None
     full_name: str
     is_active: bool
@@ -234,6 +235,41 @@ class ConversationOut(BaseModel):
     last_message: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class AdminSupportCreate(BaseModel):
+    provider_id: UUID
+    initial_message: str | None = Field(default=None, min_length=1, max_length=2000)
+
+
+class AdminSupportMessageOut(BaseModel):
+    id: UUID
+    conversation_id: UUID
+    sender_id: UUID
+    body: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AdminSupportConversationOut(BaseModel):
+    id: UUID
+    provider_id: UUID
+    created_by_admin_id: UUID | None = None
+    created_at: datetime
+    updated_at: datetime
+    provider_name: str | None = None
+    provider_business_name: str | None = None
+    admin_name: str | None = None
+    last_message: str | None = None
+    unread_count: int = 0
+    provider_message_count: int = 0
+
+    model_config = {"from_attributes": True}
+
+
+class AdminSupportUnreadOut(BaseModel):
+    unread_count: int = 0
 
 
 class ProviderProfileUpdate(BaseModel):
@@ -446,6 +482,7 @@ class AdminProviderOut(BaseModel):
     user_id: UUID
     full_name: str
     phone_number: str
+    username: str
     email: str | None
     business_name: str
     category_id: int | None = None
@@ -467,6 +504,31 @@ class AdminProviderOut(BaseModel):
     created_at: datetime
 
 
+class AdminProviderDetailOut(AdminProviderOut):
+    public_slug: str | None = None
+    public_url_path: str | None = None
+    description: str | None = None
+    offerings_detail: str | None = None
+    website_url: str | None = None
+    instagram_url: str | None = None
+    youtube_url: str | None = None
+    opening_time: str | None = None
+    closing_time: str | None = None
+    max_radius_km: int = 5
+    alternate_phone: str | None = None
+    address_line1: str | None = None
+    address_line2: str | None = None
+    city: str | None = None
+    state: str | None = None
+    pincode: str | None = None
+    government_id_url: str | None = None
+    business_reg_url: str | None = None
+    gst_doc_url: str | None = None
+    tax_id: str | None = None
+    order_count: int = 0
+    updated_at: datetime | None = None
+
+
 class AdminOrderOut(BaseModel):
     id: UUID
     quote_id: UUID
@@ -482,6 +544,63 @@ class AdminOrderOut(BaseModel):
     status: OrderStatus
     created_at: datetime
     completed_at: datetime | None = None
+
+
+class AdminAnalyticsStatusBucket(BaseModel):
+    status: str
+    orders: int = 0
+    gmv: float = 0.0
+
+
+class AdminAnalyticsBucket(BaseModel):
+    key: str
+    label: str
+    state: str | None = None
+    city: str | None = None
+    area: str | None = None
+    pincode: str | None = None
+    consumers: int = 0
+    providers: int = 0
+    orders: int = 0
+    orders_completed: int = 0
+    gmv: float = 0.0
+
+
+class AdminAnalyticsFilterOptions(BaseModel):
+    states: list[str] = Field(default_factory=list)
+    cities: list[str] = Field(default_factory=list)
+    areas: list[str] = Field(default_factory=list)
+    pincodes: list[str] = Field(default_factory=list)
+
+
+class AdminAnalyticsSummary(BaseModel):
+    consumers: int = 0
+    providers: int = 0
+    orders: int = 0
+    orders_completed: int = 0
+    gmv: float = 0.0
+    unknown_location: int = 0
+
+
+class AdminAnalyticsTimelinePoint(BaseModel):
+    date: str
+    orders: int = 0
+    completed: int = 0
+    gmv: float = 0.0
+
+
+class AdminAnalyticsOut(BaseModel):
+    group_by: str
+    location_of: str
+    date_from: str | None = None
+    date_to: str | None = None
+    summary: AdminAnalyticsSummary
+    status_breakdown: list[AdminAnalyticsStatusBucket] = Field(default_factory=list)
+    buckets: list[AdminAnalyticsBucket] = Field(default_factory=list)
+    timeline: list[AdminAnalyticsTimelinePoint] = Field(default_factory=list)
+    filter_options: AdminAnalyticsFilterOptions = Field(
+        default_factory=AdminAnalyticsFilterOptions
+    )
 
 
 class SmtpConfigOut(BaseModel):

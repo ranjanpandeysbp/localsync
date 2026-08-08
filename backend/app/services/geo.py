@@ -138,6 +138,107 @@ def find_providers_by_pincode(
     return [(p, 0.0) for p in profiles]
 
 
+def find_all_providers_in_radius(
+    db: Session,
+    *,
+    longitude: float,
+    latitude: float,
+    radius_km: int,
+    online_only: bool = False,
+    verified_only: bool = True,
+) -> list[tuple[ProviderProfile, float]]:
+    """Return all providers within radius (km), any category, with distance in meters."""
+    request_point = _request_geog(longitude, latitude)
+    distance_m = ST_Distance(ProviderProfile.base_location, request_point)
+    radius_m = radius_km * 1000
+
+    filters = [
+        ProviderProfile.base_location.is_not(None),
+        ST_DWithin(ProviderProfile.base_location, request_point, radius_m),
+    ]
+    if online_only:
+        filters.append(ProviderProfile.is_online.is_(True))
+    if verified_only:
+        filters.append(ProviderProfile.verification_status == VerificationStatus.APPROVED)
+
+    stmt = (
+        select(ProviderProfile, distance_m.label("distance_m"))
+        .join(User, User.id == ProviderProfile.user_id)
+        .where(and_(*filters, User.is_active.is_(True)))
+        .order_by(distance_m)
+    )
+    rows = db.execute(stmt).all()
+    return [(row[0], float(row[1])) for row in rows]
+
+
+def find_all_providers_by_pincode(
+    db: Session,
+    *,
+    pincode: str,
+    online_only: bool = False,
+    verified_only: bool = True,
+) -> list[tuple[ProviderProfile, float]]:
+    """Match all providers in the same pincode (any category)."""
+    pin = normalize_pincode(pincode)
+    if not pin:
+        return []
+
+    filters = [User.pincode == pin]
+    if online_only:
+        filters.append(ProviderProfile.is_online.is_(True))
+    if verified_only:
+        filters.append(ProviderProfile.verification_status == VerificationStatus.APPROVED)
+
+    stmt = (
+        select(ProviderProfile)
+        .join(User, User.id == ProviderProfile.user_id)
+        .where(and_(*filters, User.is_active.is_(True)))
+        .order_by(ProviderProfile.is_online.desc(), User.average_rating.desc())
+    )
+    profiles = db.scalars(stmt).all()
+    return [(p, 0.0) for p in profiles]
+
+
+def match_all_nearby_providers(
+    db: Session,
+    *,
+    longitude: float | None,
+    latitude: float | None,
+    radius_km: int,
+    pincode: str | None = None,
+    online_only: bool = False,
+    verified_only: bool = True,
+) -> list[tuple[ProviderProfile, float]]:
+    """Nearby providers across all categories — geo first, then pincode fallback."""
+    if longitude is not None and latitude is not None:
+        nearby = find_all_providers_in_radius(
+            db,
+            longitude=longitude,
+            latitude=latitude,
+            radius_km=radius_km,
+            online_only=online_only,
+            verified_only=verified_only,
+        )
+        if nearby:
+            return nearby
+        if pincode:
+            return find_all_providers_by_pincode(
+                db,
+                pincode=pincode,
+                online_only=online_only,
+                verified_only=verified_only,
+            )
+        return []
+    if pincode:
+        return find_all_providers_by_pincode(
+            db,
+            pincode=pincode,
+            online_only=online_only,
+            verified_only=verified_only,
+        )
+    return []
+
+
 def match_providers(
     db: Session,
     *,

@@ -60,12 +60,14 @@ Consumer shares OTP → Provider completes → both rate each other
 
 ## Public / guest flow
 
-1. Open `/` — landing with search and category browse.
-2. **Your area** shows the local place name with GPS coordinates in parentheses, e.g. `Indiranagar 1st Stage (12.9784, 77.6408)`. Guests can also enter a pincode.
-3. Search products/services (`GET /providers/public-search`).
-4. Browse category catalog (`GET /providers/public-catalog`).
-5. Open a provider’s public page at `/p/:slug` (friendly shop-name URL; legacy `/p/:userId` still works).
-6. To chat or request, guest is prompted to **register / log in**.
+1. Open `/` — landing with full-bleed hero and floating search pad (query + editable pincode + detect-location).
+2. Empty pincode on search shows a modal: **Please enter the pincode**.
+3. After search, category browse hides; results show matching categories/providers.
+4. Without searching, **Popular categories** appear (hide after a completed search).
+5. Search products/services (`GET /providers/public-search`). Blank keyword still supports nearby / pincode matching.
+6. Browse category catalog (`GET /providers/public-catalog`).
+7. Open a provider’s public page at `/p/:slug` (friendly shop-name URL; legacy `/p/:userId` still works).
+8. To chat or request, guest is prompted to **register / log in**.
 
 Public provider page shows:
 
@@ -115,7 +117,7 @@ After provider submit: pending-review message; **login blocked** until admin app
 | `/consumer/providers` | Browse providers; chat; select for targeted request |
 | `/consumer/inquiries` | Pre-request chats |
 | `/consumer/post` | Create targeted or broadcast request |
-| `/consumer/requests` | Own requests (+ **Create a Request** → `/consumer/post`) |
+| `/consumer/requests` | Own requests (+ **Create a request** → `/consumer/post`) |
 | `/consumer/requests/:id` | Quotes for one request; accept deal |
 | `/consumer/quotes` | All quotes received |
 | `/consumer/orders` | Orders list → `/orders/:id` |
@@ -160,7 +162,7 @@ Inquiry chat is **not** tied to a request/order.
 
 ### 5. Post a request (`/consumer/post`)
 
-Also reachable from **My requests → Create a Request**.
+Also reachable from **My requests → Create a request**.
 
 Fields: category, title, details, optional attachments, location.
 
@@ -173,7 +175,20 @@ Fields: category, title, details, optional attachments, location.
 
 Targeted requests do not use geo matching for who gets notified.
 
-### 6. Quotes and accept (`/consumer/requests/:id`)
+On successful create (broadcast or targeted), the app navigates to **`/consumer/requests`**.
+
+### 6. My requests (`/consumer/requests`)
+
+Card list of the consumer’s requests with:
+
+- Search by title, description, category, status, pincode
+- Status filters: All / Active / Fulfilled / Expired / Cancelled  
+  - **Desktop:** segmented chips  
+  - **Mobile / tablet (≤960px):** filter icon **before** the search bar opens a status list (search label hidden)
+- Full-width cards with status color accent, meta chips, attachments, **View quotes**
+- Quote-waiting badge when quotes exist for that request
+
+### 7. Quotes and accept (`/consumer/requests/:id`)
 
 While waiting, consumer can **Chat** with quoting providers.
 
@@ -188,7 +203,7 @@ When accepting a quote, consumer chooses:
 
 Accepting locks the deal → creates an **Order**, marks request `FULFILLED`, rejects sibling quotes, shows **OTP** to the consumer.
 
-### 7. Order completion (`/orders/:id`)
+### 8. Order completion (`/orders/:id`)
 
 Statuses:
 
@@ -215,6 +230,7 @@ Statuses:
 |-------|---------|
 | `/provider/overview` | Status, go online, public link, quick location |
 | `/provider/inquiries` | Consumer pre-request chats |
+| `/provider/support` | **Admin messages** (support threads; unread badge) |
 | `/provider/requests` | Leads (targeted + nearby broadcast) |
 | `/provider/quote` | Submit a quote |
 | `/provider/quotes` | Quotes sent |
@@ -279,7 +295,14 @@ Only **APPROVED** providers can go online and receive chat / live leads.
 - **Detect location** (location icon) — fills coords from GPS
 - **Save** — persists location and travel radius
 
-### 4. Handle leads (`/provider/requests`)
+### 4. Admin messages (`/provider/support`)
+
+Providers can reply to admin-initiated support threads.
+
+- Unread count badge on **Admin messages** in the sidebar
+- Real-time via WebSocket type `admin_message`
+
+### 5. Handle leads (`/provider/requests`)
 
 Feed includes:
 
@@ -291,7 +314,7 @@ Per lead:
 1. **Chat & ask** — clarify with the consumer  
 2. **Send quote** — price, ETA (days), message, optional catalog URL / attachments  
 
-### 5. Fulfill order
+### 6. Fulfill order
 
 After consumer accepts:
 
@@ -306,13 +329,67 @@ After consumer accepts:
 
 | Route | Purpose |
 |-------|---------|
-| `/admin/providers` | Approve / reject providers |
+| `/admin/providers` | List / filter providers; open detail; orders modal; chat |
+| `/admin/providers/:userId` | Provider detail (profile, docs, approve/reject/revoke, chat) |
 | `/admin/consumers` | List consumers; delete users |
-| `/admin/orders` | Platform orders |
-| `/admin/categories` | Create / activate / deactivate categories & subcategories |
+| `/admin/orders` | **Order dashboard** — location + date analytics |
+| `/admin/categories` | Manage / create taxonomy |
+| `/admin/messages` | Provider support inbox (unread badge) |
 | `/admin/config` | SMTP settings + test email |
 
 Provider verify: `POST /providers/{user_id}/verify` with `APPROVED` or `REJECTED`.
+
+### Providers list (`/admin/providers`)
+
+Filters: **All / Pending / Approved / Rejected / New messages** (unread provider replies).
+
+Per card:
+
+- **Details** → `/admin/providers/:userId`
+- **Orders** → modal of that provider’s consumer orders (`GET /admin/orders?provider_id=`)
+- Chat icon → detail page messaging (or open chat)
+- Approve / Reject / Revoke as applicable
+
+Detail page (`GET /admin/providers/{user_id}`) shows username (login phone), address, city, state, pincode, documents, order count, and a **Chat** action that opens admin↔provider messaging.
+
+### Order dashboard (`/admin/orders`)
+
+Nav label: **Order dashboard**.
+
+Reports for consumers, providers, and orders by location and date:
+
+| Control | Options |
+|---------|---------|
+| Date range | 7 / 30 / 90 days, this month, all time, or **custom** From/To |
+| Group by | State · City · Area (`location_label`) · Pincode |
+| Order geo from | Consumer or provider profile location |
+| Location filters | Cascading state / city / area / pincode |
+
+KPIs: consumers, providers, orders, completed, completed GMV.
+
+Also: location breakdown **table**, collapsible orders-in-range list.
+
+**APIs:**
+
+- `GET /admin/analytics?group_by=&location_of=&state=&city=&area=&pincode=&date_from=&date_to=`
+- `GET /admin/orders?provider_id=&date_from=&date_to=`
+
+Area maps to `User.location_label`. Order pincode can fall back to `ServiceRequest.request_pincode` when grouping by pincode.
+
+### Categories (`/admin/categories`)
+
+1. **Manage category** (default) — search, counts, activate/deactivate, add subcategory  
+2. **Create category** — shown after **+ Create category**; hides manage until back/cancel/success  
+
+Kind color coding: **Services** (blue), **Products** (amber), **Products & services** (green).
+
+### Admin ↔ provider messaging
+
+- Models / API under `/support-conversations` (list, create, messages, read, unread-count)
+- Admin nav: **Provider messages** with unread badge
+- Provider nav: **Admin messages** with unread badge
+- WebSocket event: `admin_message`
+- Threads cleaned up when an admin deletes the provider user
 
 ---
 
@@ -335,7 +412,8 @@ Providers must be **verified (APPROVED)** to receive broadcast notifications and
 |------------|--------|
 | API | `GET /geo/reverse?latitude=&longitude=` |
 | Returns | `location_label`, `city` (local name), `state`, `pincode`, coords |
-| Used on | Register, profile Detect location, landing Your area, server-side register fallback |
+| Used on | Register, profile Detect location, landing search area, server-side register fallback |
+| Analytics “area” | Groups by `User.location_label` |
 
 Local names prefer neighbourhood / suburb / village over generic admin labels (e.g. corporation, urban district).
 
@@ -347,6 +425,7 @@ Local names prefer neighbourhood / suburb / village over generic admin labels (e
 |------|------|-----------|
 | **Inquiry chat** | Before (and alongside) requests | Consumer ↔ Provider only |
 | **Order chat** | After quote accepted | Specific `order_id` |
+| **Admin support chat** | Admin ↔ provider support | `AdminConversation` |
 
 Real-time: WebSockets (+ Redis pub/sub for multi-instance fan-out).
 
@@ -382,6 +461,7 @@ Also: `DISPUTED`, `CANCELLED` from mid-flow.
 - Mutual ratings after completed orders
 - Public profiles for transparency (no sensitive docs exposed)
 - Friendly public URLs without exposing internal UUIDs by default
+- Admin can message providers and monitor unread support threads
 
 ---
 
@@ -391,8 +471,8 @@ Also: `DISPUTED`, `CANCELLED` from mid-flow.
 |----------|--------|
 | Guest | `/`, `/login`, `/register`, `/p/:slug` (or `/p/:userId`) |
 | Consumer | `/consumer/*`, `/profile`, `/orders/:id` |
-| Provider | `/provider/*`, `/profile`, `/orders/:id` |
-| Admin | `/admin/*` |
+| Provider | `/provider/*` (incl. `/provider/support`), `/profile`, `/orders/:id` |
+| Admin | `/admin/providers`, `/admin/providers/:userId`, `/admin/orders` (dashboard), `/admin/categories`, `/admin/messages`, `/admin/consumers`, `/admin/config` |
 
 ---
 
@@ -410,8 +490,9 @@ Seeded provider public page example: `/p/quickfix-plumbing`.
 
 ## Notes for operators
 
-- Restart backend after schema updates so startup migrations apply (`public_slug`, `target_mode`, `request_targets`, `payment_mode`, social URL columns, SMTP table, etc.).
+- Restart backend after schema updates so startup migrations apply (`public_slug`, `target_mode`, `request_targets`, `payment_mode`, social URL columns, SMTP table, admin support conversations, etc.).
 - Existing providers without a slug are backfilled on startup from business name.
 - Provider registration/approval emails need **Admin → Config** SMTP enabled with a valid from-address.
 - Matching quality depends on accurate GPS **and/or** pincode (plus city) on both consumer and provider profiles.
+- Order dashboard location quality depends on filled `state` / `city` / `pincode` / `location_label` on user profiles.
 - Reverse geocoding uses OpenStreetMap Nominatim; allow outbound network from the API host.

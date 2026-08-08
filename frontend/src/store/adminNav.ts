@@ -8,12 +8,15 @@ interface AdminCounts {
   orders: number;
   categories: number;
   pendingProviders: number;
+  messagesUnread: number;
 }
 
 interface AdminNavState {
   counts: AdminCounts;
   loading: boolean;
   refreshCounts: () => Promise<void>;
+  bumpMessagesUnread: (by?: number) => void;
+  clearMessagesUnread: () => void;
 }
 
 const empty: AdminCounts = {
@@ -22,6 +25,7 @@ const empty: AdminCounts = {
   orders: 0,
   categories: 0,
   pendingProviders: 0,
+  messagesUnread: 0,
 };
 
 export const useAdminNav = create<AdminNavState>((set) => ({
@@ -30,11 +34,12 @@ export const useAdminNav = create<AdminNavState>((set) => ({
   refreshCounts: async () => {
     set({ loading: true });
     try {
-      const [cats, provs, cons, ords] = await Promise.all([
+      const [cats, provs, cons, ords, unread] = await Promise.all([
         api.get<Category[]>("/categories/admin/all"),
         api.get<{ user_id: string; verification_status: string }[]>("/admin/providers"),
         api.get<unknown[]>("/admin/consumers"),
         api.get<unknown[]>("/admin/orders"),
+        api.get<{ unread_count: number }>("/support-conversations/unread-count"),
       ]);
       const parents = cats.data;
       const categoryCount =
@@ -46,6 +51,7 @@ export const useAdminNav = create<AdminNavState>((set) => ({
           orders: ords.data.length,
           categories: categoryCount,
           pendingProviders: provs.data.filter((p) => p.verification_status === "PENDING").length,
+          messagesUnread: unread.data.unread_count || 0,
         },
         loading: false,
       });
@@ -53,4 +59,15 @@ export const useAdminNav = create<AdminNavState>((set) => ({
       set({ loading: false });
     }
   },
+  bumpMessagesUnread: (by = 1) =>
+    set((s) => ({
+      counts: {
+        ...s.counts,
+        messagesUnread: Math.max(0, s.counts.messagesUnread + by),
+      },
+    })),
+  clearMessagesUnread: () =>
+    set((s) => ({
+      counts: { ...s.counts, messagesUnread: 0 },
+    })),
 }));

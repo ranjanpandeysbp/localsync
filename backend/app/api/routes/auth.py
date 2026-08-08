@@ -40,6 +40,7 @@ def user_to_out(user: User, db: Session | None = None) -> UserOut:
         id=user.id,
         role=user.role,
         phone_number=user.phone_number,
+        username=user.phone_number,
         email=user.email,
         full_name=user.full_name,
         is_active=user.is_active,

@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { ProtectedRoute, GuestRoute } from "./components/ProtectedRoute";
 import { AdminPage } from "./pages/AdminPage";
+import { AdminProviderDetailPage } from "./pages/AdminProviderDetailPage";
 import { ConsumerDashboard } from "./pages/ConsumerDashboard";
 import { HomeRedirect } from "./pages/HomeRedirect";
 import { LoginPage } from "./pages/LoginPage";
@@ -49,6 +50,7 @@ export default function App() {
 
         <Route element={<ProtectedRoute roles={["ADMIN"]} />}>
           <Route path="/admin" element={<Navigate to="/admin/providers" replace />} />
+          <Route path="/admin/providers/:userId" element={<AdminProviderDetailPage />} />
           <Route path="/admin/:section" element={<AdminPage />} />
         </Route>
 

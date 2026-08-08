@@ -76,6 +76,11 @@ export function ConsumerDashboard() {
   const [toast, setToast] = useState("");
   const [busy, setBusy] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
+  const [requestSearch, setRequestSearch] = useState("");
+  const [requestStatusFilter, setRequestStatusFilter] = useState<
+    "ALL" | ServiceRequest["status"]
+  >("ALL");
+  const [requestFilterOpen, setRequestFilterOpen] = useState(false);
   const [form, setForm] = useState({
     category_id: "",
     title: "",
@@ -171,6 +176,58 @@ export function ConsumerDashboard() {
   const offlineProviders = useMemo(() => providers.filter((p) => !p.is_online), [providers]);
   const tabProviders = providerTab === "online" ? onlineProviders : offlineProviders;
 
+  const categoryNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const opt of flattenCategoryOptions(tree)) {
+      map.set(opt.id, opt.label);
+    }
+    return map;
+  }, [tree]);
+
+  const requestStatusCounts = useMemo(() => {
+    const counts = { ALL: requests.length, ACTIVE: 0, FULFILLED: 0, EXPIRED: 0, CANCELLED: 0 };
+    for (const r of requests) {
+      counts[r.status] += 1;
+    }
+    return counts;
+  }, [requests]);
+
+  const filteredRequests = useMemo(() => {
+    const q = requestSearch.trim().toLowerCase();
+    return requests.filter((r) => {
+      if (requestStatusFilter !== "ALL" && r.status !== requestStatusFilter) return false;
+      if (!q) return true;
+      const category = categoryNameById.get(r.category_id) || "";
+      const haystack = [r.title, r.description, r.status, category, r.request_pincode || ""]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [requests, requestSearch, requestStatusFilter, categoryNameById]);
+
+  useEffect(() => {
+    if (tab !== "requests") setRequestFilterOpen(false);
+  }, [tab]);
+
+  useEffect(() => {
+    if (!requestFilterOpen) return;
+    function onPointerDown(e: PointerEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest(".consumer-requests-filter-menu")) return;
+      setRequestFilterOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [requestFilterOpen]);
+
+  const requestStatusOptions = [
+    ["ALL", "All"],
+    ["ACTIVE", "Active"],
+    ["FULFILLED", "Fulfilled"],
+    ["EXPIRED", "Expired"],
+    ["CANCELLED", "Cancelled"],
+  ] as const;
+
   if (invalidSection) {
     return <Navigate to="/consumer/details" replace />;
   }
@@ -216,6 +273,7 @@ export function ConsumerDashboard() {
       setFiles([]);
       setSelectedProviders([]);
       await refresh();
+      navigate("/consumer/requests");
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
@@ -553,28 +611,250 @@ export function ConsumerDashboard() {
       )}
 
       {tab === "requests" && (
-        <div className="card">
-          <div className="page-heading-row">
-            <h2 style={{ margin: 0 }}>My requests</h2>
-            <Link className="btn" to="/consumer/post">
-              Create a Request
-            </Link>
-          </div>
-          <div className="list">
-            {requests.length === 0 && <p className="muted">No requests yet.</p>}
-            {requests.map((r) => (
-              <div key={r.id} className="list-item">
-                <strong>{r.title}</strong>
-                <div className="muted">
-                  {r.status} · {r.search_radius_km} km
-                  {r.attachments?.length ? ` · ${r.attachments.length} attachment(s)` : ""}
-                </div>
-                <MapsLink latitude={r.latitude} longitude={r.longitude} />
-                <AttachmentGallery attachments={r.attachments} />
-                <Link to={`/consumer/requests/${r.id}`}>View quotes →</Link>
+        <div className="consumer-requests">
+          <header
+            className={`dash-surface consumer-requests-hero ${
+              requestFilterOpen ? "filter-open" : ""
+            }`}
+          >
+            <div className="consumer-requests-hero-top">
+              <div>
+                <p className="dash-eyebrow">Consumer</p>
+                <h2>My requests</h2>
+                <p className="muted">
+                  Track open jobs, review quotes, and manage past requests.
+                </p>
               </div>
-            ))}
-          </div>
+              <Link className="btn btn-with-icon" to="/consumer/post">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.25"
+                  aria-hidden="true"
+                >
+                  <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+                </svg>
+                Create a request
+              </Link>
+            </div>
+
+            <div className="consumer-requests-tools">
+              <div className="consumer-requests-search-row">
+                <div className="consumer-requests-filter-menu">
+                  <button
+                    type="button"
+                    className={`icon-btn consumer-requests-filter-btn ${
+                      requestStatusFilter !== "ALL" ? "has-filter" : ""
+                    } ${requestFilterOpen ? "open" : ""}`}
+                    aria-label="Filter requests"
+                    aria-expanded={requestFilterOpen}
+                    aria-haspopup="listbox"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRequestFilterOpen((v) => !v);
+                    }}
+                  >
+                    <svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      aria-hidden="true"
+                    >
+                      <path d="M4 5h16M7 12h10M10 19h4" strokeLinecap="round" />
+                    </svg>
+                    {requestStatusFilter !== "ALL" && (
+                      <span className="consumer-requests-filter-dot" aria-hidden="true" />
+                    )}
+                  </button>
+                  {requestFilterOpen && (
+                    <ul className="consumer-requests-filter-list" role="listbox">
+                      {requestStatusOptions.map(([value, label]) => (
+                        <li key={value} role="option" aria-selected={requestStatusFilter === value}>
+                          <button
+                            type="button"
+                            className={requestStatusFilter === value ? "active" : ""}
+                            onClick={() => {
+                              setRequestStatusFilter(value);
+                              setRequestFilterOpen(false);
+                            }}
+                          >
+                            <span>{label}</span>
+                            <span className="consumer-requests-count">
+                              {requestStatusCounts[value]}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="field consumer-requests-search">
+                  <label htmlFor="request-search">Search</label>
+                  <input
+                    id="request-search"
+                    type="search"
+                    value={requestSearch}
+                    placeholder="Search by title, description, category…"
+                    onChange={(e) => setRequestSearch(e.target.value)}
+                    autoComplete="off"
+                  />
+                </div>
+              </div>
+
+              <div
+                className="dash-segment consumer-requests-filters-desktop"
+                role="tablist"
+                aria-label="Request status"
+              >
+                {requestStatusOptions.map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`dash-segment-btn ${requestStatusFilter === value ? "active" : ""}`}
+                    onClick={() => setRequestStatusFilter(value)}
+                  >
+                    {label}
+                    <span className="consumer-requests-count">{requestStatusCounts[value]}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </header>
+
+          {requests.length === 0 ? (
+            <div className="dash-surface consumer-requests-empty">
+              <h3>No requests yet</h3>
+              <p className="muted">
+                Post what you need and nearby verified providers can send quotes.
+              </p>
+              <Link className="btn btn-with-icon" to="/consumer/post">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.25"
+                  aria-hidden="true"
+                >
+                  <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+                </svg>
+                Create a request
+              </Link>
+            </div>
+          ) : filteredRequests.length === 0 ? (
+            <div className="dash-surface consumer-requests-empty">
+              <h3>No matches</h3>
+              <p className="muted">Try another search or status filter.</p>
+            </div>
+          ) : (
+            <div className="consumer-requests-grid">
+              {filteredRequests.map((r) => {
+                const category = categoryNameById.get(r.category_id) || "Category";
+                const quotesForRequest = receivedQuotes.filter((q) => q.request_id === r.id).length;
+                const statusKey = r.status.toLowerCase();
+                return (
+                  <article
+                    key={r.id}
+                    className={`consumer-request-card status-${statusKey}`}
+                  >
+                    <div className="consumer-request-card-accent" aria-hidden="true" />
+                    <header className="consumer-request-card-head">
+                      <div className="consumer-request-mark" aria-hidden="true">
+                        {r.title.slice(0, 1).toUpperCase()}
+                      </div>
+                      <div className="consumer-request-card-title">
+                        <div className="consumer-request-card-topline">
+                          <span className="consumer-request-category">{category}</span>
+                          <span className={`pill request-status ${statusKey}`}>
+                            {r.status}
+                          </span>
+                        </div>
+                        <h3>{r.title}</h3>
+                      </div>
+                    </header>
+
+                    {r.description && (
+                      <p className="consumer-request-desc">
+                        {r.description.length > 120
+                          ? `${r.description.slice(0, 120).trim()}…`
+                          : r.description}
+                      </p>
+                    )}
+
+                    <div className="consumer-request-chips">
+                      <span className="consumer-request-chip">
+                        <strong>{r.search_radius_km} km</strong>
+                        radius
+                      </span>
+                      <span className="consumer-request-chip">
+                        <strong>{r.target_mode === "TARGETED" ? "Targeted" : "Broadcast"}</strong>
+                        mode
+                      </span>
+                      <span className="consumer-request-chip">
+                        <strong>{quotesForRequest}</strong>
+                        quotes
+                      </span>
+                      <span className="consumer-request-chip">
+                        <strong>{new Date(r.created_at).toLocaleDateString()}</strong>
+                        posted
+                      </span>
+                      {r.request_pincode && (
+                        <span className="consumer-request-chip">
+                          <strong>{r.request_pincode}</strong>
+                          pincode
+                        </span>
+                      )}
+                      {r.matched_provider_count != null && (
+                        <span className="consumer-request-chip">
+                          <strong>{r.matched_provider_count}</strong>
+                          matched
+                        </span>
+                      )}
+                    </div>
+
+                    {(r.latitude != null || (r.attachments && r.attachments.length > 0)) && (
+                      <div className="consumer-request-links">
+                        <MapsLink latitude={r.latitude} longitude={r.longitude} />
+                        {r.attachments && r.attachments.length > 0 && (
+                          <span className="consumer-request-attach-count">
+                            {r.attachments.length} file
+                            {r.attachments.length === 1 ? "" : "s"}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {r.attachments && r.attachments.length > 0 && (
+                      <div className="consumer-request-attachments">
+                        <AttachmentGallery attachments={r.attachments} />
+                      </div>
+                    )}
+
+                    <footer className="consumer-request-card-actions">
+                      <Link className="btn" to={`/consumer/requests/${r.id}`}>
+                        View quotes
+                      </Link>
+                      {quotesForRequest > 0 ? (
+                        <span className="consumer-request-quote-badge">
+                          {quotesForRequest} waiting
+                        </span>
+                      ) : (
+                        <span className="muted consumer-request-quiet">No quotes yet</span>
+                      )}
+                    </footer>
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

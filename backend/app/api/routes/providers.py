@@ -232,26 +232,88 @@ def _catalog_items(
 
 @router.get("/public-search", response_model=PublicSearchOut)
 def public_search(
-    q: str = Query(..., min_length=1, max_length=100),
+    q: str = Query(default="", max_length=100),
     latitude: float | None = Query(default=None),
     longitude: float | None = Query(default=None),
     pincode: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    """Search products/services by category name or provider offerings (public)."""
+    """Search products/services by category name or provider offerings (public).
+
+    Empty query returns all nearby verified providers (GPS 5 km, or same pincode).
+    """
     from app.core.config import settings
-    from app.services.geo import match_providers, normalize_lat_lon, normalize_pincode
+    from app.services.geo import (
+        match_all_nearby_providers,
+        match_providers,
+        normalize_lat_lon,
+        normalize_pincode,
+    )
     from sqlalchemy import func as sa_func
 
-    query = q.strip()
-    if not query:
-        return PublicSearchOut(query=q, categories=[], providers=[])
-
-    like = f"%{query.lower()}%"
+    query = (q or "").strip()
     lon, lat = longitude, latitude
     if lon is not None and lat is not None:
         lon, lat = normalize_lat_lon(lon, lat)
     pin = normalize_pincode(pincode)
+
+    def _catalog_row(profile: ProviderProfile, user: User) -> ProviderCatalogItem:
+        plon, plat = get_lon_lat_from_profile(db, profile)
+        if plat is None:
+            plat = user.latitude
+            plon = user.longitude
+        names = provider_category_names(db, profile)
+        return ProviderCatalogItem(
+            user_id=user.id,
+            full_name=user.full_name,
+            business_name=profile.business_name,
+            public_slug=profile.public_slug,
+            public_url_path=public_url_path_for(profile),
+            category_id=profile.category_id,
+            category_name=names[0] if names else None,
+            categories=names,
+            description=profile.description,
+            offerings_detail=profile.offerings_detail,
+            offer_kind=profile.offer_kind,
+            opening_time=profile.opening_time,
+            closing_time=profile.closing_time,
+            gst_number=profile.gst_number,
+            is_online=profile.is_online,
+            verification_status=profile.verification_status,
+            average_rating=user.average_rating,
+            rating_count=user.rating_count,
+            latitude=plat,
+            longitude=plon,
+            location_label=user.location_label,
+            maps_url=google_maps_url(plat, plon),
+            max_radius_km=profile.max_radius_km,
+        )
+
+    # Blank search → all nearby providers by GPS / pincode
+    if not query:
+        if lat is None and lon is None and not pin:
+            raise HTTPException(
+                status_code=400,
+                detail="Enter a pincode or allow location to see nearby providers",
+            )
+        nearby = match_all_nearby_providers(
+            db,
+            longitude=lon,
+            latitude=lat,
+            radius_km=settings.default_search_radius_km,
+            pincode=pin,
+            online_only=False,
+            verified_only=True,
+        )
+        items: list[ProviderCatalogItem] = []
+        for profile, _dist in nearby[:40]:
+            user = db.get(User, profile.user_id)
+            if not user or not user.is_active:
+                continue
+            items.append(_catalog_row(profile, user))
+        return PublicSearchOut(query="", categories=[], providers=items)
+
+    like = f"%{query.lower()}%"
 
     cat_rows = db.scalars(
         select(Category)
@@ -331,7 +393,6 @@ def public_search(
     # Optional nearby filter
     nearby_ids = None
     if (lat is not None and lon is not None) or pin:
-        # Union of matches across found categories + unrestricted text hits via geo helper on each cat
         nearby_ids = set()
         cat_ids_for_geo = matched_cat_ids or {
             link.category_id
@@ -353,42 +414,11 @@ def public_search(
             ):
                 nearby_ids.add(profile.id)
 
-    items: list[ProviderCatalogItem] = []
+    items = []
     for profile, user in provider_rows:
         if nearby_ids is not None and profile.id not in nearby_ids:
             continue
-        plon, plat = get_lon_lat_from_profile(db, profile)
-        if plat is None:
-            plat = user.latitude
-            plon = user.longitude
-        names = provider_category_names(db, profile)
-        items.append(
-            ProviderCatalogItem(
-                user_id=user.id,
-                full_name=user.full_name,
-                business_name=profile.business_name,
-                public_slug=profile.public_slug,
-                public_url_path=public_url_path_for(profile),
-                category_id=profile.category_id,
-                category_name=names[0] if names else None,
-                categories=names,
-                description=profile.description,
-                offerings_detail=profile.offerings_detail,
-                offer_kind=profile.offer_kind,
-                opening_time=profile.opening_time,
-                closing_time=profile.closing_time,
-                gst_number=profile.gst_number,
-                is_online=profile.is_online,
-                verification_status=profile.verification_status,
-                average_rating=user.average_rating,
-                rating_count=user.rating_count,
-                latitude=plat,
-                longitude=plon,
-                location_label=user.location_label,
-                maps_url=google_maps_url(plat, plon),
-                max_radius_km=profile.max_radius_km,
-            )
-        )
+        items.append(_catalog_row(profile, user))
         if len(items) >= 24:
             break
 

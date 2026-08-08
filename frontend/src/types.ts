@@ -5,6 +5,7 @@ export interface User {
   id: string;
   role: UserRole;
   phone_number: string;
+  username?: string;
   email: string | null;
   full_name: string;
   is_active: boolean;
@@ -252,6 +253,7 @@ export interface AdminProvider {
   user_id: string;
   full_name: string;
   phone_number: string;
+  username?: string;
   email: string | null;
   business_name: string;
   category_id: number | null;
@@ -273,6 +275,31 @@ export interface AdminProvider {
   created_at: string;
 }
 
+export interface AdminProviderDetail extends AdminProvider {
+  public_slug?: string | null;
+  public_url_path?: string | null;
+  description?: string | null;
+  offerings_detail?: string | null;
+  website_url?: string | null;
+  instagram_url?: string | null;
+  youtube_url?: string | null;
+  opening_time?: string | null;
+  closing_time?: string | null;
+  max_radius_km: number;
+  alternate_phone?: string | null;
+  address_line1?: string | null;
+  address_line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  pincode?: string | null;
+  government_id_url?: string | null;
+  business_reg_url?: string | null;
+  gst_doc_url?: string | null;
+  tax_id?: string | null;
+  order_count: number;
+  updated_at?: string | null;
+}
+
 export interface AdminOrder {
   id: string;
   quote_id: string;
@@ -287,6 +314,64 @@ export interface AdminOrder {
   status: string;
   created_at: string;
   completed_at: string | null;
+}
+
+export type AdminAnalyticsGroupBy = "state" | "city" | "area" | "pincode";
+export type AdminAnalyticsLocationOf = "consumer" | "provider";
+
+export interface AdminAnalyticsBucket {
+  key: string;
+  label: string;
+  state?: string | null;
+  city?: string | null;
+  area?: string | null;
+  pincode?: string | null;
+  consumers: number;
+  providers: number;
+  orders: number;
+  orders_completed: number;
+  gmv: number;
+}
+
+export interface AdminAnalyticsStatusBucket {
+  status: string;
+  orders: number;
+  gmv: number;
+}
+
+export interface AdminAnalyticsFilterOptions {
+  states: string[];
+  cities: string[];
+  areas: string[];
+  pincodes: string[];
+}
+
+export interface AdminAnalyticsSummary {
+  consumers: number;
+  providers: number;
+  orders: number;
+  orders_completed: number;
+  gmv: number;
+  unknown_location: number;
+}
+
+export interface AdminAnalyticsTimelinePoint {
+  date: string;
+  orders: number;
+  completed: number;
+  gmv: number;
+}
+
+export interface AdminAnalytics {
+  group_by: AdminAnalyticsGroupBy;
+  location_of: AdminAnalyticsLocationOf;
+  date_from?: string | null;
+  date_to?: string | null;
+  summary: AdminAnalyticsSummary;
+  status_breakdown: AdminAnalyticsStatusBucket[];
+  buckets: AdminAnalyticsBucket[];
+  timeline: AdminAnalyticsTimelinePoint[];
+  filter_options: AdminAnalyticsFilterOptions;
 }
 
 export interface ChatMessage {
@@ -317,4 +402,18 @@ export interface InquiryMessage {
   sender_id: string;
   body: string;
   created_at: string;
+}
+
+export interface AdminSupportConversation {
+  id: string;
+  provider_id: string;
+  created_by_admin_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  provider_name?: string | null;
+  provider_business_name?: string | null;
+  admin_name?: string | null;
+  last_message?: string | null;
+  unread_count?: number;
+  provider_message_count?: number;
 }

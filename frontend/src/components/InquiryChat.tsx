@@ -1,24 +1,31 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api } from "../services/api";
 import { useAuth } from "../store/auth";
-import type { Conversation, InquiryMessage } from "../types";
+import type { AdminSupportConversation, Conversation, InquiryMessage } from "../types";
 
 export function InquiryChatPanel({
   conversationId,
   title,
   onClose,
+  messagesPath,
+  emptyHint = "Ask anything before placing a request.",
+  placeholder = "Type a question…",
 }: {
   conversationId: string;
   title: string;
   onClose?: () => void;
+  messagesPath?: string;
+  emptyHint?: string;
+  placeholder?: string;
 }) {
   const user = useAuth((s) => s.user);
   const [messages, setMessages] = useState<InquiryMessage[]>([]);
   const [body, setBody] = useState("");
   const [error, setError] = useState("");
+  const path = messagesPath || `/conversations/${conversationId}/messages`;
 
   async function load() {
-    const { data } = await api.get<InquiryMessage[]>(`/conversations/${conversationId}/messages`);
+    const { data } = await api.get<InquiryMessage[]>(path);
     setMessages(data);
   }
 
@@ -26,13 +33,13 @@ export function InquiryChatPanel({
     void load();
     const t = window.setInterval(() => void load(), 3000);
     return () => window.clearInterval(t);
-  }, [conversationId]);
+  }, [conversationId, path]);
 
   async function send(e: FormEvent) {
     e.preventDefault();
     if (!body.trim()) return;
     try {
-      const { data } = await api.post<InquiryMessage>(`/conversations/${conversationId}/messages`, {
+      const { data } = await api.post<InquiryMessage>(path, {
         body,
       });
       setMessages((prev) => [...prev, data]);
@@ -57,7 +64,7 @@ export function InquiryChatPanel({
         )}
       </div>
       <div className="chat-box">
-        {messages.length === 0 && <p className="muted">Ask anything before placing a request.</p>}
+        {messages.length === 0 && <p className="muted">{emptyHint}</p>}
         {messages.map((m) => (
           <div key={m.id} className={`bubble ${m.sender_id === user?.id ? "mine" : ""}`}>
             {m.body}
@@ -69,7 +76,7 @@ export function InquiryChatPanel({
           style={{ flex: 1 }}
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          placeholder="Type a question…"
+          placeholder={placeholder}
         />
         <button className="btn" type="submit">
           Send
@@ -101,6 +108,17 @@ export async function startProviderChatWithConsumer(
   const { data } = await api.post<Conversation>("/conversations/with-consumer", {
     consumer_id: consumerId,
     category_id: categoryId || null,
+    initial_message: initialMessage || null,
+  });
+  return data;
+}
+
+export async function startOrOpenAdminSupport(
+  providerId: string,
+  initialMessage?: string,
+): Promise<AdminSupportConversation> {
+  const { data } = await api.post<AdminSupportConversation>("/support-conversations", {
+    provider_id: providerId,
     initial_message: initialMessage || null,
   });
   return data;

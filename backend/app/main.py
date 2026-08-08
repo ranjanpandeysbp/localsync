@@ -79,6 +79,8 @@ def _run_startup_migrations() -> None:
             "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS instagram_url VARCHAR(500)",
             "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS youtube_url VARCHAR(500)",
             "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS public_slug VARCHAR(100)",
+            "ALTER TABLE admin_conversations ADD COLUMN IF NOT EXISTS provider_last_read_at TIMESTAMPTZ",
+            "ALTER TABLE admin_conversations ADD COLUMN IF NOT EXISTS admin_last_read_at TIMESTAMPTZ",
         ):
             try:
                 conn.execute(text(stmt))

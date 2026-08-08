@@ -7,6 +7,13 @@ export function offerKindLabel(kind?: OfferKind | null): string {
   return "—";
 }
 
+export function offerKindClass(kind?: OfferKind | null): string {
+  if (kind === "PRODUCT") return "kind-product";
+  if (kind === "SERVICE") return "kind-service";
+  if (kind === "BOTH") return "kind-both";
+  return "";
+}
+
 /** Flatten category tree into select options (parents + subcategories). */
 export function flattenCategoryOptions(tree: CategoryTree[]): { id: number; label: string }[] {
   const opts: { id: number; label: string }[] = [];
