@@ -1,8 +1,8 @@
-# LocalSync App Workflow
+# Gharq App Workflow
 
 ## Overview
 
-LocalSync is a hyper-local marketplace that connects **consumers** with nearby **verified providers** for products and services.
+Gharq is a hyper-local marketplace that connects **consumers** with nearby **verified providers** for products and services.
 
 **Stack:** React (Vite) · FastAPI · JWT · PostgreSQL/PostGIS · Redis · WebSockets
 
@@ -23,9 +23,12 @@ LocalSync is a hyper-local marketplace that connects **consumers** with nearby *
 |------|-----|------------------|
 | **Consumer** | Needs a product/service nearby | `/consumer/details` |
 | **Provider** | Offers products/services | `/provider/overview` |
-| **Admin** | Verifies providers, manages platform | `/admin/providers` |
+| **Admin** | Full platform ops: providers, consumers, orders, categories, messages, **customer service agents**, Config/SMTP | `/admin/providers` |
+| **Customer service** (`CUSTOMER_SERVICE`) | Same ops as admin **except** Config and managing other CS agents | `/admin/providers` |
 
 Guests land on `/` (public landing). Logged-in users are redirected to their role home.
+
+Staff self-registration is blocked (`ADMIN` / `CUSTOMER_SERVICE`). Only an **Admin** can create, approve, revoke, re-approve, or delete customer service agents.
 
 ---
 
@@ -67,7 +70,8 @@ Consumer shares OTP → Provider completes → both rate each other
 5. Search products/services (`GET /providers/public-search`). Blank keyword still supports nearby / pincode matching.
 6. Browse category catalog (`GET /providers/public-catalog`).
 7. Open a provider’s public page at `/p/:slug` (friendly shop-name URL; legacy `/p/:userId` still works).
-8. To chat or request, guest is prompted to **register / log in**.
+8. To chat or request, guest is prompted to **register / log in** (modals on the landing page, or deep links `/?login=1` / `/?register=1`).
+9. Landing header **Log in** / **Register** open the same auth modals without leaving `/`.
 
 Public provider page shows:
 
@@ -80,19 +84,43 @@ Public provider page shows:
 
 ## Auth / registration
 
-### Sign in (`/login`)
+Sign-in and registration are **modals on the public landing page** (`/`), not separate full-page screens.
 
-- Phone field is **trimmed** (leading/trailing spaces) on Sign in.
-- Demo credentials are shown on the page.
+| Action | Opens | Deep link / redirect |
+|--------|--------|----------------------|
+| **Log in** | Login modal on `/` | `/?login=1` (also `/login` → redirects here) |
+| **Register** | Register modal on `/` | `/?register=1` (also `/register` → redirects here) |
 
-### Register (`/register`)
+- Modals are mutually exclusive; **Create account** / **Sign in** switches between them without leaving the landing page.
+- Backdrop click, Escape, or × closes the modal and clears the query param.
+- Unauthenticated access to protected routes and logout send the user to `/?login=1`.
+- Forgot / reset password remain standalone pages (`/forgot-password`, `/reset-password`).
 
-Wide layout for both consumer and provider. Top-left **home** icon returns to landing. **Sign in** link is styled in blue.
+### Sign in (landing modal)
+
+- Compact dialog over the landing hero (frosted backdrop).
+- Phone + password; phone is **trimmed** (leading/trailing spaces) on submit.
+- **Forgot password?** → `/forgot-password`
+- **Create account** → opens the register modal (`/?register=1`)
+
+### Forgot password
+
+1. User enters phone on `/forgot-password` → `POST /auth/forgot-password`
+2. If the account exists, is active, and has an email on file, a reset link is emailed (SMTP must be enabled in Admin → Config)
+3. Response is always generic (does not reveal whether the phone is registered)
+4. Link opens `/reset-password?token=…` (JWT, expires in 30 minutes by default)
+5. User sets a new password → `POST /auth/reset-password` → redirected to sign in (`/?login=1`)
+
+Config: `frontend_url` (link base, default `http://localhost:5173`) and `password_reset_expire_minutes`.
+
+### Register (landing modal)
+
+Scrollable modal on `/` (wider when role is **Provider**). Same fields as before; **Sign in** switches to the login modal.
 
 **Shared fields (both roles):**
 
 - Full name, phone, email (required for provider; optional for consumer), password
-- **City / locality** and **Pincode** — always shown, editable; auto-filled from GPS via reverse geocoding
+- **City / locality** and **Pincode** — always shown, editable; auto-filled from GPS via reverse geocoding when the modal opens
 - **Location** status — local place name with coordinates, e.g. `Indiranagar 1st Stage · 12.97840, 77.64080`
 - Reverse geocode prefers **local** names (neighbourhood / suburb) over generic admin labels, and also fills **state** when available
 
@@ -103,7 +131,7 @@ Wide layout for both consumer and provider. Top-left **home** icon returns to la
 - About + What they offer
 - Aadhaar upload (required) + optional GST
 
-After provider submit: pending-review message; **login blocked** until admin approval. Emails send when Admin SMTP is enabled.
+After provider submit: pending-review message stays in the modal; **login blocked** until admin approval. Emails send when Admin SMTP is enabled. Consumer signup signs in immediately and continues to profile / role home.
 
 ---
 
@@ -114,15 +142,15 @@ After provider submit: pending-review message; **login blocked** until admin app
 | Route | Purpose |
 |-------|---------|
 | `/consumer/details` | Profile summary → Edit profile |
-| `/consumer/providers` | Browse providers; chat; select for targeted request |
-| `/consumer/inquiries` | Pre-request chats |
+| `/consumer/providers` | Browse providers by category (Online/Offline); chat; select for targeted request |
+| `/consumer/inquiries` | **Recent inquiries** — chats updated in the last 30 days; delete chat |
 | `/consumer/post` | Create targeted or broadcast request |
-| `/consumer/requests` | Own requests (+ **Create a request** → `/consumer/post`) |
+| `/consumer/requests` | **My requests** — ACTIVE requests only (+ cancel; **Create a request** → `/consumer/post`) |
 | `/consumer/requests/:id` | Quotes for one request; accept deal |
-| `/consumer/quotes` | All quotes received |
-| `/consumer/orders` | Orders list → `/orders/:id` |
+| `/consumer/quotes` | **Received Quotes** |
+| `/consumer/orders` | **Orders** — completed deals + cancelled requests → `/orders/:id` |
 
-Also: `/profile` for full contact/address edit.
+Also: `/profile` for full contact/address edit (vertical accordion sections).
 
 ### 1. Register and location
 
@@ -134,16 +162,22 @@ Consumer signs up with role, name, phone, password, city, pincode, and GPS when 
 
 ### 2. Complete profile (`/profile`)
 
-Address, city, **state** (auto-filled from GPS when possible), pincode, email, alternate phone.
+Vertical accordion sections (one open at a time; **Contact & address** open by default):
 
+1. **Contact & address** — name, email, alternate mobile, address lines, city, state, pincode, map location (coords + area label)
+2. **Business / shop details** — providers only (see Provider onboarding)
+3. **Upload documents** — providers only
+
+Shared contact fields:
+
+- Address, city, **state** (auto-filled from GPS when possible), pincode, email, alternate phone
 - **Detect location** (with location icon) fills coords, place label, city, state, pincode
+- Fields are a **single-column vertical list** (no side-by-side pairs)
 - **Save** shows a popup: **Profile Updated Successfully**
 
 ### 3. Browse providers (`/consumer/providers`)
 
-Pick a category/subcategory. List splits **Online** / **Offline**.
-
-Each card shows business name, offerings, rating, hours, GST, map link.
+Hero + category select + **Online / Offline** segments. Cards show offer kind, business name, offerings, rating, hours, and map when available.
 
 Actions:
 
@@ -157,8 +191,10 @@ Actions:
 Inquiry chat is **not** tied to a request/order.
 
 - Consumer can open multiple 1:1 chats
-- New chats require the provider to be **approved + online**
+- New chats require the provider to be **approved + online** (within business hours)
 - Existing threads can continue even if the provider goes offline
+- **Recent inquiries** lists chats with activity in the **last 30 days**
+- Consumer can **Delete chat** (in-app confirm popup)
 
 ### 5. Post a request (`/consumer/post`)
 
@@ -179,18 +215,20 @@ On successful create (broadcast or targeted), the app navigates to **`/consumer/
 
 ### 6. My requests (`/consumer/requests`)
 
-Card list of the consumer’s requests with:
+Shows **ACTIVE** requests only (no status filter chips).
 
-- Search by title, description, category, status, pincode
-- Status filters: All / Active / Fulfilled / Expired / Cancelled  
-  - **Desktop:** segmented chips  
-  - **Mobile / tablet (≤960px):** filter icon **before** the search bar opens a status list (search label hidden)
-- Full-width cards with status color accent, meta chips, attachments, **View quotes**
-- Quote-waiting badge when quotes exist for that request
+Per card:
 
-### 7. Quotes and accept (`/consumer/requests/:id`)
+- Search by title, description, category, pincode
+- Meta chips, attachments, **View quotes**
+- Quote-waiting badge when quotes exist
+- **Cancel** on active requests (`POST /requests/{id}/close`):
+  - No pending quotes → confirm popup → cancel → success; card moves to **Orders** as a cancelled request
+  - Pending quotes → reason popup → providers notified via inquiry chat + WS `request_cancelled`
 
-While waiting, consumer can **Chat** with quoting providers.
+### 7. Quotes and accept (`/consumer/requests/:id` · **Received Quotes**)
+
+While waiting, consumer can **Chat** with quoting providers (icon beside provider name). Provider name links to `/p/{id}`. **Verified** badge and rating appear beside the name; **Accept** sits next to price.
 
 When accepting a quote, consumer chooses:
 
@@ -203,7 +241,14 @@ When accepting a quote, consumer chooses:
 
 Accepting locks the deal → creates an **Order**, marks request `FULFILLED`, rejects sibling quotes, shows **OTP** to the consumer.
 
-### 8. Order completion (`/orders/:id`)
+### 8. Orders (`/consumer/orders`)
+
+Combines:
+
+- Accepted / completed order deals → `/orders/:id`
+- **Cancelled requests** (from My requests cancel flow) as **Cancelled Order** cards
+
+### 9. Order completion (`/orders/:id`)
 
 Statuses:
 
@@ -228,7 +273,7 @@ Statuses:
 
 | Route | Purpose |
 |-------|---------|
-| `/provider/overview` | Status, go online, public link, quick location |
+| `/provider/overview` | Hero, KPIs, go online/offline, location & storefront |
 | `/provider/inquiries` | Consumer pre-request chats |
 | `/provider/support` | **Admin messages** (support threads; unread badge) |
 | `/provider/requests` | Leads (targeted + nearby broadcast) |
@@ -236,7 +281,9 @@ Statuses:
 | `/provider/quotes` | Quotes sent |
 | `/provider/orders` | Orders → `/orders/:id` |
 
-Also: `/profile` for business onboarding.
+Also: `/profile` for business onboarding (vertical accordion sections).
+
+**Limited / revoked access:** if verification is `REVOKED` (or rejected after login allowance), sidebar is limited to **Overview**, **Admin messages**, and **My profile**. Marketplace routes redirect to overview.
 
 ### 1. Register
 
@@ -256,14 +303,22 @@ After submit, the provider sees:
 
 > Thank you for registration, your account is being currently reviewed. Please keep checking email from us in next 24hrs.
 
-**Login is blocked** until an admin approves the account (`PENDING` / `REJECTED` cannot sign in).
+**Login is blocked** until an admin (or customer service agent) approves the account (`PENDING` / `REJECTED` cannot sign in).
 
 Transactional emails (when Admin SMTP is enabled):
 
 1. **On register:** thank you; account under review; check email within 24 hours  
-2. **On admin approve:** congratulations; account activated; you can log in and create your listing  
+2. **On admin/CS approve:** congratulations; account activated; you can log in and create your listing  
+3. **On admin/CS re-approve** (from Revoked / Rejected): account restored; marketplace features available again  
+4. **On admin/CS revoke:** access revoked; profile + Admin messages still available  
 
 ### 2. Onboarding (`/profile`)
+
+Same vertical accordion layout as consumer profile. Providers see three sections:
+
+1. **Contact & address**
+2. **Business / shop details**
+3. **Upload documents**
 
 Required for verification / going online:
 
@@ -272,7 +327,7 @@ Required for verification / going online:
 - Categories & subcategories
 - **About** (short description)
 - **What you offer** (detailed offerings)
-- Opening / closing hours
+- Opening / closing hours (**IST**)
 - GST, Aadhaar (and document uploads)
 - Max travel radius
 - Optional: **Website**, **Instagram**, **YouTube**
@@ -281,19 +336,33 @@ Account stays `PENDING` until admin approves.
 
 ### 3. Overview (`/provider/overview`)
 
+Layout:
+
+1. **Hero** — business mark, name, Verified + rating, owner/offer line, Online/Offline status pill with hours chip + categories; **Go online/offline** and **Edit profile** (icon on ≤960px)
+2. **Verification banners** when pending / rejected / revoked
+3. **KPI strip** — Nearby requests, Open orders, Quotes sent (links to those routes when not limited; accent on nearby requests)
+4. **Vertical accordions** (one open at a time; **Storefront** first and open by default):
+   - **Storefront** — public URL tray (copy + open) + shortcuts grid (marketplace shortcuts hidden when limited; My profile + Admin messages remain)
+   - **Location & reach** — Map / Area / Radius chips + Quick update form (Detect + Save; single-column fields)
+
+**Online presence is hours-aware:**
+
+- Effective online = provider toggled online **and** current time is within Opens–Closes (IST)
+- Going online is blocked outside business hours; profile sync clears `is_online` when outside hours
+- Consumers and matching see the effective online status
+
 Only **APPROVED** providers can go online and receive chat / live leads.
 
 **Public link** (approved only):
 
 - Friendly URL: `/p/{public_slug}` (e.g. `/p/quickfix-plumbing`)
-- Shown as a **blue hyperlink** with an **open-in-new-tab** icon
-- **Copy** icon copies the full URL to the clipboard
+- Highlighted URL tray with **copy** and **open-in-new-tab** icons
 
 **Quick location:**
 
-- Longitude / latitude fields
-- **Detect location** (location icon) — fills coords from GPS
-- **Save** — persists location and travel radius
+- Longitude / latitude / max radius fields
+- **Detect location** — fills coords from GPS
+- **Save location** — persists location and travel radius
 
 ### 4. Admin messages (`/provider/support`)
 
@@ -301,6 +370,11 @@ Providers can reply to admin-initiated support threads.
 
 - Unread count badge on **Admin messages** in the sidebar
 - Real-time via WebSocket type `admin_message`
+- Automatic Admin messages (+ live toast / unread badge when online) when admin:
+  - **Approves** a pending provider (`reason: provider_approved`)
+  - **Re-approves** a revoked or rejected provider (`reason: provider_reapproved`)
+  - **Revokes** an approved provider (`reason: provider_revoked`)
+- Matching transactional emails also send when Admin SMTP is enabled
 
 ### 5. Handle leads (`/provider/requests`)
 
@@ -325,32 +399,85 @@ After consumer accepts:
 
 ---
 
-## Admin workflow
+## Admin / customer service workflow
 
-| Route | Purpose |
-|-------|---------|
-| `/admin/providers` | List / filter providers; open detail; orders modal; chat |
-| `/admin/providers/:userId` | Provider detail (profile, docs, approve/reject/revoke, chat) |
-| `/admin/consumers` | List consumers; delete users |
-| `/admin/orders` | **Order dashboard** — location + date analytics |
-| `/admin/categories` | Manage / create taxonomy |
-| `/admin/messages` | Provider support inbox (unread badge) |
-| `/admin/config` | SMTP settings + test email |
+| Route | Purpose | Admin | Customer service |
+|-------|---------|-------|------------------|
+| `/admin/providers` | List / search / filter providers; open detail; orders modal; chat | ✓ | ✓ |
+| `/admin/providers/:userId` | Provider detail (edit/save, docs, approve/reject/revoke, chat) | ✓ | ✓ |
+| `/admin/consumers` | List / search consumers; delete users | ✓ | ✓ |
+| `/admin/orders` | **Order dashboard** — location + date analytics | ✓ | ✓ |
+| `/admin/categories` | Manage / create taxonomy | ✓ | ✓ |
+| `/admin/messages` | Provider support inbox (search + unread badge) | ✓ | ✓ |
+| `/admin/customer-service` | Manage customer service agents (search, create, approve/re-approve/revoke, delete) | ✓ | ✗ |
+| `/admin/config` | SMTP settings + test email | ✓ | ✗ |
 
-Provider verify: `POST /providers/{user_id}/verify` with `APPROVED` or `REJECTED`.
+Provider verify: `POST /providers/{user_id}/verify` with `APPROVED`, `REJECTED`, or `REVOKED`.
 
 ### Providers list (`/admin/providers`)
 
-Filters: **All / Pending / Approved / Rejected / New messages** (unread provider replies).
+**Search** box filters by phone, email, name (owner or business), or pincode (combined with status filter).
+
+**Add provider** opens a create form (`POST /admin/providers`) — phone, email, password, business details, categories, location. Default is **approve immediately** so the provider can sign in; uncheck to leave as Pending.
+
+Filters: **All / Pending / Approved / Rejected / Revoked / New messages** (unread provider replies).
 
 Per card:
 
 - **Details** → `/admin/providers/:userId`
 - **Orders** → modal of that provider’s consumer orders (`GET /admin/orders?provider_id=`)
 - Chat icon → detail page messaging (or open chat)
-- Approve / Reject / Revoke as applicable
+- Approve / Reject / **Revoke** / Re-approve as applicable
+
+**Verification status notifications** (Admin messages thread + optional email + live WS toast):
+
+| Action | Effect |
+|--------|--------|
+| **Approve** (from Pending) | Activates account; notifies provider (`provider_approved`) |
+| **Re-approve** (from Revoked / Rejected) | Restores marketplace access; notifies provider (`provider_reapproved`) |
+| **Revoke** (from Approved) | Takes provider offline, locks marketplace features; notifies provider (`provider_revoked`) |
 
 Detail page (`GET /admin/providers/{user_id}`) shows username (login phone), address, city, state, pincode, documents, order count, and a **Chat** action that opens admin↔provider messaging.
+
+Admins can **edit and save**:
+
+- Contact extras (name, email, alternate phone) — login phone stays read-only
+- **Address & location** (label, address lines, city, state, pincode, coordinates)
+- **Business profile** (name, offer kind, hours, radius, description, offerings, social links, tax ID)
+- **Verification documents** (GST / Aadhaar numbers; replace Aadhaar, GST, government ID, business registration files)
+
+**APIs:** `PATCH /admin/providers/{user_id}` · `POST /admin/providers/{user_id}/documents?doc_type=`
+
+### Customer service agents (`/admin/customer-service`) — **admin only**
+
+Sidebar nav link **Customer service agents** appears for **Admin** only (not for CS agents).
+
+| Capability | Detail |
+|------------|--------|
+| **List** | All users with role `CUSTOMER_SERVICE` |
+| **Search** | Name, phone, email, or status (`PENDING` / `APPROVED` / `REVOKED`) |
+| **Create agent** | Form: full name, phone, email, temporary password; optional **Approve immediately** |
+| **Approve** | From Pending → agent can sign in (`is_active` + `is_verified`) |
+| **Revoke** | From Approved → blocks sign-in; enables Re-approve |
+| **Re-approve** | From Revoked → restores sign-in |
+| **Delete** | Permanently removes the account |
+
+Status is derived from flags: Pending = never approved; Approved = active + verified; Revoked = verified but inactive.
+
+Created agents default to **Pending** unless “Approve immediately” is checked. Pending and revoked agents cannot log in.
+
+**APIs:**
+
+- `GET /admin/customer-service-agents`
+- `POST /admin/customer-service-agents`
+- `POST /admin/customer-service-agents/{id}/approve`
+- `POST /admin/customer-service-agents/{id}/revoke`
+- `POST /admin/customer-service-agents/{id}/reapprove`
+- `DELETE /admin/users/{id}` (admin deleting a CS agent)
+
+### Consumers list (`/admin/consumers`)
+
+**Search** box filters by phone, email, name, or pincode. Cards show contact, rating, location, and delete.
 
 ### Order dashboard (`/admin/orders`)
 
@@ -386,7 +513,7 @@ Kind color coding: **Services** (blue), **Products** (amber), **Products & servi
 ### Admin ↔ provider messaging
 
 - Models / API under `/support-conversations` (list, create, messages, read, unread-count)
-- Admin nav: **Provider messages** with unread badge
+- Admin nav: **Provider messages** with unread badge and search (business name, owner name, last message)
 - Provider nav: **Admin messages** with unread badge
 - WebSocket event: `admin_message`
 - Threads cleaned up when an admin deletes the provider user
@@ -403,6 +530,8 @@ Kind color coding: **Services** (blue), **Products** (amber), **Products & servi
 | Targeted request | Only selected provider IDs are notified; no geo fan-out |
 
 Providers must be **verified (APPROVED)** to receive broadcast notifications and to quote.
+
+Consumers browsing “online” providers see **effective online** status (toggled on + within business hours IST).
 
 ---
 
@@ -435,9 +564,10 @@ Real-time: WebSockets (+ Redis pub/sub for multi-instance fan-out).
 
 ### Request
 
-`ACTIVE` → `FULFILLED` (when a quote is accepted)
+`ACTIVE` → `FULFILLED` (when a quote is accepted)  
+`ACTIVE` → `CANCELLED` (consumer cancel from My requests)
 
-Also defined: `EXPIRED`, `CANCELLED` (reserved).
+Also defined: `EXPIRED`.
 
 ### Quote
 
@@ -451,17 +581,32 @@ Also defined: `WITHDRAWN` (reserved).
 
 Also: `DISPUTED`, `CANCELLED` from mid-flow.
 
+### Provider verification
+
+`PENDING` → `APPROVED` | `REJECTED`  
+`APPROVED` → `REVOKED` (admin) → can be re-approved
+
+### Customer service agent access
+
+`PENDING` → `APPROVED` (admin Approve)  
+`APPROVED` → `REVOKED` (admin Revoke) → `APPROVED` (admin Re-approve)  
+Delete removes the user entirely.
+
 ---
 
 ## Trust & safety (current MVP)
 
 - Admin KYC review (docs, Aadhaar/GST fields) before providers go live
 - Pending provider accounts cannot go online or quote
+- Admin can **revoke** approved providers (limited nav + Admin messages notice)
+- Admin **approve** and **re-approve** also notify the provider (Admin messages + email when SMTP enabled)
+- Online presence respects business hours (IST Opens–Closes)
 - Completion OTP reduces false “delivered” claims
 - Mutual ratings after completed orders
 - Public profiles for transparency (no sensitive docs exposed)
 - Friendly public URLs without exposing internal UUIDs by default
 - Admin can message providers and monitor unread support threads
+- Consumer can cancel active requests; quoting providers are notified when needed
 
 ---
 
@@ -469,10 +614,11 @@ Also: `DISPUTED`, `CANCELLED` from mid-flow.
 
 | Audience | Paths |
 |----------|--------|
-| Guest | `/`, `/login`, `/register`, `/p/:slug` (or `/p/:userId`) |
-| Consumer | `/consumer/*`, `/profile`, `/orders/:id` |
-| Provider | `/provider/*` (incl. `/provider/support`), `/profile`, `/orders/:id` |
-| Admin | `/admin/providers`, `/admin/providers/:userId`, `/admin/orders` (dashboard), `/admin/categories`, `/admin/messages`, `/admin/consumers`, `/admin/config` |
+| Guest | `/` (landing + login/register modals via `?login=1` / `?register=1`), `/login` → `/?login=1`, `/register` → `/?register=1`, `/forgot-password`, `/reset-password`, `/p/:slug` (or `/p/:userId`) |
+| Consumer | `/consumer/*` (details, providers, inquiries, post, requests, quotes, orders), `/profile`, `/orders/:id` |
+| Provider | `/provider/*` (overview, inquiries, support, requests, quote, quotes, orders), `/profile`, `/orders/:id` |
+| Admin | `/admin/providers`, `/admin/providers/:userId`, `/admin/consumers`, `/admin/orders`, `/admin/categories`, `/admin/messages`, `/admin/customer-service`, `/admin/config` |
+| Customer service | Same as admin **except** `/admin/customer-service` and `/admin/config` |
 
 ---
 
@@ -481,6 +627,7 @@ Also: `DISPUTED`, `CANCELLED` from mid-flow.
 | Role | Phone | Password |
 |------|-------|----------|
 | Admin | `9000000001` | `admin123` |
+| Customer service | `9000000004` | `support123` |
 | Consumer | `9000000002` | `consumer123` |
 | Provider | `9000000003` | `provider123` |
 
@@ -490,9 +637,13 @@ Seeded provider public page example: `/p/quickfix-plumbing`.
 
 ## Notes for operators
 
-- Restart backend after schema updates so startup migrations apply (`public_slug`, `target_mode`, `request_targets`, `payment_mode`, social URL columns, SMTP table, admin support conversations, etc.).
+- Restart backend after schema updates so startup migrations apply (`public_slug`, `target_mode`, `request_targets`, `payment_mode`, social URL columns, SMTP table, admin support conversations, `REVOKED` verification status, `CUSTOMER_SERVICE` user role, etc.).
+- Re-run `python -m scripts.seed` after role/enum changes to ensure demo accounts exist (including CS `9000000004` / `support123`).
 - Existing providers without a slug are backfilled on startup from business name.
 - Provider registration/approval emails need **Admin → Config** SMTP enabled with a valid from-address.
+- Password reset emails also need SMTP enabled; set `frontend_url` so reset links point at the correct app host.
 - Matching quality depends on accurate GPS **and/or** pincode (plus city) on both consumer and provider profiles.
 - Order dashboard location quality depends on filled `state` / `city` / `pincode` / `location_label` on user profiles.
 - Reverse geocoding uses OpenStreetMap Nominatim; allow outbound network from the API host.
+- Provider **Go online** requires APPROVED status and current time within Opens–Closes (IST).
+- Staff ops (providers, consumers, orders, categories, messages) use shared `STAFF_ROLES` (`ADMIN` + `CUSTOMER_SERVICE`); Config and CS-agent management stay **Admin-only**.

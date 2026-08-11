@@ -11,6 +11,23 @@ from app.db.session import get_db
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.api_v1_prefix}/auth/login/form")
 
+# Platform operators (admin UI). Config/SMTP stays ADMIN-only.
+STAFF_ROLES = (UserRole.ADMIN, UserRole.CUSTOMER_SERVICE)
+
+
+def is_staff(user: User | UserRole | str | None) -> bool:
+    if user is None:
+        return False
+    role = user.role if isinstance(user, User) else user
+    if isinstance(role, UserRole):
+        return role in STAFF_ROLES
+    return str(role) in {r.value for r in STAFF_ROLES}
+
+
+def require_staff():
+    """Admin or customer service — same ops access except Config."""
+    return require_roles(*STAFF_ROLES)
+
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
@@ -36,15 +53,25 @@ async def get_current_user(
 
     if user.role == UserRole.PROVIDER:
         profile = db.query(ProviderProfile).filter(ProviderProfile.user_id == user.id).first()
-        if not profile or profile.verification_status != VerificationStatus.APPROVED:
+        if not profile:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    "Your account is currently being reviewed. "
-                    "Please keep checking email from us in next 24hrs. "
-                    "Login is available after admin approval."
-                ),
+                detail="Provider profile not found",
             )
+        if profile.verification_status in (
+            VerificationStatus.APPROVED,
+            VerificationStatus.REVOKED,
+            VerificationStatus.REJECTED,
+        ):
+            return user
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Your account is currently being reviewed. "
+                "Please keep checking email from us in next 24hrs. "
+                "Login is available after admin approval."
+            ),
+        )
     return user
 
 

@@ -40,6 +40,19 @@ class UserLogin(BaseModel):
     password: str
 
 
+class ForgotPasswordRequest(BaseModel):
+    phone_number: str = Field(min_length=8, max_length=20)
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=10)
+    password: str = Field(min_length=6, max_length=128)
+
+
+class MessageOut(BaseModel):
+    detail: str
+
+
 class UserOut(BaseModel):
     id: UUID
     role: UserRole
@@ -63,6 +76,7 @@ class UserOut(BaseModel):
     pincode: str | None = None
     alternate_phone: str | None = None
     profile_complete: bool = False
+    verification_status: VerificationStatus | None = None
 
     model_config = {"from_attributes": True}
 
@@ -361,6 +375,10 @@ class ServiceRequestCreate(BaseModel):
     target_provider_ids: list[UUID] = Field(default_factory=list)
 
 
+class ServiceRequestClose(BaseModel):
+    reason: str | None = Field(default=None, max_length=1000)
+
+
 class ServiceRequestOut(BaseModel):
     id: UUID
     consumer_id: UUID
@@ -500,6 +518,7 @@ class AdminProviderOut(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     location_label: str | None = None
+    pincode: str | None = None
     maps_url: str | None = None
     created_at: datetime
 
@@ -520,13 +539,86 @@ class AdminProviderDetailOut(AdminProviderOut):
     address_line2: str | None = None
     city: str | None = None
     state: str | None = None
-    pincode: str | None = None
     government_id_url: str | None = None
     business_reg_url: str | None = None
     gst_doc_url: str | None = None
     tax_id: str | None = None
     order_count: int = 0
     updated_at: datetime | None = None
+
+
+class AdminProviderUpdate(BaseModel):
+    """Admin edits for address/location, business profile, and verification fields."""
+
+    full_name: str | None = Field(default=None, min_length=2, max_length=255)
+    email: EmailStr | None = None
+    alternate_phone: str | None = Field(default=None, max_length=20)
+    address_line1: str | None = Field(default=None, max_length=255)
+    address_line2: str | None = Field(default=None, max_length=255)
+    city: str | None = Field(default=None, max_length=100)
+    state: str | None = Field(default=None, max_length=100)
+    pincode: str | None = Field(default=None, max_length=12)
+    location_label: str | None = Field(default=None, max_length=255)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    business_name: str | None = Field(default=None, min_length=2, max_length=255)
+    description: str | None = None
+    offerings_detail: str | None = None
+    offer_kind: OfferKind | None = None
+    website_url: str | None = None
+    instagram_url: str | None = None
+    youtube_url: str | None = None
+    opening_time: str | None = None
+    closing_time: str | None = None
+    max_radius_km: int | None = Field(default=None, ge=1, le=50)
+    tax_id: str | None = None
+    gst_number: str | None = None
+    aadhaar_number: str | None = Field(default=None, max_length=12)
+
+
+class AdminProviderCreate(BaseModel):
+    """Staff-created provider account (auto-approved)."""
+
+    phone_number: str = Field(min_length=8, max_length=20)
+    full_name: str = Field(min_length=2, max_length=255)
+    password: str = Field(min_length=6, max_length=128)
+    email: EmailStr
+    business_name: str = Field(min_length=2, max_length=255)
+    category_ids: list[int] = Field(min_length=1)
+    offer_kind: OfferKind = OfferKind.BOTH
+    description: str | None = None
+    offerings_detail: str | None = None
+    gst_number: str | None = None
+    city: str | None = Field(default=None, max_length=100)
+    state: str | None = Field(default=None, max_length=100)
+    pincode: str | None = Field(default=None, max_length=12)
+    location_label: str | None = Field(default=None, max_length=255)
+    address_line1: str | None = Field(default=None, max_length=255)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    opening_time: str | None = None
+    closing_time: str | None = None
+    max_radius_km: int = Field(default=10, ge=1, le=50)
+    approve: bool = True
+
+
+class AdminCustomerServiceCreate(BaseModel):
+    phone_number: str = Field(min_length=8, max_length=20)
+    full_name: str = Field(min_length=2, max_length=255)
+    password: str = Field(min_length=6, max_length=128)
+    email: EmailStr
+    approve: bool = False
+
+
+class AdminCustomerServiceOut(BaseModel):
+    id: UUID
+    phone_number: str
+    email: str | None = None
+    full_name: str
+    is_active: bool
+    is_verified: bool
+    created_at: datetime
+    status: str  # PENDING | APPROVED | REVOKED
 
 
 class AdminOrderOut(BaseModel):
@@ -621,7 +713,7 @@ class SmtpConfigUpdate(BaseModel):
     username: str | None = Field(default=None, max_length=255)
     password: str | None = Field(default=None, max_length=255)
     from_email: EmailStr
-    from_name: str = Field(default="LocalSync", max_length=255)
+    from_name: str = Field(default="Gharq", max_length=255)
     use_tls: bool = True
     use_ssl: bool = False
     is_enabled: bool = False
@@ -644,6 +736,16 @@ class PublicSearchOut(BaseModel):
     query: str
     categories: list[PublicSearchCategory] = Field(default_factory=list)
     providers: list[ProviderCatalogItem] = Field(default_factory=list)
+
+
+class NearbyCategoryCount(BaseModel):
+    category_id: int
+    nearby_count: int
+
+
+class NearbyCategoryCountsOut(BaseModel):
+    radius_km: int
+    counts: list[NearbyCategoryCount] = Field(default_factory=list)
 
 
 CategoryOut.model_rebuild()

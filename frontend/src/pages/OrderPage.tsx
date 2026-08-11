@@ -93,93 +93,119 @@ export function OrderPage() {
 
   return (
     <AppShell title="Order">
-      <div className="card">
-        <Link to={isProvider ? "/provider/orders" : "/consumer/orders"}>← Back</Link>
-        {order && (
-          <>
-            <h2>Order · ₹{order.agreed_price}</h2>
-            <p className="muted">
-              {order.fulfillment_type.replaceAll("_", " ")} ·{" "}
-              {(order.payment_mode || "CASH").replaceAll("_", " ")} · {order.status}
-            </p>
-            {isConsumer && order.completion_otp && open && (
-              <p className="pill online">Share OTP only at handover: {order.completion_otp}</p>
-            )}
-            {open && (
-              <div className="nav-actions" style={{ margin: "0.75rem 0" }}>
-                {order.status === "CONFIRMED" && (
-                  <button className="btn" type="button" onClick={() => void setStatus("IN_PROGRESS")}>
-                    Mark in progress
-                  </button>
-                )}
-                {(order.status === "CONFIRMED" || order.status === "IN_PROGRESS") && (
-                  <>
-                    <button
-                      className="btn secondary"
-                      type="button"
-                      onClick={() => void setStatus("DISPUTED")}
-                    >
-                      Mark disputed
-                    </button>
-                    <button
-                      className="btn secondary"
-                      type="button"
-                      onClick={() => void setStatus("CANCELLED")}
-                    >
-                      Cancel order
-                    </button>
-                  </>
-                )}
-                {order.status === "DISPUTED" && (
-                  <button className="btn" type="button" onClick={() => void setStatus("IN_PROGRESS")}>
-                    Resume in progress
-                  </button>
-                )}
+      <div className="page-stack narrow">
+        <header className="page-hero">
+          <Link
+            className="page-back"
+            to={isProvider ? "/provider/orders" : "/consumer/orders"}
+          >
+            ← Back to orders
+          </Link>
+          {order ? (
+            <>
+              <div className="page-hero-row">
+                <div>
+                  <p className="dash-eyebrow">Order</p>
+                  <h2>₹{order.agreed_price}</h2>
+                  <p className="muted page-meta">
+                    <span>{order.fulfillment_type.replaceAll("_", " ")}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{(order.payment_mode || "CASH").replaceAll("_", " ")}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{order.status}</span>
+                  </p>
+                </div>
+                <span className={`pill ${open ? "online" : "offline"}`}>{order.status}</span>
               </div>
-            )}
-          </>
+              {isConsumer && order.completion_otp && open && (
+                <p className="page-note">Share OTP only at handover: {order.completion_otp}</p>
+              )}
+              {note && <p className="page-note">{note}</p>}
+            </>
+          ) : (
+            <h2>Order</h2>
+          )}
+        </header>
+
+        {order && open && (
+          <section className="page-panel">
+            <div className="page-actions">
+              {order.status === "CONFIRMED" && (
+                <button className="btn" type="button" onClick={() => void setStatus("IN_PROGRESS")}>
+                  Mark in progress
+                </button>
+              )}
+              {(order.status === "CONFIRMED" || order.status === "IN_PROGRESS") && (
+                <>
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={() => void setStatus("DISPUTED")}
+                  >
+                    Mark disputed
+                  </button>
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={() => void setStatus("CANCELLED")}
+                  >
+                    Cancel order
+                  </button>
+                </>
+              )}
+              {order.status === "DISPUTED" && (
+                <button className="btn" type="button" onClick={() => void setStatus("IN_PROGRESS")}>
+                  Resume in progress
+                </button>
+              )}
+            </div>
+          </section>
         )}
 
-        <h3>Chat</h3>
-        <div className="chat-box">
-          {messages.map((m) => (
-            <div key={m.id} className={`bubble ${m.sender_id === user?.id ? "mine" : ""}`}>
-              {m.body}
-            </div>
-          ))}
-        </div>
-        {open && (
-          <form onSubmit={sendChat} style={{ display: "flex", gap: "0.5rem" }}>
-            <input
-              style={{ flex: 1 }}
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              placeholder="Message…"
-            />
-            <button className="btn" type="submit">
-              Send
-            </button>
-          </form>
-        )}
+        <section className="page-panel">
+          <h2>Chat</h2>
+          <div className="chat-box">
+            {messages.map((m) => (
+              <div key={m.id} className={`bubble ${m.sender_id === user?.id ? "mine" : ""}`}>
+                {m.body}
+              </div>
+            ))}
+          </div>
+          {open && (
+            <form onSubmit={sendChat} className="page-actions" style={{ marginTop: "0.75rem" }}>
+              <input
+                style={{ flex: 1, minWidth: "12rem" }}
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                placeholder="Message…"
+              />
+              <button className="btn" type="submit">
+                Send
+              </button>
+            </form>
+          )}
+        </section>
 
         {isProvider && open && (
-          <form onSubmit={complete} style={{ marginTop: "1.25rem" }}>
-            <h3>Complete with OTP</h3>
-            <p className="muted">Ask the consumer for their OTP at handover / delivery.</p>
+          <form className="page-panel page-form" onSubmit={complete}>
+            <h2>Complete with OTP</h2>
+            <p className="page-lead">Ask the consumer for their OTP at handover / delivery.</p>
             <div className="field">
               <label>Consumer OTP</label>
               <input value={otp} onChange={(e) => setOtp(e.target.value)} required maxLength={6} />
             </div>
-            <button className="btn" type="submit">
-              Mark completed
-            </button>
+            <div className="page-actions">
+              <button className="btn" type="submit">
+                Mark completed
+              </button>
+            </div>
           </form>
         )}
 
         {order?.status === "COMPLETED" && (
-          <form onSubmit={rate} style={{ marginTop: "1.25rem" }}>
-            <h3>{isConsumer ? "Rate this provider" : isProvider ? "Rate this consumer" : "Rate"}</h3>
-            <p className="muted">
+          <form className="page-panel page-form" onSubmit={rate}>
+            <h2>{isConsumer ? "Rate this provider" : isProvider ? "Rate this consumer" : "Rate"}</h2>
+            <p className="page-lead">
               Scores and comments are visible on profiles and help build mutual trust.
             </p>
             <div className="field">
@@ -206,12 +232,13 @@ export function OrderPage() {
                 }
               />
             </div>
-            <button className="btn" type="submit">
-              Submit rating &amp; comment
-            </button>
+            <div className="page-actions">
+              <button className="btn" type="submit">
+                Submit rating &amp; comment
+              </button>
+            </div>
           </form>
         )}
-        {note && <p className="pill online">{note}</p>}
       </div>
     </AppShell>
   );

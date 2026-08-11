@@ -11,7 +11,16 @@ from app.core.config import settings
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.db.models import OfferKind, ProviderProfile, User, UserRole, VerificationStatus
 from app.db.session import get_db
-from app.schemas import Token, UserLogin, UserLocationUpdate, UserOut, UserProfileUpdate
+from app.schemas import (
+    ForgotPasswordRequest,
+    MessageOut,
+    ResetPasswordRequest,
+    Token,
+    UserLogin,
+    UserLocationUpdate,
+    UserOut,
+    UserProfileUpdate,
+)
 from app.services.geo import make_point, normalize_lat_lon
 from app.services.maps import google_maps_url, reverse_geocode_details
 from app.services.provider_catalog import set_provider_categories
@@ -36,6 +45,13 @@ def _profile_complete(user: User, db: Session | None = None) -> bool:
 
 
 def user_to_out(user: User, db: Session | None = None) -> UserOut:
+    verification_status = None
+    if user.role == UserRole.PROVIDER:
+        profile = user.provider_profile
+        if profile is None and db is not None:
+            profile = db.query(ProviderProfile).filter(ProviderProfile.user_id == user.id).first()
+        if profile:
+            verification_status = profile.verification_status
     return UserOut(
         id=user.id,
         role=user.role,
@@ -59,6 +75,7 @@ def user_to_out(user: User, db: Session | None = None) -> UserOut:
         pincode=user.pincode,
         alternate_phone=user.alternate_phone,
         profile_complete=_profile_complete(user, db),
+        verification_status=verification_status,
     )
 
 
@@ -80,13 +97,13 @@ def _ensure_provider_can_login(db: Session, user: User) -> None:
         return
     profile = db.query(ProviderProfile).filter(ProviderProfile.user_id == user.id).first()
     status_val = profile.verification_status if profile else VerificationStatus.PENDING
-    if status_val == VerificationStatus.APPROVED:
+    # Approved, revoked, and rejected providers may sign in (rejected/revoked are limited in-app).
+    if status_val in (
+        VerificationStatus.APPROVED,
+        VerificationStatus.REVOKED,
+        VerificationStatus.REJECTED,
+    ):
         return
-    if status_val == VerificationStatus.REJECTED:
-        raise HTTPException(
-            status_code=403,
-            detail="Your provider registration was not approved. Please contact support.",
-        )
     raise HTTPException(
         status_code=403,
         detail=(
@@ -118,8 +135,8 @@ async def register(
     aadhaar_file: UploadFile | None = File(None),
     db: Session = Depends(get_db),
 ):
-    if role == UserRole.ADMIN:
-        raise HTTPException(status_code=400, detail="Cannot self-register as admin")
+    if role in (UserRole.ADMIN, UserRole.CUSTOMER_SERVICE):
+        raise HTTPException(status_code=400, detail="Cannot self-register as staff")
 
     existing = db.scalar(select(User).where(User.phone_number == phone_number))
     if existing:
@@ -266,6 +283,77 @@ def login_form(
 ):
     """OAuth2 password form for Swagger Authorize button (username = phone)."""
     return login(UserLogin(phone_number=form_data.username, password=form_data.password), db)
+
+
+@router.post("/forgot-password", response_model=MessageOut)
+def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Request a password reset email. Always returns a generic success message
+    so callers cannot probe whether a phone number is registered.
+    """
+    phone = payload.phone_number.strip()
+    generic = MessageOut(
+        detail=(
+            "If an account exists for that phone with an email on file, "
+            "password reset instructions were sent."
+        )
+    )
+    user = db.scalar(select(User).where(User.phone_number == phone))
+    if not user or not user.is_active or not user.email:
+        return generic
+
+    token = create_access_token(
+        data={"sub": str(user.id), "purpose": "password_reset"},
+        expires_delta=timedelta(minutes=settings.password_reset_expire_minutes),
+    )
+    base = settings.frontend_url.rstrip("/")
+    reset_url = f"{base}/reset-password?token={token}"
+
+    from app.services.email import send_password_reset
+
+    send_password_reset(
+        db,
+        to_email=user.email,
+        full_name=user.full_name,
+        reset_url=reset_url,
+        expires_minutes=settings.password_reset_expire_minutes,
+    )
+    return generic
+
+
+@router.post("/reset-password", response_model=MessageOut)
+def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+    from jose import JWTError, jwt
+    from uuid import UUID
+
+    try:
+        data = jwt.decode(
+            payload.token,
+            settings.secret_key,
+            algorithms=[settings.algorithm],
+        )
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset link") from None
+
+    if data.get("purpose") != "password_reset":
+        raise HTTPException(status_code=400, detail="Invalid or expired reset link")
+
+    sub = data.get("sub")
+    if not sub:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset link")
+
+    try:
+        user_id = UUID(str(sub))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset link") from None
+
+    user = db.get(User, user_id)
+    if not user or not user.is_active:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset link")
+
+    user.hashed_password = get_password_hash(payload.password)
+    db.commit()
+    return MessageOut(detail="Password updated. You can sign in with your new password.")
 
 
 @router.get("/me", response_model=UserOut)

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Category, ProviderCategory, ProviderProfile, User
 from app.schemas import ProviderTrustInfo
+from app.services.business_hours import effective_is_online
 from app.services.geo import get_lon_lat_from_profile
 from app.services.maps import google_maps_url
 
@@ -98,6 +99,6 @@ def build_provider_trust(db: Session, provider_user_id: UUID) -> ProviderTrustIn
         categories=provider_category_names(db, profile),
         maps_url=google_maps_url(lat, lon),
         location_label=user.location_label if user else None,
-        is_online=profile.is_online,
+        is_online=effective_is_online(profile),
         verification_status=profile.verification_status,
     )

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -9,9 +9,16 @@ from app.api.deps import require_roles
 from app.db.models import Conversation, InquiryMessage, ProviderProfile, User, UserRole, VerificationStatus
 from app.db.session import get_db
 from app.schemas import ChatMessageCreate, ConversationCreate, ConversationOut, InquiryMessageOut, ProviderConversationCreate
+from app.services.business_hours import effective_is_online
 from app.services.ws_manager import ws_manager
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
+
+RECENT_INQUIRY_DAYS = 30
+
+
+def _recent_cutoff() -> datetime:
+    return datetime.now(timezone.utc) - timedelta(days=RECENT_INQUIRY_DAYS)
 
 
 def _conversation_out(db: Session, conv: Conversation) -> ConversationOut:
@@ -34,7 +41,7 @@ def _conversation_out(db: Session, conv: Conversation) -> ConversationOut:
         consumer_name=consumer.full_name if consumer else None,
         provider_name=provider.full_name if provider else None,
         provider_business_name=profile.business_name if profile else None,
-        provider_is_online=profile.is_online if profile else None,
+        provider_is_online=effective_is_online(profile) if profile else None,
         last_message=last.body if last else None,
     )
 
@@ -44,17 +51,33 @@ def list_conversations(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.CONSUMER, UserRole.PROVIDER)),
 ):
+    cutoff = _recent_cutoff()
     rows = db.scalars(
         select(Conversation)
         .where(
             or_(
                 Conversation.consumer_id == current_user.id,
                 Conversation.provider_id == current_user.id,
-            )
+            ),
+            Conversation.updated_at >= cutoff,
         )
         .order_by(Conversation.updated_at.desc())
     ).all()
     return [_conversation_out(db, c) for c in rows]
+
+
+@router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_conversation(
+    conversation_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CONSUMER, UserRole.PROVIDER)),
+):
+    conv = db.get(Conversation, conversation_id)
+    if not conv or current_user.id not in (conv.consumer_id, conv.provider_id):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    db.delete(conv)
+    db.commit()
+    return None
 
 
 @router.post("", response_model=ConversationOut, status_code=status.HTTP_201_CREATED)
@@ -68,7 +91,7 @@ async def start_conversation(
     )
     if not profile or profile.verification_status != VerificationStatus.APPROVED:
         raise HTTPException(status_code=400, detail="Provider not available")
-    if not profile.is_online:
+    if not effective_is_online(profile):
         raise HTTPException(
             status_code=400,
             detail="Provider is offline. You can only start chats with online providers.",
@@ -238,7 +261,7 @@ async def send_inquiry_message(
         has_history = db.scalar(
             select(InquiryMessage).where(InquiryMessage.conversation_id == conversation_id).limit(1)
         )
-        if not has_history and profile and not profile.is_online:
+        if not has_history and profile and not effective_is_online(profile):
             raise HTTPException(status_code=400, detail="Provider is offline")
 
     msg = InquiryMessage(

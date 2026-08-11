@@ -52,22 +52,22 @@ export function PublicProviderPage() {
       ? { to: "/consumer/providers", label: "Open providers & chat" }
       : token
         ? { to: "/", label: "Go to dashboard" }
-        : { to: "/register", label: "Register to chat or request" };
+        : { to: "/?register=1", label: "Register to chat or request" };
 
   return (
     <div className="landing">
       <header className="landing-top">
         <div className="landing-top-inner">
           <Link to="/" className="brand landing-brand">
-            LocalSync
+            Gharq
           </Link>
           <div className="landing-auth">
             {!token && (
               <>
-                <Link className="btn secondary" to="/login">
+                <Link className="btn secondary" to="/?login=1">
                   Log in
                 </Link>
-                <Link className="btn" to="/register">
+                <Link className="btn" to="/?register=1">
                   Register
                 </Link>
               </>
@@ -84,7 +84,7 @@ export function PublicProviderPage() {
       <section className="landing-section" style={{ paddingTop: "1.5rem" }}>
         {loading && <p className="muted">Loading provider…</p>}
         {error && !loading && (
-          <div className="card">
+          <div className="page-panel" style={{ maxWidth: 640 }}>
             <h2>Provider unavailable</h2>
             <p className="error">{error}</p>
             <Link className="btn" to="/">
@@ -94,26 +94,25 @@ export function PublicProviderPage() {
         )}
 
         {profile && !loading && (
-          <div className="public-provider">
-            <div className="card public-provider-hero">
-              <div className="topbar" style={{ marginBottom: "0.75rem" }}>
+          <div className="page-stack public-provider">
+            <header className="page-hero">
+              <div className="page-hero-row">
                 <div>
-                  <p className="landing-kicker" style={{ marginBottom: "0.35rem" }}>
-                    Verified provider
-                  </p>
+                  <p className="dash-eyebrow">Verified provider</p>
                   <h1 className="public-provider-title">{profile.business_name}</h1>
-                  {profile.full_name && <p className="muted">{profile.full_name}</p>}
+                  {profile.full_name && <p className="muted page-meta">{profile.full_name}</p>}
                 </div>
                 <span className={`pill ${profile.is_online ? "online" : "offline"}`}>
                   {profile.is_online ? "Online" : "Offline"}
                 </span>
               </div>
-
-              <p className="muted">
+              <p className="page-lead">
                 {offerKindLabel(profile.offer_kind)} · Rating {profile.average_rating.toFixed(1)} (
                 {profile.rating_count}) · serves up to {profile.max_radius_km} km
               </p>
+            </header>
 
+            <section className="page-panel">
               <div className="public-provider-meta">
                 {(profile.location_label || profile.city || profile.pincode) && (
                   <p className="muted">
@@ -138,31 +137,46 @@ export function PublicProviderPage() {
               />
 
               {(profile.website_url || profile.instagram_url || profile.youtube_url) && (
-                <div className="nav-actions" style={{ marginTop: "0.75rem", flexWrap: "wrap" }}>
+                <div className="page-actions" style={{ marginTop: "0.75rem" }}>
                   {profile.website_url && (
-                    <a className="btn secondary" href={profile.website_url} target="_blank" rel="noreferrer">
+                    <a
+                      className="btn secondary"
+                      href={profile.website_url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       Website
                     </a>
                   )}
                   {profile.instagram_url && (
-                    <a className="btn secondary" href={profile.instagram_url} target="_blank" rel="noreferrer">
+                    <a
+                      className="btn secondary"
+                      href={profile.instagram_url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       Instagram
                     </a>
                   )}
                   {profile.youtube_url && (
-                    <a className="btn secondary" href={profile.youtube_url} target="_blank" rel="noreferrer">
+                    <a
+                      className="btn secondary"
+                      href={profile.youtube_url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       YouTube
                     </a>
                   )}
                 </div>
               )}
 
-              <div className="landing-cta" style={{ marginTop: "1rem" }}>
+              <div className="page-actions" style={{ marginTop: "1rem" }}>
                 <Link className="btn" to={chatCta.to}>
                   {chatCta.label}
                 </Link>
                 {!token && (
-                  <Link className="btn secondary" to="/login">
+                  <Link className="btn secondary" to="/?login=1">
                     Log in
                   </Link>
                 )}
@@ -173,10 +187,10 @@ export function PublicProviderPage() {
               <p className="muted" style={{ fontSize: "0.85rem", marginTop: "0.65rem", wordBreak: "break-all" }}>
                 {shareUrl}
               </p>
-            </div>
+            </section>
 
-            <div className="card">
-              <h2>Services & categories</h2>
+            <section className="page-panel">
+              <h2>Services &amp; categories</h2>
               {profile.categories.length === 0 ? (
                 <p className="muted">No categories listed yet.</p>
               ) : (
@@ -188,18 +202,18 @@ export function PublicProviderPage() {
                   ))}
                 </div>
               )}
-            </div>
+            </section>
 
-            <div className="card">
+            <section className="page-panel">
               <h2>About</h2>
               {profile.description ? (
                 <p style={{ whiteSpace: "pre-wrap" }}>{profile.description}</p>
               ) : (
                 <p className="muted">No business description yet.</p>
               )}
-            </div>
+            </section>
 
-            <div className="card">
+            <section className="page-panel">
               <h2>What they offer</h2>
               {profile.offerings_detail ? (
                 <p style={{ whiteSpace: "pre-wrap" }}>{profile.offerings_detail}</p>
@@ -208,7 +222,7 @@ export function PublicProviderPage() {
                   Detailed offerings not added yet. Register and chat to ask about services.
                 </p>
               )}
-            </div>
+            </section>
           </div>
         )}
       </section>

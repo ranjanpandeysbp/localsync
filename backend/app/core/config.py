@@ -4,10 +4,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    app_name: str = "LocalSync"
+    app_name: str = "Gharq"
     api_v1_prefix: str = "/api/v1"
-    secret_key: str = "change-me-in-production-localsync-secret"
+    secret_key: str = "change-me-in-production-gharq-secret"
     algorithm: str = "HS256"
+    frontend_url: str = "http://localhost:5173"
+    password_reset_expire_minutes: int = 30
     access_token_expire_minutes: int = 60 * 24 * 7
     database_url: str = "postgresql+psycopg2://localsync:localsync@localhost:5432/localsync"
     redis_url: str = "redis://localhost:6379/0"

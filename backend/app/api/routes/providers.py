@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_roles
+from app.api.deps import STAFF_ROLES, require_roles, require_staff
 from app.db.models import (
     Category,
     OfferKind,
@@ -16,6 +16,8 @@ from app.db.models import (
 )
 from app.db.session import get_db
 from app.schemas import (
+    NearbyCategoryCount,
+    NearbyCategoryCountsOut,
     ProviderCatalogItem,
     ProviderProfileOut,
     ProviderProfileUpdate,
@@ -35,6 +37,11 @@ from app.services.provider_catalog import (
     provider_category_names,
     provider_matches_category,
     set_provider_categories,
+)
+from app.services.business_hours import (
+    effective_is_online,
+    is_within_business_hours,
+    sync_online_flag_with_hours,
 )
 from app.services.uploads import media_url, save_upload_file
 
@@ -80,7 +87,7 @@ def _to_out(db: Session, profile: ProviderProfile) -> ProviderProfileOut:
         gst_number=profile.gst_number,
         aadhaar_number=profile.aadhaar_number,
         max_radius_km=profile.max_radius_km,
-        is_online=profile.is_online,
+        is_online=effective_is_online(profile),
         verification_status=profile.verification_status,
         longitude=lon,
         latitude=lat,
@@ -100,7 +107,7 @@ def _to_out(db: Session, profile: ProviderProfile) -> ProviderProfileOut:
 def catalog_by_category(
     category_id: int = Query(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.CONSUMER, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles(UserRole.CONSUMER, *STAFF_ROLES)),
 ):
     from app.core.config import settings
     from app.services.geo import normalize_pincode
@@ -142,6 +149,64 @@ def public_catalog_by_category(
         radius_km=settings.default_search_radius_km,
         require_location=True,
     )
+
+
+@router.get("/nearby-category-counts", response_model=NearbyCategoryCountsOut)
+def nearby_category_counts(
+    latitude: float | None = Query(default=None),
+    longitude: float | None = Query(default=None),
+    pincode: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """Count verified nearby providers per category within the default search radius (5 km)."""
+    from app.core.config import settings
+    from app.services.geo import match_all_nearby_providers, normalize_lat_lon, normalize_pincode
+
+    lon, lat = longitude, latitude
+    if lon is not None and lat is not None:
+        lon, lat = normalize_lat_lon(lon, lat)
+    pin = normalize_pincode(pincode)
+    radius_km = settings.default_search_radius_km
+
+    if lat is None and lon is None and not pin:
+        return NearbyCategoryCountsOut(radius_km=radius_km, counts=[])
+
+    nearby = match_all_nearby_providers(
+        db,
+        longitude=lon,
+        latitude=lat,
+        radius_km=radius_km,
+        pincode=pin,
+        online_only=False,
+        verified_only=True,
+    )
+
+    categories = list(
+        db.scalars(select(Category).where(Category.is_active.is_(True))).all()
+    )
+    children_by_parent: dict[int, set[int]] = {}
+    for cat in categories:
+        if cat.parent_id is not None:
+            children_by_parent.setdefault(cat.parent_id, set()).add(cat.id)
+
+    provider_linked: list[set[int]] = []
+    for profile, _dist in nearby:
+        linked = {link.category_id for link in profile.category_links}
+        if profile.category_id:
+            linked.add(profile.category_id)
+        provider_linked.append(linked)
+
+    counts: list[NearbyCategoryCount] = []
+    for cat in categories:
+        match_ids = {cat.id}
+        if cat.parent_id is None:
+            match_ids |= children_by_parent.get(cat.id, set())
+        else:
+            match_ids.add(cat.parent_id)
+        n = sum(1 for linked in provider_linked if linked & match_ids)
+        counts.append(NearbyCategoryCount(category_id=cat.id, nearby_count=n))
+
+    return NearbyCategoryCountsOut(radius_km=radius_km, counts=counts)
 
 
 def _catalog_items(
@@ -216,7 +281,7 @@ def _catalog_items(
                 opening_time=profile.opening_time,
                 closing_time=profile.closing_time,
                 gst_number=profile.gst_number,
-                is_online=profile.is_online,
+                is_online=effective_is_online(profile),
                 verification_status=profile.verification_status,
                 average_rating=user.average_rating,
                 rating_count=user.rating_count,
@@ -278,7 +343,7 @@ def public_search(
             opening_time=profile.opening_time,
             closing_time=profile.closing_time,
             gst_number=profile.gst_number,
-            is_online=profile.is_online,
+            is_online=effective_is_online(profile),
             verification_status=profile.verification_status,
             average_rating=user.average_rating,
             rating_count=user.rating_count,
@@ -475,7 +540,7 @@ def public_provider_page(
         opening_time=profile.opening_time,
         closing_time=profile.closing_time,
         gst_number=profile.gst_number,
-        is_online=profile.is_online,
+        is_online=effective_is_online(profile),
         verification_status=profile.verification_status,
         average_rating=user.average_rating,
         rating_count=user.rating_count,
@@ -501,6 +566,11 @@ def get_my_profile(
     )
     if not profile:
         raise HTTPException(status_code=404, detail="Provider profile not found")
+    was_online = profile.is_online
+    sync_online_flag_with_hours(profile)
+    if was_online and not profile.is_online:
+        db.commit()
+        db.refresh(profile)
     return _to_out(db, profile)
 
 
@@ -549,6 +619,7 @@ def update_my_profile(
         current_user.longitude = lon
         current_user.latitude = lat
 
+    sync_online_flag_with_hours(profile)
     db.commit()
     db.refresh(profile)
     return _to_out(db, profile)
@@ -596,6 +667,16 @@ def set_online(
             status_code=400,
             detail="Account is not verified yet. Ask an admin to approve your provider profile first.",
         )
+    if online and not is_within_business_hours(profile.opening_time, profile.closing_time):
+        opens = profile.opening_time or "—"
+        closes = profile.closing_time or "—"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"You're outside business hours ({opens}–{closes}). "
+                "Update Opens/Closes in My profile, or try again during open hours."
+            ),
+        )
     if online and profile.base_location is None and current_user.latitude is None:
         # Allow online when pincode is set (matched by pin) even without GPS point
         if not current_user.pincode:
@@ -617,33 +698,144 @@ def set_online(
 
 
 @router.post("/{provider_user_id}/verify", response_model=ProviderProfileOut)
-def verify_provider(
+async def verify_provider(
     provider_user_id: str,
     payload: ProviderVerify,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(require_staff()),
 ):
     profile = (
         db.query(ProviderProfile).filter(ProviderProfile.user_id == UUID(provider_user_id)).first()
     )
     if not profile:
         raise HTTPException(status_code=404, detail="Provider profile not found")
-    profile.verification_status = payload.verification_status
+
+    previous = profile.verification_status
+    # Approving→rejecting an already-approved provider is a revoke.
+    next_status = payload.verification_status
+    if (
+        previous == VerificationStatus.APPROVED
+        and next_status == VerificationStatus.REJECTED
+    ):
+        next_status = VerificationStatus.REVOKED
+
+    profile.verification_status = next_status
     user = db.get(User, profile.user_id)
     if user:
-        user.is_verified = payload.verification_status == VerificationStatus.APPROVED
-    if payload.verification_status != VerificationStatus.APPROVED:
+        user.is_verified = next_status == VerificationStatus.APPROVED
+    if next_status != VerificationStatus.APPROVED:
         profile.is_online = False
     db.commit()
     db.refresh(profile)
 
-    if user and payload.verification_status == VerificationStatus.APPROVED:
-        from app.services.email import send_provider_approved
+    if user and next_status == VerificationStatus.APPROVED:
+        from app.services.email import send_provider_approved, send_provider_reapproved
 
-        send_provider_approved(
+        if previous in (VerificationStatus.REVOKED, VerificationStatus.REJECTED):
+            send_provider_reapproved(
+                db,
+                to_email=user.email,
+                full_name=user.full_name,
+            )
+            await _notify_provider_status(
+                db,
+                admin=current_user,
+                provider=user,
+                body=(
+                    "Your provider account has been re-approved by Gharq admin. "
+                    "Marketplace features are available again — you can go online, "
+                    "receive requests, send quotes, and chat with consumers."
+                ),
+                reason="provider_reapproved",
+            )
+        else:
+            send_provider_approved(
+                db,
+                to_email=user.email,
+                full_name=user.full_name,
+            )
+            await _notify_provider_status(
+                db,
+                admin=current_user,
+                provider=user,
+                body=(
+                    "Congratulations — your provider account has been approved by Gharq admin. "
+                    "You can complete My profile, go online, and start receiving nearby requests."
+                ),
+                reason="provider_approved",
+            )
+
+    if user and next_status == VerificationStatus.REVOKED:
+        from app.services.email import send_provider_revoked
+
+        send_provider_revoked(
             db,
             to_email=user.email,
             full_name=user.full_name,
         )
+        await _notify_provider_status(
+            db,
+            admin=current_user,
+            provider=user,
+            body=(
+                "Your provider account has been revoked by Gharq admin. "
+                "You can still open Overview, update My profile, and reply in Admin messages. "
+                "Requests, quotes, orders, and consumer inquiries are unavailable until you are re-approved."
+            ),
+            reason="provider_revoked",
+        )
 
     return _to_out(db, profile)
+
+
+async def _notify_provider_status(
+    db: Session,
+    *,
+    admin: User,
+    provider: User,
+    body: str,
+    reason: str,
+) -> None:
+    """Post an admin support message and push a live notification to the provider."""
+    from datetime import datetime, timezone
+
+    from app.db.models import AdminConversation, AdminMessage
+    from app.services.ws_manager import ws_manager
+    from sqlalchemy import select
+
+    conv = db.scalar(
+        select(AdminConversation).where(AdminConversation.provider_id == provider.id)
+    )
+    if not conv:
+        conv = AdminConversation(
+            provider_id=provider.id,
+            created_by_admin_id=admin.id,
+        )
+        db.add(conv)
+        db.flush()
+
+    msg = AdminMessage(
+        conversation_id=conv.id,
+        sender_id=admin.id,
+        body=body,
+    )
+    db.add(msg)
+    conv.updated_at = datetime.now(timezone.utc)
+    conv.admin_last_read_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(msg)
+
+    await ws_manager.send_to_user(
+        provider.id,
+        {
+            "type": "admin_message",
+            "payload": {
+                "id": str(msg.id),
+                "conversation_id": str(conv.id),
+                "sender_id": str(msg.sender_id),
+                "body": msg.body,
+                "created_at": msg.created_at.isoformat() if msg.created_at else None,
+                "reason": reason,
+            },
+        },
+    )

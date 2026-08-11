@@ -4,11 +4,13 @@ import { AppShell } from "../components/AppShell";
 import { AttachmentGallery, FilePicker } from "../components/Attachments";
 import { InquiryChatPanel, startProviderChatWithConsumer } from "../components/InquiryChat";
 import { MapsLink } from "../components/MapsLink";
-import { offerKindLabel } from "../components/ProviderTrust";
+import { offerKindClass, offerKindLabel } from "../components/ProviderTrust";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { api } from "../services/api";
+import { isMeaningfulLocationLabel } from "../services/geo";
 import { uploadFiles } from "../services/uploads";
 import { useProviderNav } from "../store/providerNav";
+import { useAuth } from "../store/auth";
 import type { AdminSupportConversation, Conversation, Order, ProviderProfile, Quote, ServiceRequest } from "../types";
 
 type ProviderSection =
@@ -20,6 +22,25 @@ type ProviderSection =
   | "quotes"
   | "orders";
 
+type OverviewAccordion = "storefront" | "location";
+
+function AccordionChevron() {
+  return (
+    <svg
+      className="profile-accordion-chevron"
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden="true"
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
 const SECTIONS: ProviderSection[] = [
   "overview",
   "inquiries",
@@ -29,6 +50,8 @@ const SECTIONS: ProviderSection[] = [
   "quotes",
   "orders",
 ];
+
+const REVOKED_SECTIONS: ProviderSection[] = ["overview", "support"];
 
 const TITLES: Record<ProviderSection, string> = {
   overview: "Overview",
@@ -63,9 +86,13 @@ export function ProviderDashboard() {
   const bumpAdminUnread = useProviderNav((s) => s.bumpAdminUnread);
   const clearAdminUnread = useProviderNav((s) => s.clearAdminUnread);
   const refreshAdminUnread = useProviderNav((s) => s.refreshAdminUnread);
+  const refreshUser = useAuth((s) => s.refreshUser);
   const [toast, setToast] = useState("");
   const [busy, setBusy] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [overviewAccordion, setOverviewAccordion] = useState<OverviewAccordion | null>(
+    "storefront",
+  );
   const [files, setFiles] = useState<File[]>([]);
   const [loc, setLoc] = useState({ longitude: "77.5946", latitude: "12.9716", max_radius_km: "10" });
   const [quoteForm, setQuoteForm] = useState({
@@ -76,17 +103,50 @@ export function ProviderDashboard() {
   });
 
   const { connected } = useWebSocket((msg) => {
-    const m = msg as { type?: string; payload?: { title?: string; conversation_id?: string } };
+    const m = msg as {
+      type?: string;
+      payload?: { title?: string; conversation_id?: string; reason?: string; body?: string };
+    };
     if (m.type === "new_request") {
       setToast(`New lead: ${m.payload?.title || "Request nearby"}`);
       void refresh();
+    }
+    if (m.type === "request_cancelled") {
+      const title = m.payload?.title || "a request";
+      setToast(`Request cancelled: ${title}`);
+      void refresh();
+      void loadConversations();
     }
     if (m.type === "inquiry_message") {
       setToast("New inquiry from a consumer");
       void loadConversations();
     }
     if (m.type === "admin_message") {
-      setToast("New message from LocalSync admin");
+      if (m.payload?.reason === "provider_revoked") {
+        setToast("Your provider access was revoked — check Admin messages");
+        void refresh();
+        void refreshUser();
+        void loadSupportThreads();
+        bumpAdminUnread(1);
+        return;
+      }
+      if (m.payload?.reason === "provider_approved") {
+        setToast("Your account was approved — check Admin messages");
+        void refresh();
+        void refreshUser();
+        void loadSupportThreads();
+        bumpAdminUnread(1);
+        return;
+      }
+      if (m.payload?.reason === "provider_reapproved") {
+        setToast("Your account was re-approved — check Admin messages");
+        void refresh();
+        void refreshUser();
+        void loadSupportThreads();
+        bumpAdminUnread(1);
+        return;
+      }
+      setToast("New message from Gharq admin");
       void loadSupportThreads();
       if (activeSupportId) {
         clearAdminUnread();
@@ -132,6 +192,7 @@ export function ProviderDashboard() {
       await loadConversations();
       await loadSupportThreads();
       await refreshAdminUnread();
+      void refreshUser();
     } catch {
       /* profile may be missing */
     }
@@ -271,6 +332,13 @@ export function ProviderDashboard() {
     }
   }
 
+  const isLimited =
+    profile?.verification_status === "REVOKED" ||
+    profile?.verification_status === "REJECTED";
+  if (isLimited && !REVOKED_SECTIONS.includes(tab)) {
+    return <Navigate to="/provider/overview" replace />;
+  }
+
   return (
     <AppShell title={TITLES[tab]} connected={connected} onRefresh={refresh}>
       {toast && (
@@ -280,301 +348,607 @@ export function ProviderDashboard() {
       )}
 
       {tab === "overview" && (
-        <div className="card">
-          <h2>{profile?.business_name || "Provider overview"}</h2>
-          <p className="muted">
-            {profile?.full_name} · {offerKindLabel(profile?.offer_kind)} ·{" "}
-            {profile?.verification_status}
-          </p>
-          {profile?.categories && profile.categories.length > 0 && (
-            <p className="muted">Categories: {profile.categories.join(", ")}</p>
-          )}
-          <p>
-            Complete address, GST, Aadhaar, categories and documents in{" "}
-            <Link to="/profile">My profile</Link>.
-          </p>
-          {profile?.verification_status === "PENDING" && (
-            <p className="error">
-              Pending admin approval — finish My profile, then wait for verification before going
-              online.
-            </p>
-          )}
-          {profile?.verification_status === "REJECTED" && (
-            <p className="error">Your verification was rejected. Contact support/admin.</p>
-          )}
-          <MapsLink
-            latitude={profile?.latitude}
-            longitude={profile?.longitude}
-            maps_url={profile?.maps_url}
-            label={profile?.location_label || undefined}
-          />
-          <div style={{ marginTop: "0.75rem" }}>
-            <span className={`pill ${profile?.is_online ? "online" : "offline"}`}>
-              {profile?.is_online ? "Online" : "Offline"}
-            </span>
-          </div>
-          <div className="nav-actions" style={{ marginTop: "1rem" }}>
-            <button
-              className="btn secondary"
-              type="button"
-              disabled={
-                !profile || (!profile.is_online && profile.verification_status !== "APPROVED")
-              }
-              onClick={() => void toggleOnline()}
-            >
-              Go {profile?.is_online ? "offline" : "online"}
-            </button>
-            <Link className="btn" to="/profile">
-              Edit My profile
-            </Link>
-          </div>
-          {profile?.user_id && profile.verification_status === "APPROVED" && (
-            <div className="public-link-row">
-              <p style={{ fontSize: "0.85rem", margin: 0, wordBreak: "break-all" }}>
-                Public link:{" "}
-                <a
-                  className="link-blue public-link-open"
-                  href={profile.public_url_path || `/p/${profile.public_slug || profile.user_id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  title="Open in new tab"
-                >
-                  {typeof window !== "undefined" ? window.location.origin : ""}
-                  {profile.public_url_path || `/p/${profile.public_slug || profile.user_id}`}
-                  <svg
-                    className="external-link-icon"
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    aria-hidden="true"
-                  >
-                    <path d="M14 3h7v7" />
-                    <path d="M10 14 21 3" />
-                    <path d="M21 14v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h6" />
-                  </svg>
-                </a>
-              </p>
-              <button
-                className="icon-btn"
-                type="button"
-                title={linkCopied ? "Copied" : "Copy public link"}
-                aria-label={linkCopied ? "Copied" : "Copy public link"}
-                onClick={() => {
-                  const path =
-                    profile.public_url_path || `/p/${profile.public_slug || profile.user_id}`;
-                  const url = `${window.location.origin}${path}`;
-                  void navigator.clipboard.writeText(url).then(() => {
-                    setLinkCopied(true);
-                    window.setTimeout(() => setLinkCopied(false), 2000);
-                  });
-                }}
+        <div className="provider-overview">
+          <section className="dash-surface provider-overview-hero">
+            <div className="provider-overview-hero-main">
+              <span
+                className={`provider-overview-mark ${offerKindClass(profile?.offer_kind)}`}
+                aria-hidden="true"
               >
-                {linkCopied ? (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                    <path d="M20 6 9 17l-5-5" />
-                  </svg>
-                ) : (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                    <rect x="9" y="9" width="13" height="13" rx="2" />
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                  </svg>
-                )}
+                {(profile?.business_name || "P").trim().slice(0, 1).toUpperCase()}
+              </span>
+              <div className="provider-overview-identity">
+                <p className="dash-eyebrow">Overview</p>
+                <div className="provider-overview-title-row">
+                  <h2>{profile?.business_name || "Your business"}</h2>
+                  <span
+                    className={`pill ${
+                      profile?.verification_status === "APPROVED"
+                        ? "online"
+                        : profile?.verification_status === "REJECTED" ||
+                            profile?.verification_status === "REVOKED"
+                          ? "offline"
+                          : "pending"
+                    }`}
+                  >
+                    {profile?.verification_status === "APPROVED"
+                      ? "Verified"
+                      : profile?.verification_status === "REJECTED"
+                        ? "Rejected"
+                        : profile?.verification_status === "REVOKED"
+                          ? "Revoked"
+                          : "Pending approval"}
+                  </span>
+                  <span className="provider-overview-rating" title="Average rating">
+                    ★ {(profile?.average_rating ?? 0).toFixed(1)}
+                    <span className="muted">({profile?.rating_count ?? 0})</span>
+                  </span>
+                </div>
+                <p className="provider-overview-owner muted">
+                  {profile?.full_name || "Complete your profile"}
+                  {profile?.offer_kind ? ` · ${offerKindLabel(profile.offer_kind)}` : ""}
+                </p>
+                <div className="provider-overview-status">
+                  <span
+                    className={`provider-overview-status-pill ${
+                      profile?.is_online ? "is-online" : "is-offline"
+                    }`}
+                  >
+                    <span className="provider-overview-status-dot" aria-hidden="true" />
+                    {profile?.is_online ? "Online now" : "Offline"}
+                  </span>
+                  {profile?.opening_time && profile?.closing_time && (
+                    <span className="provider-overview-chip" title="Business hours (IST)">
+                      Hours {profile.opening_time}–{profile.closing_time}
+                    </span>
+                  )}
+                  {(profile?.categories || []).slice(0, 3).map((cat) => (
+                    <span key={cat} className="provider-overview-chip">
+                      {cat}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="provider-overview-actions">
+              <button
+                className={`btn ${profile?.is_online ? "secondary" : ""}`}
+                type="button"
+                disabled={
+                  !profile ||
+                  isLimited ||
+                  (!profile.is_online && profile.verification_status !== "APPROVED")
+                }
+                onClick={() => void toggleOnline()}
+              >
+                Go {profile?.is_online ? "offline" : "online"}
               </button>
-            </div>
-          )}
-          <form onSubmit={saveLocation} style={{ marginTop: "1.25rem" }}>
-            <h3>Quick location</h3>
-            <div className="grid grid-2">
-              <div className="field">
-                <label>Longitude</label>
-                <input
-                  value={loc.longitude}
-                  onChange={(e) => setLoc({ ...loc, longitude: e.target.value })}
-                />
-              </div>
-              <div className="field">
-                <label>Latitude</label>
-                <input
-                  value={loc.latitude}
-                  onChange={(e) => setLoc({ ...loc, latitude: e.target.value })}
-                />
-              </div>
-            </div>
-            <MapsLink latitude={Number(loc.latitude)} longitude={Number(loc.longitude)} />
-            <div className="field">
-              <label>Max travel radius (km)</label>
-              <input
-                value={loc.max_radius_km}
-                onChange={(e) => setLoc({ ...loc, max_radius_km: e.target.value })}
-              />
-            </div>
-            <div className="nav-actions">
-              <button className="btn secondary btn-with-icon" type="button" onClick={detectLocation}>
+              <Link
+                className="btn secondary provider-overview-edit"
+                to="/profile"
+                title="Edit profile"
+                aria-label="Edit profile"
+              >
+                <span className="provider-overview-edit-label">Edit profile</span>
                 <svg
-                  width="16"
-                  height="16"
+                  className="provider-overview-edit-icon"
+                  width="18"
+                  height="18"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                   aria-hidden="true"
                 >
-                  <path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" />
-                  <circle cx="12" cy="10" r="2.5" />
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
                 </svg>
-                Detect location
-              </button>
-              <button className="btn" type="submit">
-                Save
-              </button>
+              </Link>
             </div>
-          </form>
+          </section>
+
+          {profile?.verification_status === "PENDING" && (
+            <p className="provider-overview-banner pending">
+              Finish My profile, then wait for admin verification before going online.
+            </p>
+          )}
+          {profile?.verification_status === "REJECTED" && (
+            <p className="provider-overview-banner error">
+              Your verification was rejected. You can update My profile and message admin.
+            </p>
+          )}
+          {profile?.verification_status === "REVOKED" && (
+            <p className="provider-overview-banner error">
+              Your provider access was revoked. You can update My profile and message admin.
+              Marketplace features stay locked until re-approval.
+            </p>
+          )}
+
+          <section className="provider-overview-kpis">
+            {(() => {
+              const openOrders = orders.filter(
+                (o) => o.status !== "COMPLETED" && o.status !== "CANCELLED",
+              ).length;
+              const kpiItems = [
+                {
+                  key: "requests",
+                  label: "Nearby requests",
+                  value: feed.length,
+                  to: "/provider/requests",
+                  accent: true,
+                },
+                {
+                  key: "orders",
+                  label: "Open orders",
+                  value: openOrders,
+                  to: "/provider/orders",
+                  accent: false,
+                },
+                {
+                  key: "quotes",
+                  label: "Quotes sent",
+                  value: sentQuotes.length,
+                  to: "/provider/quotes",
+                  accent: false,
+                },
+              ] as const;
+              return kpiItems.map((kpi) => {
+                const className = `dash-surface provider-overview-kpi ${
+                  kpi.accent ? "accent" : ""
+                }`;
+                const body = (
+                  <>
+                    <span className="dash-kpi-label">{kpi.label}</span>
+                    <strong>{kpi.value}</strong>
+                  </>
+                );
+                if (isLimited) {
+                  return (
+                    <div key={kpi.key} className={className}>
+                      {body}
+                    </div>
+                  );
+                }
+                return (
+                  <Link key={kpi.key} className={`${className} is-link`} to={kpi.to}>
+                    {body}
+                  </Link>
+                );
+              });
+            })()}
+          </section>
+
+          <div className="profile-sections provider-overview-accordions">
+            <section
+              className={`profile-accordion ${overviewAccordion === "storefront" ? "is-open" : ""}`}
+            >
+              <button
+                type="button"
+                className="profile-accordion-trigger"
+                aria-expanded={overviewAccordion === "storefront"}
+                aria-controls="provider-overview-storefront"
+                onClick={() =>
+                  setOverviewAccordion((prev) => (prev === "storefront" ? null : "storefront"))
+                }
+              >
+                <span className="profile-accordion-index" aria-hidden="true">
+                  1
+                </span>
+                <span className="profile-accordion-copy">
+                  <span className="profile-accordion-title">Storefront</span>
+                  <span className="muted profile-accordion-hint">
+                    Public page link &amp; marketplace shortcuts
+                  </span>
+                </span>
+                <AccordionChevron />
+              </button>
+              {overviewAccordion === "storefront" && (
+                <div className="profile-accordion-panel" id="provider-overview-storefront">
+                  <div className="provider-overview-panel-body">
+                    {profile?.user_id && profile.verification_status === "APPROVED" ? (
+                      <div className="provider-overview-public">
+                        <span className="provider-overview-meta-label">Public link</span>
+                        <div className="provider-overview-link-row">
+                          <a
+                            className="provider-overview-link"
+                            href={
+                              profile.public_url_path ||
+                              `/p/${profile.public_slug || profile.user_id}`
+                            }
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {typeof window !== "undefined" ? window.location.origin : ""}
+                            {profile.public_url_path ||
+                              `/p/${profile.public_slug || profile.user_id}`}
+                          </a>
+                          <button
+                            className="icon-btn provider-overview-copy"
+                            type="button"
+                            title={linkCopied ? "Copied" : "Copy public link"}
+                            aria-label={linkCopied ? "Copied" : "Copy public link"}
+                            onClick={() => {
+                              const path =
+                                profile.public_url_path ||
+                                `/p/${profile.public_slug || profile.user_id}`;
+                              const url = `${window.location.origin}${path}`;
+                              void navigator.clipboard.writeText(url).then(() => {
+                                setLinkCopied(true);
+                                window.setTimeout(() => setLinkCopied(false), 2000);
+                              });
+                            }}
+                          >
+                            {linkCopied ? (
+                              <svg
+                                width="16"
+                                height="16"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                aria-hidden="true"
+                              >
+                                <path d="M20 6 9 17l-5-5" />
+                              </svg>
+                            ) : (
+                              <svg
+                                width="16"
+                                height="16"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                aria-hidden="true"
+                              >
+                                <rect x="9" y="9" width="13" height="13" rx="2" />
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                              </svg>
+                            )}
+                          </button>
+                          <a
+                            className="icon-btn provider-overview-copy"
+                            href={
+                              profile.public_url_path ||
+                              `/p/${profile.public_slug || profile.user_id}`
+                            }
+                            target="_blank"
+                            rel="noreferrer"
+                            title="Open in new tab"
+                            aria-label="Open public page in new tab"
+                          >
+                            <svg
+                              width="16"
+                              height="16"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              aria-hidden="true"
+                            >
+                              <path d="M14 3h7v7" />
+                              <path d="M10 14 21 3" />
+                              <path d="M21 14v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h6" />
+                            </svg>
+                          </a>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="muted provider-overview-public-empty">
+                        Your public link appears here after admin approval.
+                      </p>
+                    )}
+
+                    <div className="provider-overview-shortcuts-head">
+                      <p className="dash-eyebrow">Shortcuts</p>
+                    </div>
+                    <div className="provider-overview-shortcuts">
+                      {!isLimited && (
+                        <>
+                          <Link className="provider-overview-shortcut" to="/provider/requests">
+                            <strong>Nearby requests</strong>
+                            <span className="muted">Review leads in your radius</span>
+                          </Link>
+                          <Link className="provider-overview-shortcut" to="/provider/orders">
+                            <strong>Orders</strong>
+                            <span className="muted">Track active work</span>
+                          </Link>
+                          <Link className="provider-overview-shortcut" to="/provider/inquiries">
+                            <strong>Inquiries</strong>
+                            <span className="muted">Chat with interested buyers</span>
+                          </Link>
+                        </>
+                      )}
+                      <Link className="provider-overview-shortcut" to="/profile">
+                        <strong>My profile</strong>
+                        <span className="muted">GST, docs & categories</span>
+                      </Link>
+                      {isLimited && (
+                        <Link className="provider-overview-shortcut" to="/provider/support">
+                          <strong>Admin messages</strong>
+                          <span className="muted">Contact Gharq support</span>
+                        </Link>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <section
+              className={`profile-accordion ${overviewAccordion === "location" ? "is-open" : ""}`}
+            >
+              <button
+                type="button"
+                className="profile-accordion-trigger"
+                aria-expanded={overviewAccordion === "location"}
+                aria-controls="provider-overview-location"
+                onClick={() =>
+                  setOverviewAccordion((prev) => (prev === "location" ? null : "location"))
+                }
+              >
+                <span className="profile-accordion-index" aria-hidden="true">
+                  2
+                </span>
+                <span className="profile-accordion-copy">
+                  <span className="profile-accordion-title">Location &amp; reach</span>
+                  <span className="muted profile-accordion-hint">
+                    Map pin, area &amp; travel radius
+                  </span>
+                </span>
+                <AccordionChevron />
+              </button>
+              {overviewAccordion === "location" && (
+                <div className="profile-accordion-panel" id="provider-overview-location">
+                  <div className="provider-overview-panel-body">
+                    <div className="provider-overview-meta-chips">
+                      <div className="provider-overview-meta-chip">
+                        <span className="provider-overview-meta-label">Map</span>
+                        <MapsLink
+                          latitude={profile?.latitude}
+                          longitude={profile?.longitude}
+                          maps_url={profile?.maps_url}
+                          label="Open map"
+                        />
+                      </div>
+                      {isMeaningfulLocationLabel(profile?.location_label) && (
+                        <div className="provider-overview-meta-chip">
+                          <span className="provider-overview-meta-label">Area</span>
+                          <strong>{profile?.location_label}</strong>
+                        </div>
+                      )}
+                      <div className="provider-overview-meta-chip">
+                        <span className="provider-overview-meta-label">Max radius</span>
+                        <strong>{profile?.max_radius_km ?? "—"} km</strong>
+                      </div>
+                    </div>
+
+                    <form className="provider-overview-location page-form" onSubmit={saveLocation}>
+                      <div className="provider-overview-location-head">
+                        <p className="dash-eyebrow">Quick update</p>
+                        <h4>Adjust coordinates</h4>
+                      </div>
+                      <div className="field">
+                        <label>Longitude</label>
+                        <input
+                          value={loc.longitude}
+                          onChange={(e) => setLoc({ ...loc, longitude: e.target.value })}
+                        />
+                      </div>
+                      <div className="field">
+                        <label>Latitude</label>
+                        <input
+                          value={loc.latitude}
+                          onChange={(e) => setLoc({ ...loc, latitude: e.target.value })}
+                        />
+                      </div>
+                      <div className="field">
+                        <label>Max travel radius (km)</label>
+                        <input
+                          value={loc.max_radius_km}
+                          onChange={(e) => setLoc({ ...loc, max_radius_km: e.target.value })}
+                        />
+                      </div>
+                      <div className="provider-overview-location-actions page-actions">
+                        <button
+                          className="btn secondary btn-with-icon"
+                          type="button"
+                          onClick={detectLocation}
+                        >
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            aria-hidden="true"
+                          >
+                            <path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" />
+                            <circle cx="12" cy="10" r="2.5" />
+                          </svg>
+                          Detect location
+                        </button>
+                        <button className="btn" type="submit">
+                          Save location
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+            </section>
+          </div>
         </div>
       )}
 
       {tab === "inquiries" && (
-        <div className="card">
-          <h2>Consumer inquiries</h2>
-          <p className="muted">Pre-request questions from consumers while you are online.</p>
-          {activeChatId ? (
-            <InquiryChatPanel
-              conversationId={activeChatId}
-              title={`Chat with ${activeChatTitle}`}
-              onClose={() => setActiveChatId(null)}
-            />
-          ) : (
-            <div className="list">
-              {conversations.length === 0 && <p className="muted">No inquiries yet.</p>}
-              {conversations.map((c) => (
-                <div key={c.id} className="list-item">
-                  <strong>{c.consumer_name}</strong>
-                  <div className="muted">{c.last_message || "Opened a chat"}</div>
-                  <button
-                    className="btn secondary"
-                    type="button"
-                    onClick={() => {
-                      setActiveChatId(c.id);
-                      setActiveChatTitle(c.consumer_name || "Consumer");
-                    }}
-                  >
-                    Reply
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {tab === "support" && (
-        <div className="card">
-          <h2>Admin messages</h2>
-          <p className="muted">Messages from LocalSync admins about your account or listings.</p>
-          {activeSupportId ? (
-            <InquiryChatPanel
-              conversationId={activeSupportId}
-              title="Chat with LocalSync admin"
-              messagesPath={`/support-conversations/${activeSupportId}/messages`}
-              emptyHint="No messages yet."
-              placeholder="Type your reply…"
-              onClose={() => setActiveSupportId(null)}
-            />
-          ) : (
-            <div className="list">
-              {supportThreads.length === 0 && (
-                <p className="muted">No admin messages yet.</p>
-              )}
-              {supportThreads.map((t) => (
-                <div key={t.id} className="list-item">
-                  <strong>{t.admin_name || "LocalSync Admin"}</strong>
-                  <div className="muted">{t.last_message || "Conversation started"}</div>
-                  <p className="muted" style={{ fontSize: "0.85rem" }}>
-                    Updated {new Date(t.updated_at).toLocaleString()}
-                  </p>
-                  <button
-                    className="btn"
-                    type="button"
-                    style={{ marginTop: "0.5rem" }}
-                    onClick={() => {
-                      setActiveSupportId(t.id);
-                      clearAdminUnread();
-                    }}
-                  >
-                    Open chat
-                    {(t.unread_count || 0) > 0 && (
-                      <span className="nav-badge" style={{ marginLeft: "0.4rem" }}>
-                        {t.unread_count}
-                      </span>
-                    )}
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {tab === "requests" && (
-        <div className="card">
-          <h2>Nearby requests</h2>
-          <p className="muted">
-            Chat to clarify details, then send a quote. After the consumer accepts, agree delivery
-            and payment on the order and complete with OTP.
-          </p>
-          {activeChatId && (
-            <div style={{ marginBottom: "1rem" }}>
+        <div className="page-stack">
+          <header className="page-hero">
+            <p className="dash-eyebrow">Messages</p>
+            <h2>Consumer inquiries</h2>
+            <p className="page-lead">Pre-request questions from consumers while you are online.</p>
+          </header>
+          <section className="page-panel">
+            {activeChatId ? (
               <InquiryChatPanel
                 conversationId={activeChatId}
                 title={`Chat with ${activeChatTitle}`}
                 onClose={() => setActiveChatId(null)}
               />
-            </div>
-          )}
-          <div className="list">
-            {feed.length === 0 && <p className="muted">No matching active requests.</p>}
-            {feed.map((r) => (
-              <div key={r.id} className="list-item">
-                <strong>{r.title}</strong>
-                <p className="muted">{r.description}</p>
-                <p className="muted" style={{ fontSize: "0.85rem" }}>
-                  {r.target_mode === "TARGETED" ? "Sent to you" : "Nearby broadcast"}
-                </p>
-                <MapsLink latitude={r.latitude} longitude={r.longitude} />
-                <AttachmentGallery attachments={r.attachments} />
-                <div className="nav-actions" style={{ marginTop: "0.5rem" }}>
-                  <button
-                    className="btn secondary"
-                    type="button"
-                    onClick={() => void chatAboutRequest(r)}
-                  >
-                    Chat & ask
-                  </button>
-                  <button className="btn" type="button" onClick={() => quoteThis(r)}>
-                    Send quote
-                  </button>
-                </div>
+            ) : (
+              <div className="page-list list">
+                {conversations.length === 0 && <p className="page-empty">No inquiries yet.</p>}
+                {conversations.map((c) => (
+                  <div key={c.id} className="list-item">
+                    <strong>{c.consumer_name}</strong>
+                    <div className="muted">{c.last_message || "Opened a chat"}</div>
+                    <div className="page-actions">
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        onClick={() => {
+                          setActiveChatId(c.id);
+                          setActiveChatTitle(c.consumer_name || "Consumer");
+                        }}
+                      >
+                        Reply
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            )}
+          </section>
+        </div>
+      )}
+
+      {tab === "support" && (
+        <div className="page-stack">
+          <header className="page-hero">
+            <p className="dash-eyebrow">Support</p>
+            <h2>Admin messages</h2>
+            <p className="page-lead">
+              Messages from Gharq admins about your account or listings.
+            </p>
+          </header>
+          <section className="page-panel">
+            {activeSupportId ? (
+              <InquiryChatPanel
+                conversationId={activeSupportId}
+                title="Chat with Gharq admin"
+                messagesPath={`/support-conversations/${activeSupportId}/messages`}
+                emptyHint="No messages yet."
+                placeholder="Type your reply…"
+                onClose={() => setActiveSupportId(null)}
+              />
+            ) : (
+              <div className="page-list list">
+                {supportThreads.length === 0 && (
+                  <p className="page-empty">No admin messages yet.</p>
+                )}
+                {supportThreads.map((t) => (
+                  <div key={t.id} className="list-item">
+                    <strong>{t.admin_name || "Gharq Admin"}</strong>
+                    <div className="muted">{t.last_message || "Conversation started"}</div>
+                    <p className="muted" style={{ fontSize: "0.85rem" }}>
+                      Updated {new Date(t.updated_at).toLocaleString()}
+                    </p>
+                    <div className="page-actions">
+                      <button
+                        className="btn"
+                        type="button"
+                        onClick={() => {
+                          setActiveSupportId(t.id);
+                          clearAdminUnread();
+                        }}
+                      >
+                        Open chat
+                        {(t.unread_count || 0) > 0 && (
+                          <span className="nav-badge" style={{ marginLeft: "0.4rem" }}>
+                            {t.unread_count}
+                          </span>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+
+      {tab === "requests" && (
+        <div className="page-stack">
+          <header className="page-hero">
+            <p className="dash-eyebrow">Leads</p>
+            <h2>Nearby requests</h2>
+            <p className="page-lead">
+              Chat to clarify details, then send a quote. After the consumer accepts, agree delivery
+              and payment on the order and complete with OTP.
+            </p>
+          </header>
+          <section className="page-panel">
+            {activeChatId && (
+              <div style={{ marginBottom: "1rem" }}>
+                <InquiryChatPanel
+                  conversationId={activeChatId}
+                  title={`Chat with ${activeChatTitle}`}
+                  onClose={() => setActiveChatId(null)}
+                />
+              </div>
+            )}
+            <div className="page-list list">
+              {feed.length === 0 && <p className="page-empty">No matching active requests.</p>}
+              {feed.map((r) => (
+                <div key={r.id} className="list-item">
+                  <strong>{r.title}</strong>
+                  <p className="muted">{r.description}</p>
+                  <p className="muted" style={{ fontSize: "0.85rem" }}>
+                    {r.target_mode === "TARGETED" ? "Sent to you" : "Nearby broadcast"}
+                  </p>
+                  <MapsLink latitude={r.latitude} longitude={r.longitude} />
+                  <AttachmentGallery attachments={r.attachments} />
+                  <div className="page-actions">
+                    <button
+                      className="btn secondary"
+                      type="button"
+                      onClick={() => void chatAboutRequest(r)}
+                    >
+                      Chat & ask
+                    </button>
+                    <button className="btn" type="button" onClick={() => quoteThis(r)}>
+                      Send quote
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
         </div>
       )}
 
       {tab === "quote" && (
-        <form className="card" onSubmit={submitQuote} style={{ maxWidth: 640 }}>
-          <h2>Submit quote</h2>
-          <p className="muted">Pick a request from Nearby requests, or paste a request ID.</p>
-          <div className="field">
-            <label>Request ID</label>
-            <input
-              required
-              value={quoteForm.request_id}
-              onChange={(e) => setQuoteForm({ ...quoteForm, request_id: e.target.value })}
-            />
-          </div>
-          <div className="grid grid-2">
+        <div className="page-stack narrow">
+          <header className="page-hero">
+            <p className="dash-eyebrow">Quotes</p>
+            <h2>Submit quote</h2>
+            <p className="page-lead">
+              Pick a request from Nearby requests, or paste a request ID.
+            </p>
+          </header>
+          <form className="page-panel page-form" onSubmit={submitQuote}>
+            <div className="field">
+              <label>Request ID</label>
+              <input
+                required
+                value={quoteForm.request_id}
+                onChange={(e) => setQuoteForm({ ...quoteForm, request_id: e.target.value })}
+              />
+            </div>
             <div className="field">
               <label>Price (₹)</label>
               <input
@@ -596,60 +970,78 @@ export function ProviderDashboard() {
                 onChange={(e) => setQuoteForm({ ...quoteForm, estimated_days: e.target.value })}
               />
             </div>
-          </div>
-          <div className="field">
-            <label>Message</label>
-            <textarea
-              rows={2}
-              value={quoteForm.message}
-              onChange={(e) => setQuoteForm({ ...quoteForm, message: e.target.value })}
-            />
-          </div>
-          <FilePicker files={files} onChange={setFiles} disabled={busy} />
-          <button className="btn" type="submit" disabled={busy}>
-            {busy ? "Uploading & sending…" : "Send quote"}
-          </button>
-        </form>
+            <div className="field">
+              <label>Message</label>
+              <textarea
+                rows={2}
+                value={quoteForm.message}
+                onChange={(e) => setQuoteForm({ ...quoteForm, message: e.target.value })}
+              />
+            </div>
+            <FilePicker files={files} onChange={setFiles} disabled={busy} />
+            <div className="page-actions">
+              <button className="btn" type="submit" disabled={busy}>
+                {busy ? "Uploading & sending…" : "Send quote"}
+              </button>
+            </div>
+          </form>
+        </div>
       )}
 
       {tab === "quotes" && (
-        <div className="card">
-          <h2>My sent quotes</h2>
-          <div className="list">
-            {sentQuotes.length === 0 && <p className="muted">No quotes sent yet.</p>}
-            {sentQuotes.map((q) => (
-              <div key={q.id} className="list-item">
-                <strong>
-                  ₹{q.price_quote} · ETA {q.estimated_days} day{q.estimated_days === 1 ? "" : "s"}
-                </strong>
-                <div className="muted">
-                  {q.request_title || "Request"} · for {q.consumer_name || "consumer"} · {q.status}
+        <div className="page-stack">
+          <header className="page-hero">
+            <p className="dash-eyebrow">Quotes</p>
+            <h2>My sent quotes</h2>
+            <p className="page-lead">Quotes you have sent to consumers.</p>
+          </header>
+          <section className="page-panel">
+            <div className="page-list list">
+              {sentQuotes.length === 0 && <p className="page-empty">No quotes sent yet.</p>}
+              {sentQuotes.map((q) => (
+                <div key={q.id} className="list-item">
+                  <strong>
+                    ₹{q.price_quote} · ETA {q.estimated_days} day
+                    {q.estimated_days === 1 ? "" : "s"}
+                  </strong>
+                  <div className="muted">
+                    {q.request_title || "Request"} · for {q.consumer_name || "consumer"} ·{" "}
+                    {q.status}
+                  </div>
+                  {q.message && <p>{q.message}</p>}
+                  <AttachmentGallery attachments={q.attachments} />
+                  <div className="muted" style={{ fontSize: "0.8rem" }}>
+                    {new Date(q.created_at).toLocaleString()}
+                  </div>
                 </div>
-                {q.message && <p>{q.message}</p>}
-                <AttachmentGallery attachments={q.attachments} />
-                <div className="muted" style={{ fontSize: "0.8rem" }}>
-                  {new Date(q.created_at).toLocaleString()}
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          </section>
         </div>
       )}
 
       {tab === "orders" && (
-        <div className="card">
-          <h2>Orders</h2>
-          <div className="list">
-            {orders.length === 0 && <p className="muted">No orders yet.</p>}
-            {orders.map((o) => (
-              <div key={o.id} className="list-item">
-                ₹{o.agreed_price} · {o.status}
-                <div>
-                  <Link to={`/orders/${o.id}`}>Open →</Link>
+        <div className="page-stack">
+          <header className="page-hero">
+            <p className="dash-eyebrow">Work</p>
+            <h2>Orders</h2>
+            <p className="page-lead">Accepted deals and completion status.</p>
+          </header>
+          <section className="page-panel">
+            <div className="page-list list">
+              {orders.length === 0 && <p className="page-empty">No orders yet.</p>}
+              {orders.map((o) => (
+                <div key={o.id} className="list-item">
+                  <strong>
+                    ₹{o.agreed_price} · {o.status}
+                  </strong>
+                  <div>
+                    <Link to={`/orders/${o.id}`}>Open →</Link>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          </section>
         </div>
       )}
     </AppShell>

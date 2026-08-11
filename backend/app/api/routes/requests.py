@@ -5,10 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_roles
+from app.api.deps import STAFF_ROLES, require_roles
 from app.core.config import settings
 from app.db.models import (
+    Conversation,
+    InquiryMessage,
     ProviderProfile,
+    Quote,
+    QuoteStatus,
     RequestStatus,
     RequestTarget,
     RequestTargetMode,
@@ -18,7 +22,7 @@ from app.db.models import (
     VerificationStatus,
 )
 from app.db.session import get_db
-from app.schemas import ServiceRequestCreate, ServiceRequestOut
+from app.schemas import ServiceRequestClose, ServiceRequestCreate, ServiceRequestOut
 from app.services.attachments import link_attachments, list_attachments_for_request
 from app.services.geo import (
     get_lon_lat_from_profile,
@@ -259,7 +263,7 @@ def provider_feed(
 def get_request(
     request_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.CONSUMER, UserRole.PROVIDER, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles(UserRole.CONSUMER, UserRole.PROVIDER, *STAFF_ROLES)),
 ):
     req = db.get(ServiceRequest, request_id)
     if not req:
@@ -272,4 +276,113 @@ def get_request(
             t.provider_id == current_user.id for t in req.targets
         ):
             raise HTTPException(status_code=403, detail="Not allowed")
+    return _to_out(db, req)
+
+
+@router.post("/{request_id}/close", response_model=ServiceRequestOut)
+async def close_request(
+    request_id: UUID,
+    payload: ServiceRequestClose = ServiceRequestClose(),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CONSUMER)),
+):
+    req = db.get(ServiceRequest, request_id)
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if req.consumer_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed")
+    if req.status != RequestStatus.ACTIVE:
+        raise HTTPException(status_code=400, detail="Only active requests can be closed")
+
+    pending = db.scalars(
+        select(Quote).where(Quote.request_id == req.id, Quote.status == QuoteStatus.PENDING)
+    ).all()
+    reason = (payload.reason or "").strip()
+    if pending and not reason:
+        raise HTTPException(
+            status_code=400,
+            detail="A reason is required because this request has active quotes",
+        )
+
+    req.status = RequestStatus.CANCELLED
+    provider_ids = list({q.provider_id for q in pending})
+    for quote in pending:
+        quote.status = QuoteStatus.WITHDRAWN
+
+    notify_events: list[tuple[UUID, dict, dict]] = []
+    if pending and reason:
+        body = (
+            f'Request "{req.title}" was cancelled by the consumer.\n\n'
+            f"Reason: {reason}"
+        )
+        for provider_id in provider_ids:
+            conv = db.scalar(
+                select(Conversation).where(
+                    Conversation.consumer_id == current_user.id,
+                    Conversation.provider_id == provider_id,
+                )
+            )
+            if not conv:
+                conv = Conversation(
+                    consumer_id=current_user.id,
+                    provider_id=provider_id,
+                    category_id=req.category_id,
+                )
+                db.add(conv)
+                db.flush()
+            msg = InquiryMessage(
+                conversation_id=conv.id,
+                sender_id=current_user.id,
+                body=body,
+            )
+            db.add(msg)
+            conv.updated_at = datetime.now(timezone.utc)
+            db.flush()
+            notify_events.append(
+                (
+                    provider_id,
+                    {
+                        "type": "request_cancelled",
+                        "payload": {
+                            "request_id": str(req.id),
+                            "title": req.title,
+                            "reason": reason,
+                            "consumer_name": current_user.full_name,
+                            "quote_count": len(pending),
+                            "conversation_id": str(conv.id),
+                            "body": body,
+                        },
+                    },
+                    {
+                        "type": "inquiry_message",
+                        "payload": {
+                            "id": str(msg.id),
+                            "conversation_id": str(conv.id),
+                            "sender_id": str(msg.sender_id),
+                            "body": msg.body,
+                            "created_at": msg.created_at.isoformat() if msg.created_at else None,
+                        },
+                    },
+                )
+            )
+
+    db.commit()
+    db.refresh(req)
+
+    for provider_id, cancelled_event, inquiry_event in notify_events:
+        await ws_manager.send_to_user(provider_id, cancelled_event)
+        await ws_manager.send_to_user(provider_id, inquiry_event)
+    if provider_ids and reason:
+        redis_pubsub.publish(
+            "request_cancelled",
+            {
+                "request_id": str(req.id),
+                "title": req.title,
+                "reason": reason,
+                "consumer_name": current_user.full_name,
+                "quote_count": len(pending),
+            },
+            target_user_ids=provider_ids,
+        )
+
     return _to_out(db, req)

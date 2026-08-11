@@ -9,6 +9,25 @@ import { reverseGeocodeDetails } from "../services/geo";
 import { useAuth } from "../store/auth";
 import type { CategoryTree, OfferKind, ProviderProfile, User } from "../types";
 
+type ProfileAccordion = "contact" | "business" | "documents";
+
+function AccordionChevron() {
+  return (
+    <svg
+      className="profile-accordion-chevron"
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden="true"
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
 export function ProfilePage() {
   const user = useAuth((s) => s.user);
   const token = useAuth((s) => s.token);
@@ -19,6 +38,7 @@ export function ProfilePage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [showSavedPopup, setShowSavedPopup] = useState(false);
+  const [openAccordion, setOpenAccordion] = useState<ProfileAccordion | null>("contact");
   const [categoryIds, setCategoryIds] = useState<number[]>([]);
   const [form, setForm] = useState({
     full_name: "",
@@ -112,6 +132,10 @@ export function ProfilePage() {
   useEffect(() => {
     void load();
   }, [user?.id]);
+
+  function toggleAccordion(id: ProfileAccordion) {
+    setOpenAccordion((prev) => (prev === id ? null : id));
+  }
 
   function detectLocation() {
     if (!navigator.geolocation) {
@@ -256,143 +280,419 @@ export function ProfilePage() {
 
   if (!user) return null;
 
+  const contactOpen = openAccordion === "contact";
+  const businessOpen = openAccordion === "business";
+  const documentsOpen = openAccordion === "documents";
+
   return (
     <AppShell title="My profile">
-      <div className="grid" style={{ gap: "1rem" }}>
-        <div className="card">
-          <h2 style={{ marginBottom: "0.35rem" }}>My profile</h2>
-          <p className="muted">
-            Mobile <strong>{user.phone_number}</strong> · {user.role}
+      <div className="profile-page">
+        <header className="profile-page-hero">
+          <p className="dash-eyebrow">Account</p>
+          <div className="profile-page-hero-row">
+            <div>
+              <h2>My profile</h2>
+              <p className="muted profile-page-meta">
+                <span>{user.phone_number}</span>
+                <span aria-hidden="true">·</span>
+                <span>{user.role}</span>
+              </p>
+            </div>
             {user.profile_complete ? (
-              <span className="pill online" style={{ marginLeft: "0.5rem" }}>
-                Profile complete
-              </span>
+              <span className="pill online">Profile complete</span>
             ) : (
-              <span className="pill" style={{ marginLeft: "0.5rem" }}>
-                Complete your details
-              </span>
+              <span className="pill">Complete your details</span>
             )}
-          </p>
-          {note && <p className="pill online">{note}</p>}
-          {error && <p className="error">{error}</p>}
-        </div>
+          </div>
+          {note && <p className="profile-page-note">{note}</p>}
+          {error && <p className="error profile-page-error">{error}</p>}
+        </header>
 
-        <form className="card" onSubmit={saveCommon}>
-          <h3>Contact &amp; address</h3>
-          <div className="field">
-            <label>Full name</label>
-            <input
-              required
-              value={form.full_name}
-              onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-            />
-          </div>
-          <div className="grid grid-2">
-            <div className="field">
-              <label>Email</label>
-              <input
-                type="email"
-                value={form.email}
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
-              />
-            </div>
-            <div className="field">
-              <label>Alternate mobile</label>
-              <input
-                value={form.alternate_phone}
-                onChange={(e) => setForm({ ...form, alternate_phone: e.target.value })}
-              />
-            </div>
-          </div>
-          <div className="field">
-            <label>Address line 1</label>
-            <input
-              value={form.address_line1}
-              onChange={(e) => setForm({ ...form, address_line1: e.target.value })}
-              placeholder="House / shop no., street"
-            />
-          </div>
-          <div className="field">
-            <label>Address line 2</label>
-            <input
-              value={form.address_line2}
-              onChange={(e) => setForm({ ...form, address_line2: e.target.value })}
-              placeholder="Landmark / area"
-            />
-          </div>
-          <div className="grid grid-2">
-            <div className="field">
-              <label>City</label>
-              <input
-                value={form.city}
-                onChange={(e) => setForm({ ...form, city: e.target.value })}
-              />
-            </div>
-            <div className="field">
-              <label>State</label>
-              <input
-                value={form.state}
-                onChange={(e) => setForm({ ...form, state: e.target.value })}
-              />
-            </div>
-          </div>
-          <div className="field" style={{ maxWidth: 200 }}>
-            <label>Pincode</label>
-            <input
-              value={form.pincode}
-              onChange={(e) => setForm({ ...form, pincode: e.target.value })}
-            />
-          </div>
-          <h3>Map location</h3>
-          <div className="field">
-            <label>Area label</label>
-            <input
-              value={form.location_label}
-              onChange={(e) => setForm({ ...form, location_label: e.target.value })}
-            />
-          </div>
-          <div className="grid grid-2">
-            <div className="field">
-              <label>Latitude</label>
-              <input
-                value={form.latitude}
-                onChange={(e) => setForm({ ...form, latitude: e.target.value })}
-              />
-            </div>
-            <div className="field">
-              <label>Longitude</label>
-              <input
-                value={form.longitude}
-                onChange={(e) => setForm({ ...form, longitude: e.target.value })}
-              />
-            </div>
-          </div>
-          <MapsLink
-            latitude={form.latitude ? Number(form.latitude) : null}
-            longitude={form.longitude ? Number(form.longitude) : null}
-            label={form.location_label || undefined}
-          />
-          <div className="nav-actions" style={{ marginTop: "0.75rem" }}>
-            <button className="btn secondary btn-with-icon" type="button" onClick={detectLocation}>
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                aria-hidden="true"
+        <div className="profile-sections" role="list">
+          <section
+            className={`profile-accordion ${contactOpen ? "is-open" : ""}`}
+            role="listitem"
+          >
+            <button
+              type="button"
+              className="profile-accordion-trigger"
+              aria-expanded={contactOpen}
+              aria-controls="profile-accordion-contact"
+              onClick={() => toggleAccordion("contact")}
+            >
+              <span className="profile-accordion-index" aria-hidden="true">
+                1
+              </span>
+              <span className="profile-accordion-copy">
+                <span className="profile-accordion-title">Contact &amp; address</span>
+                <span className="muted profile-accordion-hint">
+                  Name, address &amp; map pin
+                </span>
+              </span>
+              <AccordionChevron />
+            </button>
+            {contactOpen && (
+              <div className="profile-accordion-panel" id="profile-accordion-contact">
+                <form className="profile-section" onSubmit={saveCommon}>
+                  <div className="profile-section-list">
+                    <div className="field">
+                      <label>Full name</label>
+                      <input
+                        required
+                        value={form.full_name}
+                        onChange={(e) => setForm({ ...form, full_name: e.target.value })}
+                      />
+                    </div>
+                    <div className="field">
+                      <label>Email</label>
+                      <input
+                        type="email"
+                        value={form.email}
+                        onChange={(e) => setForm({ ...form, email: e.target.value })}
+                      />
+                    </div>
+                    <div className="field">
+                      <label>Alternate mobile</label>
+                      <input
+                        value={form.alternate_phone}
+                        onChange={(e) => setForm({ ...form, alternate_phone: e.target.value })}
+                      />
+                    </div>
+                    <div className="field">
+                      <label>Address line 1</label>
+                      <input
+                        value={form.address_line1}
+                        onChange={(e) => setForm({ ...form, address_line1: e.target.value })}
+                        placeholder="House / shop no., street"
+                      />
+                    </div>
+                    <div className="field">
+                      <label>Address line 2</label>
+                      <input
+                        value={form.address_line2}
+                        onChange={(e) => setForm({ ...form, address_line2: e.target.value })}
+                        placeholder="Landmark / area"
+                      />
+                    </div>
+                    <div className="field">
+                      <label>City</label>
+                      <input
+                        value={form.city}
+                        onChange={(e) => setForm({ ...form, city: e.target.value })}
+                      />
+                    </div>
+                    <div className="field">
+                      <label>State</label>
+                      <input
+                        value={form.state}
+                        onChange={(e) => setForm({ ...form, state: e.target.value })}
+                      />
+                    </div>
+                    <div className="field">
+                      <label>Pincode</label>
+                      <input
+                        value={form.pincode}
+                        onChange={(e) => setForm({ ...form, pincode: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="profile-subblock">
+                    <p className="dash-eyebrow">Map location</p>
+                    <div className="profile-section-list">
+                      <div className="field">
+                        <label>Area label</label>
+                        <input
+                          value={form.location_label}
+                          onChange={(e) => setForm({ ...form, location_label: e.target.value })}
+                        />
+                      </div>
+                      <div className="field">
+                        <label>Latitude</label>
+                        <input
+                          value={form.latitude}
+                          onChange={(e) => setForm({ ...form, latitude: e.target.value })}
+                        />
+                      </div>
+                      <div className="field">
+                        <label>Longitude</label>
+                        <input
+                          value={form.longitude}
+                          onChange={(e) => setForm({ ...form, longitude: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <MapsLink
+                      latitude={form.latitude ? Number(form.latitude) : null}
+                      longitude={form.longitude ? Number(form.longitude) : null}
+                      label={form.location_label || undefined}
+                    />
+                  </div>
+
+                  <div className="profile-actions">
+                    <button
+                      className="btn secondary btn-with-icon"
+                      type="button"
+                      onClick={detectLocation}
+                    >
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        aria-hidden="true"
+                      >
+                        <path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" />
+                        <circle cx="12" cy="10" r="2.5" />
+                      </svg>
+                      Detect location
+                    </button>
+                    <button className="btn" type="submit" disabled={busy}>
+                      Save
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+          </section>
+
+          {isProvider && (
+            <>
+              <section
+                className={`profile-accordion ${businessOpen ? "is-open" : ""}`}
+                role="listitem"
               >
-                <path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" />
-                <circle cx="12" cy="10" r="2.5" />
-              </svg>
-              Detect location
-            </button>
-            <button className="btn" type="submit" disabled={busy}>
-              Save
-            </button>
-          </div>
-        </form>
+                <button
+                  type="button"
+                  className="profile-accordion-trigger"
+                  aria-expanded={businessOpen}
+                  aria-controls="profile-accordion-business"
+                  onClick={() => toggleAccordion("business")}
+                >
+                  <span className="profile-accordion-index" aria-hidden="true">
+                    2
+                  </span>
+                  <span className="profile-accordion-copy">
+                    <span className="profile-accordion-title">Business / shop details</span>
+                    <span className="muted profile-accordion-hint">
+                      Listing, hours &amp; verification info
+                    </span>
+                  </span>
+                  <AccordionChevron />
+                </button>
+                {businessOpen && (
+                  <div className="profile-accordion-panel" id="profile-accordion-business">
+                    <form className="profile-section" onSubmit={saveProvider}>
+                      <p className="profile-section-lead muted">
+                        Required for verification and going online.
+                      </p>
+                      <div className="profile-section-list">
+                        <div className="field">
+                          <label>Business / shop name</label>
+                          <input
+                            required
+                            value={biz.business_name}
+                            onChange={(e) => setBiz({ ...biz, business_name: e.target.value })}
+                          />
+                        </div>
+                        <div className="field">
+                          <label>I offer</label>
+                          <select
+                            value={biz.offer_kind}
+                            onChange={(e) =>
+                              setBiz({ ...biz, offer_kind: e.target.value as OfferKind })
+                            }
+                          >
+                            <option value="SERVICE">{offerKindLabel("SERVICE")}</option>
+                            <option value="PRODUCT">{offerKindLabel("PRODUCT")}</option>
+                            <option value="BOTH">{offerKindLabel("BOTH")}</option>
+                          </select>
+                        </div>
+                        <div className="field">
+                          <label>Categories &amp; subcategories</label>
+                          <CategoryMultiSelect
+                            tree={tree}
+                            selected={categoryIds}
+                            onChange={setCategoryIds}
+                          />
+                        </div>
+                        <div className="field">
+                          <label>About</label>
+                          <textarea
+                            rows={3}
+                            value={biz.description}
+                            onChange={(e) => setBiz({ ...biz, description: e.target.value })}
+                            placeholder="Short business description shown on your public page"
+                          />
+                        </div>
+                        <div className="field">
+                          <label>What you offer</label>
+                          <textarea
+                            rows={3}
+                            value={biz.offerings_detail}
+                            onChange={(e) =>
+                              setBiz({ ...biz, offerings_detail: e.target.value })
+                            }
+                            placeholder="Detailed services or products customers can expect"
+                          />
+                        </div>
+                        <div className="field">
+                          <label>Website</label>
+                          <input
+                            type="url"
+                            value={biz.website_url}
+                            onChange={(e) => setBiz({ ...biz, website_url: e.target.value })}
+                            placeholder="https://yourshop.com"
+                          />
+                        </div>
+                        <div className="field">
+                          <label>Instagram</label>
+                          <input
+                            type="url"
+                            value={biz.instagram_url}
+                            onChange={(e) => setBiz({ ...biz, instagram_url: e.target.value })}
+                            placeholder="https://instagram.com/yourshop"
+                          />
+                        </div>
+                        <div className="field">
+                          <label>YouTube</label>
+                          <input
+                            type="url"
+                            value={biz.youtube_url}
+                            onChange={(e) => setBiz({ ...biz, youtube_url: e.target.value })}
+                            placeholder="https://youtube.com/@yourshop"
+                          />
+                        </div>
+                        <div className="field">
+                          <label>Opens</label>
+                          <input
+                            type="time"
+                            value={biz.opening_time}
+                            onChange={(e) => setBiz({ ...biz, opening_time: e.target.value })}
+                          />
+                        </div>
+                        <div className="field">
+                          <label>Closes</label>
+                          <input
+                            type="time"
+                            value={biz.closing_time}
+                            onChange={(e) => setBiz({ ...biz, closing_time: e.target.value })}
+                          />
+                        </div>
+                        <div className="field">
+                          <label>GST number</label>
+                          <input
+                            value={biz.gst_number}
+                            onChange={(e) => setBiz({ ...biz, gst_number: e.target.value })}
+                            placeholder="29AAAAA0000A1Z5"
+                          />
+                        </div>
+                        <div className="field">
+                          <label>Aadhaar number</label>
+                          <input
+                            value={biz.aadhaar_number}
+                            onChange={(e) => setBiz({ ...biz, aadhaar_number: e.target.value })}
+                            maxLength={12}
+                            placeholder="12 digits"
+                          />
+                        </div>
+                        <div className="field">
+                          <label>Max travel radius (km)</label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={50}
+                            value={biz.max_radius_km}
+                            onChange={(e) => setBiz({ ...biz, max_radius_km: e.target.value })}
+                          />
+                        </div>
+                      </div>
+                      <div className="profile-actions">
+                        <button className="btn" type="submit" disabled={busy}>
+                          Save business profile
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                )}
+              </section>
+
+              <section
+                className={`profile-accordion ${documentsOpen ? "is-open" : ""}`}
+                role="listitem"
+              >
+                <button
+                  type="button"
+                  className="profile-accordion-trigger"
+                  aria-expanded={documentsOpen}
+                  aria-controls="profile-accordion-documents"
+                  onClick={() => toggleAccordion("documents")}
+                >
+                  <span className="profile-accordion-index" aria-hidden="true">
+                    3
+                  </span>
+                  <span className="profile-accordion-copy">
+                    <span className="profile-accordion-title">Upload documents</span>
+                    <span className="muted profile-accordion-hint">
+                      Aadhaar, GST, ID &amp; registration
+                    </span>
+                  </span>
+                  <AccordionChevron />
+                </button>
+                {documentsOpen && (
+                  <div className="profile-accordion-panel" id="profile-accordion-documents">
+                    <div className="profile-section">
+                      <p className="profile-section-lead muted">
+                        Images or PDF — Aadhaar, GST certificate, ID, business registration.
+                      </p>
+                      <div className="profile-doc-list">
+                        {(
+                          [
+                            ["aadhaar", "Aadhaar document", provider?.aadhaar_doc_url],
+                            ["gst", "GST certificate", provider?.gst_doc_url],
+                            ["government_id", "Government ID", provider?.government_id_url],
+                            ["business_reg", "Business registration", provider?.business_reg_url],
+                          ] as const
+                        ).map(([key, label, url]) => (
+                          <div key={key} className="profile-doc-row">
+                            <div className="profile-doc-meta">
+                              <strong>{label}</strong>
+                              {url ? (
+                                <a href={mediaSrc(url)} target="_blank" rel="noreferrer">
+                                  View uploaded file
+                                </a>
+                              ) : (
+                                <span className="muted">Not uploaded</span>
+                              )}
+                            </div>
+                            <label className="profile-doc-upload">
+                              <span>{url ? "Replace file" : "Choose file"}</span>
+                              <input
+                                type="file"
+                                accept="image/*,application/pdf"
+                                disabled={busy}
+                                onChange={(e) =>
+                                  void uploadDoc(key, e.target.files?.[0] || null)
+                                }
+                              />
+                            </label>
+                          </div>
+                        ))}
+                      </div>
+                      {provider && (
+                        <p className="profile-verification muted">
+                          Verification: {provider.verification_status}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </section>
+            </>
+          )}
+        </div>
 
         {showSavedPopup && (
           <div
@@ -418,174 +718,6 @@ export function ProfilePage() {
               </button>
             </div>
           </div>
-        )}
-
-        {isProvider && (
-          <>
-            <form className="card" onSubmit={saveProvider}>
-              <h3>Business / shop details</h3>
-              <p className="muted">Required for verification and going online.</p>
-              <div className="field">
-                <label>Business / shop name</label>
-                <input
-                  required
-                  value={biz.business_name}
-                  onChange={(e) => setBiz({ ...biz, business_name: e.target.value })}
-                />
-              </div>
-              <div className="field">
-                <label>I offer</label>
-                <select
-                  value={biz.offer_kind}
-                  onChange={(e) => setBiz({ ...biz, offer_kind: e.target.value as OfferKind })}
-                >
-                  <option value="SERVICE">{offerKindLabel("SERVICE")}</option>
-                  <option value="PRODUCT">{offerKindLabel("PRODUCT")}</option>
-                  <option value="BOTH">{offerKindLabel("BOTH")}</option>
-                </select>
-              </div>
-              <div className="field">
-                <label>Categories &amp; subcategories</label>
-                <CategoryMultiSelect tree={tree} selected={categoryIds} onChange={setCategoryIds} />
-              </div>
-              <div className="field">
-                <label>About</label>
-                <textarea
-                  rows={3}
-                  value={biz.description}
-                  onChange={(e) => setBiz({ ...biz, description: e.target.value })}
-                  placeholder="Short business description shown on your public page"
-                />
-              </div>
-              <div className="field">
-                <label>What you offer</label>
-                <textarea
-                  rows={3}
-                  value={biz.offerings_detail}
-                  onChange={(e) => setBiz({ ...biz, offerings_detail: e.target.value })}
-                  placeholder="Detailed services or products customers can expect"
-                />
-              </div>
-              <div className="field">
-                <label>Website</label>
-                <input
-                  type="url"
-                  value={biz.website_url}
-                  onChange={(e) => setBiz({ ...biz, website_url: e.target.value })}
-                  placeholder="https://yourshop.com"
-                />
-              </div>
-              <div className="grid grid-2">
-                <div className="field">
-                  <label>Instagram</label>
-                  <input
-                    type="url"
-                    value={biz.instagram_url}
-                    onChange={(e) => setBiz({ ...biz, instagram_url: e.target.value })}
-                    placeholder="https://instagram.com/yourshop"
-                  />
-                </div>
-                <div className="field">
-                  <label>YouTube</label>
-                  <input
-                    type="url"
-                    value={biz.youtube_url}
-                    onChange={(e) => setBiz({ ...biz, youtube_url: e.target.value })}
-                    placeholder="https://youtube.com/@yourshop"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-2">
-                <div className="field">
-                  <label>Opens</label>
-                  <input
-                    type="time"
-                    value={biz.opening_time}
-                    onChange={(e) => setBiz({ ...biz, opening_time: e.target.value })}
-                  />
-                </div>
-                <div className="field">
-                  <label>Closes</label>
-                  <input
-                    type="time"
-                    value={biz.closing_time}
-                    onChange={(e) => setBiz({ ...biz, closing_time: e.target.value })}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-2">
-                <div className="field">
-                  <label>GST number</label>
-                  <input
-                    value={biz.gst_number}
-                    onChange={(e) => setBiz({ ...biz, gst_number: e.target.value })}
-                    placeholder="29AAAAA0000A1Z5"
-                  />
-                </div>
-                <div className="field">
-                  <label>Aadhaar number</label>
-                  <input
-                    value={biz.aadhaar_number}
-                    onChange={(e) => setBiz({ ...biz, aadhaar_number: e.target.value })}
-                    maxLength={12}
-                    placeholder="12 digits"
-                  />
-                </div>
-              </div>
-              <div className="field" style={{ maxWidth: 200 }}>
-                <label>Max travel radius (km)</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={50}
-                  value={biz.max_radius_km}
-                  onChange={(e) => setBiz({ ...biz, max_radius_km: e.target.value })}
-                />
-              </div>
-              <button className="btn" type="submit" disabled={busy}>
-                Save business profile
-              </button>
-            </form>
-
-            <div className="card">
-              <h3>Upload documents</h3>
-              <p className="muted">Images or PDF — Aadhaar, GST certificate, ID, business registration.</p>
-              {(
-                [
-                  ["aadhaar", "Aadhaar document", provider?.aadhaar_doc_url],
-                  ["gst", "GST certificate", provider?.gst_doc_url],
-                  ["government_id", "Government ID", provider?.government_id_url],
-                  ["business_reg", "Business registration", provider?.business_reg_url],
-                ] as const
-              ).map(([key, label, url]) => (
-                <div key={key} className="field">
-                  <label>{label}</label>
-                  {url ? (
-                    <p style={{ margin: "0.25rem 0" }}>
-                      <a href={mediaSrc(url)} target="_blank" rel="noreferrer">
-                        View uploaded file
-                      </a>
-                    </p>
-                  ) : (
-                    <p className="muted" style={{ margin: "0.25rem 0" }}>
-                      Not uploaded
-                    </p>
-                  )}
-                  <input
-                    type="file"
-                    accept="image/*,application/pdf"
-                    disabled={busy}
-                    onChange={(e) => void uploadDoc(key, e.target.files?.[0] || null)}
-                  />
-                </div>
-              ))}
-              {provider && (
-                <p className="muted" style={{ fontSize: "0.85rem" }}>
-                  Verification: {provider.verification_status}
-                </p>
-              )}
-            </div>
-          </>
         )}
       </div>
     </AppShell>

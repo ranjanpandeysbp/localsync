@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_roles
+from app.api.deps import STAFF_ROLES, is_staff, require_roles
 from app.db.models import (
     Order,
     OrderStatus,
@@ -143,7 +143,7 @@ async def create_quote(
 def list_quotes(
     request_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.CONSUMER, UserRole.PROVIDER, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles(UserRole.CONSUMER, UserRole.PROVIDER, *STAFF_ROLES)),
 ):
     req = db.get(ServiceRequest, request_id)
     if not req:
@@ -249,12 +249,12 @@ def my_orders(
 def get_order(
     order_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.CONSUMER, UserRole.PROVIDER, UserRole.ADMIN)),
+    current_user: User = Depends(require_roles(UserRole.CONSUMER, UserRole.PROVIDER, *STAFF_ROLES)),
 ):
     order = db.get(Order, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
-    if current_user.role != UserRole.ADMIN and current_user.id not in (order.consumer_id, order.provider_id):
+    if not is_staff(current_user) and current_user.id not in (order.consumer_id, order.provider_id):
         raise HTTPException(status_code=403, detail="Not allowed")
     return _order_out(order, reveal_otp=True, viewer_id=current_user.id)
 

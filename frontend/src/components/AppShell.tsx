@@ -6,6 +6,7 @@ import { useAdminNav } from "../store/adminNav";
 import { useProviderNav } from "../store/providerNav";
 import { unlockNotificationSound } from "../services/sounds";
 import type { UserRole } from "../types";
+import { isStaffRole } from "../types";
 
 type NavItem = { to: string; label: string; end?: boolean; badge?: number };
 
@@ -13,8 +14,20 @@ function navForRole(
   role: UserRole | undefined,
   adminLabels?: Record<string, string>,
   badges?: { adminUnread?: number; messagesUnread?: number },
+  providerVerification?: string | null,
 ): NavItem[] {
   if (role === "PROVIDER") {
+    if (providerVerification === "REVOKED" || providerVerification === "REJECTED") {
+      return [
+        { to: "/provider/overview", label: "Overview" },
+        {
+          to: "/provider/support",
+          label: "Admin messages",
+          badge: badges?.adminUnread || 0,
+        },
+        { to: "/profile", label: "My profile" },
+      ];
+    }
     return [
       { to: "/provider/overview", label: "Overview" },
       { to: "/provider/inquiries", label: "Consumer inquiries" },
@@ -30,8 +43,8 @@ function navForRole(
       { to: "/profile", label: "My profile" },
     ];
   }
-  if (role === "ADMIN") {
-    return [
+  if (isStaffRole(role)) {
+    const items: NavItem[] = [
       { to: "/admin/providers", label: adminLabels?.providers || "Providers" },
       { to: "/admin/consumers", label: adminLabels?.consumers || "Consumers" },
       { to: "/admin/orders", label: adminLabels?.orders || "Order dashboard" },
@@ -41,8 +54,14 @@ function navForRole(
         label: "Provider messages",
         badge: badges?.messagesUnread || 0,
       },
-      { to: "/admin/config", label: "Config" },
     ];
+    if (role === "ADMIN") {
+      items.push(
+        { to: "/admin/customer-service", label: "Customer service agents" },
+        { to: "/admin/config", label: "Config" },
+      );
+    }
+    return items;
   }
   return [
     { to: "/consumer/details", label: "My details" },
@@ -50,8 +69,8 @@ function navForRole(
     { to: "/consumer/post", label: "Post a request" },
     { to: "/consumer/providers", label: "Providers in category" },
     { to: "/consumer/inquiries", label: "Recent inquiries" },
-    { to: "/consumer/quotes", label: "All quotes received" },
-    { to: "/consumer/orders", label: "Complete Orders" },
+    { to: "/consumer/quotes", label: "Received Quotes" },
+    { to: "/consumer/orders", label: "Orders" },
   ];
 }
 
@@ -80,7 +99,7 @@ export function AppShell({
 
   useWebSocket((msg) => {
     const m = msg as { type?: string; payload?: { sender_id?: string } };
-    if (user?.role !== "ADMIN" || m.type !== "admin_message") return;
+    if (!isStaffRole(user?.role) || m.type !== "admin_message") return;
     // Provider replies arrive as admin_message; ignore while already viewing messages inbox/chat
     if (location.pathname.startsWith("/admin/messages")) {
       void refreshCounts();
@@ -94,7 +113,7 @@ export function AppShell({
   });
 
   const adminLabels = useMemo(() => {
-    if (user?.role !== "ADMIN") return undefined;
+    if (!isStaffRole(user?.role)) return undefined;
     const pending = counts.pendingProviders
       ? ` · ${counts.pendingProviders} new`
       : "";
@@ -108,11 +127,16 @@ export function AppShell({
 
   const items = useMemo(
     () =>
-      navForRole(user?.role, adminLabels, {
-        adminUnread: user?.role === "PROVIDER" ? adminUnread : 0,
-        messagesUnread: user?.role === "ADMIN" ? messagesUnread : 0,
-      }),
-    [user?.role, adminLabels, adminUnread, messagesUnread],
+      navForRole(
+        user?.role,
+        adminLabels,
+        {
+          adminUnread: user?.role === "PROVIDER" ? adminUnread : 0,
+          messagesUnread: isStaffRole(user?.role) ? messagesUnread : 0,
+        },
+        user?.verification_status,
+      ),
+    [user?.role, user?.verification_status, adminLabels, adminUnread, messagesUnread],
   );
 
   useEffect(() => {
@@ -120,7 +144,7 @@ export function AppShell({
   }, [location.pathname]);
 
   useEffect(() => {
-    if (user?.role === "ADMIN") void refreshCounts();
+    if (isStaffRole(user?.role)) void refreshCounts();
     if (user?.role === "PROVIDER") void refreshAdminUnread();
   }, [user?.role, location.pathname, refreshCounts, refreshAdminUnread]);
 
@@ -151,13 +175,13 @@ export function AppShell({
   const home =
     user?.role === "PROVIDER"
       ? "/provider/overview"
-      : user?.role === "ADMIN"
+      : isStaffRole(user?.role)
         ? "/admin/providers"
         : "/consumer/details";
 
   async function handleRefresh() {
     if (onRefresh) await onRefresh();
-    if (user?.role === "ADMIN") await refreshCounts();
+    if (isStaffRole(user?.role)) await refreshCounts();
     if (user?.role === "PROVIDER") await refreshAdminUnread();
   }
 
@@ -173,7 +197,7 @@ export function AppShell({
       <aside className="sidebar" aria-label="Main navigation">
         <div className="sidebar-brand">
           <Link to={home} className="brand">
-            LocalSync
+            Gharq
           </Link>
           <p className="muted sidebar-tagline">Hyper-local marketplace</p>
         </div>
@@ -203,7 +227,7 @@ export function AppShell({
         </nav>
 
         <div className="sidebar-footer">
-          {(user?.role === "ADMIN" || user?.role === "PROVIDER" || onRefresh) && (
+          {(isStaffRole(user?.role) || user?.role === "PROVIDER" || onRefresh) && (
             <button
               className="btn secondary sidebar-logout"
               type="button"
@@ -225,7 +249,7 @@ export function AppShell({
             type="button"
             onClick={() => {
               logout();
-              navigate("/login");
+              navigate("/?login=1");
             }}
           >
             Log out

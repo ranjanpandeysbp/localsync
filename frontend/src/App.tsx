@@ -4,14 +4,14 @@ import { ProtectedRoute, GuestRoute } from "./components/ProtectedRoute";
 import { AdminPage } from "./pages/AdminPage";
 import { AdminProviderDetailPage } from "./pages/AdminProviderDetailPage";
 import { ConsumerDashboard } from "./pages/ConsumerDashboard";
+import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { HomeRedirect } from "./pages/HomeRedirect";
-import { LoginPage } from "./pages/LoginPage";
 import { OrderPage } from "./pages/OrderPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { ProviderDashboard } from "./pages/ProviderDashboard";
 import { PublicProviderPage } from "./pages/PublicProviderPage";
-import { RegisterPage } from "./pages/RegisterPage";
 import { RequestDetailPage } from "./pages/RequestDetailPage";
+import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { useAuth } from "./store/auth";
 import "./styles.css";
 
@@ -26,8 +26,10 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route element={<GuestRoute />}>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/login" element={<Navigate to="/?login=1" replace />} />
+          <Route path="/register" element={<Navigate to="/?register=1" replace />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
         </Route>
 
         <Route path="/" element={<HomeRedirect />} />
@@ -48,7 +50,7 @@ export default function App() {
           <Route path="/provider/:section" element={<ProviderDashboard />} />
         </Route>
 
-        <Route element={<ProtectedRoute roles={["ADMIN"]} />}>
+        <Route element={<ProtectedRoute roles={["ADMIN", "CUSTOMER_SERVICE"]} />}>
           <Route path="/admin" element={<Navigate to="/admin/providers" replace />} />
           <Route path="/admin/providers/:userId" element={<AdminProviderDetailPage />} />
           <Route path="/admin/:section" element={<AdminPage />} />

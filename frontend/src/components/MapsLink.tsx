@@ -1,3 +1,5 @@
+import { isMeaningfulLocationLabel } from "../services/geo";
+
 export function mapsUrl(lat?: number | null, lng?: number | null, fallback?: string | null): string | null {
   if (fallback) return fallback;
   if (lat == null || lng == null) return null;
@@ -19,8 +21,9 @@ export function MapsLink({
   if (!href) {
     return <span className="muted">Location not set</span>;
   }
+  const meaningful = isMeaningfulLocationLabel(label) ? label!.trim() : null;
   const text =
-    label ||
+    meaningful ||
     (latitude != null && longitude != null
       ? `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`
       : "Open in Google Maps");

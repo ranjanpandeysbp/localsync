@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 
 from app.db.models import ProviderCategory, ProviderProfile, User, VerificationStatus
+from app.services.business_hours import effective_is_online
 
 
 def make_point(longitude: float, latitude: float) -> WKTElement:
@@ -77,7 +78,10 @@ def find_providers_in_radius(
         .order_by(distance_m)
     )
     rows = db.execute(stmt).all()
-    return [(row[0], float(row[1])) for row in rows]
+    results = [(row[0], float(row[1])) for row in rows]
+    if online_only:
+        results = [(p, d) for p, d in results if effective_is_online(p)]
+    return results
 
 
 def _category_match_ids(db: Session, category_id: int) -> list[int]:
@@ -135,6 +139,8 @@ def find_providers_by_pincode(
         .order_by(ProviderProfile.is_online.desc(), User.average_rating.desc())
     )
     profiles = db.scalars(stmt).all()
+    if online_only:
+        profiles = [p for p in profiles if effective_is_online(p)]
     return [(p, 0.0) for p in profiles]
 
 
@@ -168,7 +174,10 @@ def find_all_providers_in_radius(
         .order_by(distance_m)
     )
     rows = db.execute(stmt).all()
-    return [(row[0], float(row[1])) for row in rows]
+    results = [(row[0], float(row[1])) for row in rows]
+    if online_only:
+        results = [(p, d) for p, d in results if effective_is_online(p)]
+    return results
 
 
 def find_all_providers_by_pincode(
@@ -196,6 +205,8 @@ def find_all_providers_by_pincode(
         .order_by(ProviderProfile.is_online.desc(), User.average_rating.desc())
     )
     profiles = db.scalars(stmt).all()
+    if online_only:
+        profiles = [p for p in profiles if effective_is_online(p)]
     return [(p, 0.0) for p in profiles]
 
 

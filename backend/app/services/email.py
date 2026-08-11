@@ -99,20 +99,20 @@ def try_send_email(
 
 
 def send_provider_registration_pending(db: Session, *, to_email: str | None, full_name: str) -> bool:
-    subject = "Thank you for registering with LocalSync"
+    subject = "Thank you for registering with Gharq"
     body_text = (
         f"Hi {full_name},\n\n"
         "Thank you for registration. Your account is being currently reviewed.\n"
         "Please keep checking email from us in next 24hrs.\n\n"
         "You will be able to log in after your account is approved.\n\n"
-        "— LocalSync Team"
+        "— Gharq Team"
     )
     body_html = (
         f"<p>Hi {full_name},</p>"
         "<p>Thank you for registration. Your account is being currently reviewed.</p>"
         "<p>Please keep checking email from us in next 24hrs.</p>"
         "<p>You will be able to log in after your account is approved.</p>"
-        "<p>— LocalSync Team</p>"
+        "<p>— Gharq Team</p>"
     )
     return try_send_email(
         db,
@@ -124,18 +124,104 @@ def send_provider_registration_pending(db: Session, *, to_email: str | None, ful
 
 
 def send_provider_approved(db: Session, *, to_email: str | None, full_name: str) -> bool:
-    subject = "Congratulations — your LocalSync account is approved"
+    subject = "Congratulations — your Gharq account is approved"
     body_text = (
         f"Hi {full_name},\n\n"
         "Congratulations! Your account is approved and activated.\n\n"
         "You can log in and create your listing.\n\n"
-        "— LocalSync Team"
+        "— Gharq Team"
     )
     body_html = (
         f"<p>Hi {full_name},</p>"
         "<p><strong>Congratulations!</strong> Your account is approved and activated.</p>"
         "<p>You can log in and create your listing.</p>"
-        "<p>— LocalSync Team</p>"
+        "<p>— Gharq Team</p>"
+    )
+    return try_send_email(
+        db,
+        to_email=to_email,
+        subject=subject,
+        body_text=body_text,
+        body_html=body_html,
+    )
+
+
+def send_provider_reapproved(db: Session, *, to_email: str | None, full_name: str) -> bool:
+    subject = "Your Gharq provider account has been re-approved"
+    body_text = (
+        f"Hi {full_name},\n\n"
+        "Good news — your provider account has been re-approved.\n\n"
+        "You can log in again and use marketplace features such as requests, quotes, "
+        "orders, and consumer inquiries.\n\n"
+        "— Gharq Team"
+    )
+    body_html = (
+        f"<p>Hi {full_name},</p>"
+        "<p><strong>Good news</strong> — your provider account has been re-approved.</p>"
+        "<p>You can log in again and use marketplace features such as requests, quotes, "
+        "orders, and consumer inquiries.</p>"
+        "<p>— Gharq Team</p>"
+    )
+    return try_send_email(
+        db,
+        to_email=to_email,
+        subject=subject,
+        body_text=body_text,
+        body_html=body_html,
+    )
+
+
+def send_provider_revoked(db: Session, *, to_email: str | None, full_name: str) -> bool:
+    subject = "Your Gharq provider account has been revoked"
+    body_text = (
+        f"Hi {full_name},\n\n"
+        "Your provider account access has been revoked by the Gharq admin team.\n\n"
+        "You can still log in to update your profile and message admin support. "
+        "Marketplace features (requests, quotes, orders, and inquiries) are unavailable "
+        "until your account is re-approved.\n\n"
+        "— Gharq Team"
+    )
+    body_html = (
+        f"<p>Hi {full_name},</p>"
+        "<p>Your provider account access has been <strong>revoked</strong> by the Gharq admin team.</p>"
+        "<p>You can still log in to update your profile and message admin support. "
+        "Marketplace features (requests, quotes, orders, and inquiries) are unavailable "
+        "until your account is re-approved.</p>"
+        "<p>— Gharq Team</p>"
+    )
+    return try_send_email(
+        db,
+        to_email=to_email,
+        subject=subject,
+        body_text=body_text,
+        body_html=body_html,
+    )
+
+
+def send_password_reset(
+    db: Session,
+    *,
+    to_email: str | None,
+    full_name: str,
+    reset_url: str,
+    expires_minutes: int,
+) -> bool:
+    subject = "Reset your Gharq password"
+    body_text = (
+        f"Hi {full_name},\n\n"
+        "We received a request to reset your Gharq password.\n\n"
+        f"Open this link to choose a new password (expires in {expires_minutes} minutes):\n"
+        f"{reset_url}\n\n"
+        "If you did not request this, you can ignore this email.\n\n"
+        "— Gharq Team"
+    )
+    body_html = (
+        f"<p>Hi {full_name},</p>"
+        "<p>We received a request to reset your Gharq password.</p>"
+        f'<p><a href="{reset_url}">Reset your password</a> '
+        f"(link expires in {expires_minutes} minutes).</p>"
+        "<p>If you did not request this, you can ignore this email.</p>"
+        "<p>— Gharq Team</p>"
     )
     return try_send_email(
         db,

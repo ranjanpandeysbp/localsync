@@ -1,12 +1,17 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import { LoginModal } from "../components/LoginModal";
+import { RegisterModal } from "../components/RegisterModal";
 import { MapsLink } from "../components/MapsLink";
-import { offerKindLabel } from "../components/ProviderTrust";
+import { MarketplaceScene } from "../components/MarketplaceScene";
+import { offerKindClass, offerKindLabel } from "../components/ProviderTrust";
 import { api } from "../services/api";
-import { reverseGeocodeDetails } from "../services/geo";
+import { reverseGeocodeDetails, isMeaningfulLocationLabel } from "../services/geo";
 import { providerPublicPath } from "../utils/providerUrl";
 import type {
+  Category,
   CategoryTree,
+  NearbyCategoryCounts,
   ProviderCatalogItem,
   PublicSearchCategory,
   PublicSearchResult,
@@ -21,10 +26,16 @@ type LocState = {
 };
 
 export function LandingPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const searchRef = useRef<HTMLElement | null>(null);
+  const browseRef = useRef<HTMLElement | null>(null);
   const [tree, setTree] = useState<CategoryTree[]>([]);
-  const [selected, setSelected] = useState<CategoryTree | null>(null);
-  const [activeParent, setActiveParent] = useState<CategoryTree | null>(null);
+  const [nearbyCounts, setNearbyCounts] = useState<Record<number, number>>({});
+  const [countsReady, setCountsReady] = useState(false);
+  const [selected, setSelected] = useState<CategoryTree | Category | null>(null);
+  const [categoryProviders, setCategoryProviders] = useState<ProviderCatalogItem[]>([]);
+  const [categoryBusy, setCategoryBusy] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
   const [error, setError] = useState("");
   const [searchQ, setSearchQ] = useState("");
   const [searchBusy, setSearchBusy] = useState(false);
@@ -34,6 +45,8 @@ export function LandingPage() {
   const [editingPin, setEditingPin] = useState(false);
   const [pinDraft, setPinDraft] = useState("");
   const [pinPopup, setPinPopup] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(() => searchParams.get("login") === "1");
+  const [registerOpen, setRegisterOpen] = useState(() => searchParams.get("register") === "1");
   const [loc, setLoc] = useState<LocState>({
     latitude: null,
     longitude: null,
@@ -43,11 +56,21 @@ export function LandingPage() {
   });
 
   const hasCoords = loc.latitude != null && loc.longitude != null;
+  const hasLocation = hasCoords || loc.pincode.length === 6;
   const matchHint = useMemo(() => {
     if (hasCoords) return `Near ${loc.label || "you"} · within 5 km`;
     if (loc.pincode.length === 6) return `In pincode ${loc.pincode}`;
     return "Allow location or enter a pincode to see nearby providers";
   }, [hasCoords, loc.label, loc.pincode]);
+
+  const popularTree = useMemo(() => {
+    if (!countsReady || !hasLocation) return tree;
+    return [...tree].sort(
+      (a, b) => (nearbyCounts[b.id] || 0) - (nearbyCounts[a.id] || 0),
+    );
+  }, [tree, nearbyCounts, countsReady, hasLocation]);
+
+  const browsing = Boolean(selected) && !searchDone;
 
   useEffect(() => {
     void api
@@ -56,6 +79,102 @@ export function LandingPage() {
       .catch(() => setError("Could not load categories"));
     detectLocation();
   }, []);
+
+  useEffect(() => {
+    if (!hasCoords && loc.pincode.length !== 6) {
+      setNearbyCounts({});
+      setCountsReady(false);
+      return;
+    }
+    let cancelled = false;
+    const params: Record<string, string | number> = {};
+    if (hasCoords) {
+      params.latitude = loc.latitude!;
+      params.longitude = loc.longitude!;
+    }
+    if (loc.pincode.length === 6) params.pincode = loc.pincode;
+
+    void api
+      .get<NearbyCategoryCounts>("/providers/nearby-category-counts", { params })
+      .then((res) => {
+        if (cancelled) return;
+        const map: Record<number, number> = {};
+        for (const row of res.data.counts) {
+          map[row.category_id] = row.nearby_count;
+        }
+        setNearbyCounts(map);
+        setCountsReady(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setNearbyCounts({});
+        setCountsReady(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loc.latitude, loc.longitude, loc.pincode, hasCoords]);
+
+  useEffect(() => {
+    if (!selected || searchDone) {
+      setCategoryProviders([]);
+      setCategoryBusy(false);
+      return;
+    }
+    if (!hasLocation) {
+      setCategoryProviders([]);
+      setCategoryBusy(false);
+      return;
+    }
+
+    let cancelled = false;
+    setCategoryBusy(true);
+    const params: Record<string, string | number> = { category_id: selected.id };
+    if (hasCoords) {
+      params.latitude = loc.latitude!;
+      params.longitude = loc.longitude!;
+    }
+    if (loc.pincode.length === 6) params.pincode = loc.pincode;
+
+    void api
+      .get<ProviderCatalogItem[]>("/providers/public-catalog", { params })
+      .then((res) => {
+        if (cancelled) return;
+        setCategoryProviders(res.data);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setCategoryProviders([]);
+        setError("Could not load providers for this category");
+      })
+      .finally(() => {
+        if (!cancelled) setCategoryBusy(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selected?.id,
+    searchDone,
+    loc.latitude,
+    loc.longitude,
+    loc.pincode,
+    hasCoords,
+    hasLocation,
+  ]);
+
+  useEffect(() => {
+    if (!filterOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest(".landing-cat-filter-menu")) return;
+      setFilterOpen(false);
+    };
+    document.addEventListener("click", onDoc);
+    return () => document.removeEventListener("click", onDoc);
+  }, [filterOpen]);
 
   function detectLocation() {
     if (!navigator.geolocation) {
@@ -100,33 +219,47 @@ export function LandingPage() {
     );
   }
 
-  function onSelectCategory(cat: CategoryTree | PublicSearchCategory, parent?: CategoryTree) {
-    const full =
-      "subcategories" in cat
-        ? (cat as CategoryTree)
-        : tree.find((t) => t.id === cat.id) ||
-          tree.flatMap((t) => t.subcategories || []).find((s) => s.id === cat.id) ||
-          ({
-            id: cat.id,
-            name: cat.name,
-            slug: cat.slug,
-            description: cat.description,
-            kind: cat.kind,
-            is_active: true,
-            subcategories: [],
-          } as CategoryTree);
+  function resolveCategory(
+    cat: CategoryTree | Category | PublicSearchCategory,
+    parent?: CategoryTree,
+  ): CategoryTree | Category {
+    if ("subcategories" in cat) return cat as CategoryTree;
+    return (
+      tree.find((t) => t.id === cat.id) ||
+      tree.flatMap((t) => t.subcategories || []).find((s) => s.id === cat.id) ||
+      ({
+        id: cat.id,
+        name: cat.name,
+        slug: cat.slug,
+        description: cat.description,
+        kind: cat.kind,
+        is_active: true,
+        subcategories: [],
+        parent_id: parent?.id,
+      } as Category)
+    );
+  }
 
-    if (parent) {
-      setActiveParent(parent);
-    } else if ("subcategories" in cat) {
-      setActiveParent(full);
-    } else {
-      const owner = tree.find((t) => t.subcategories?.some((s) => s.id === full.id));
-      setActiveParent(owner || null);
-    }
-
+  function onSelectCategory(
+    cat: CategoryTree | Category | PublicSearchCategory,
+    parent?: CategoryTree,
+  ) {
+    const full = resolveCategory(cat, parent);
     setSelected(full);
     setSearchDone(false);
+    setSearchCats([]);
+    setSearchProviders([]);
+    setFilterOpen(false);
+    setError("");
+    window.setTimeout(() => {
+      browseRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+  }
+
+  function clearCategoryBrowse() {
+    setSelected(null);
+    setCategoryProviders([]);
+    setFilterOpen(false);
   }
 
   async function onSearch(e: FormEvent) {
@@ -145,7 +278,8 @@ export function LandingPage() {
     setError("");
     setSearchDone(false);
     setSelected(null);
-    setActiveParent(null);
+    setCategoryProviders([]);
+    setFilterOpen(false);
     try {
       const params: Record<string, string | number> = { q, pincode: pin };
       if (!appliedFreshPin && loc.latitude != null && loc.longitude != null) {
@@ -194,31 +328,86 @@ export function LandingPage() {
     setError("");
   }
 
-  const subcats = activeParent?.subcategories || [];
+  function categoryMeta(cat: CategoryTree | Category): string {
+    const nearby = nearbyCounts[cat.id];
+    if (hasLocation && countsReady) {
+      return `${nearby || 0}`;
+    }
+    if ("subcategories" in cat && cat.subcategories?.length) {
+      return String(cat.subcategories.length);
+    }
+    return "";
+  }
+
+  const nearbyForSelected = selected ? nearbyCounts[selected.id] : undefined;
+
+  useEffect(() => {
+    if (searchParams.get("login") === "1") {
+      setLoginOpen(true);
+      setRegisterOpen(false);
+    } else if (searchParams.get("register") === "1") {
+      setRegisterOpen(true);
+      setLoginOpen(false);
+    } else {
+      setLoginOpen(false);
+      setRegisterOpen(false);
+    }
+  }, [searchParams]);
+
+  function setAuthParam(kind: "login" | "register" | null) {
+    const next = new URLSearchParams(searchParams);
+    next.delete("login");
+    next.delete("register");
+    if (kind === "login") next.set("login", "1");
+    if (kind === "register") next.set("register", "1");
+    setSearchParams(next, { replace: true });
+  }
+
+  function openLogin() {
+    setLoginOpen(true);
+    setRegisterOpen(false);
+    setAuthParam("login");
+  }
+
+  function openRegister() {
+    setRegisterOpen(true);
+    setLoginOpen(false);
+    setAuthParam("register");
+  }
+
+  function closeAuth() {
+    setLoginOpen(false);
+    setRegisterOpen(false);
+    setAuthParam(null);
+  }
 
   return (
     <div className="landing landing-booking">
+      <LoginModal open={loginOpen} onClose={closeAuth} onCreateAccount={openRegister} />
+      <RegisterModal open={registerOpen} onClose={closeAuth} onSignIn={openLogin} />
       <header className="landing-top landing-top-over">
         <div className="landing-top-inner">
           <Link to="/" className="brand landing-brand">
-            LocalSync
+            Gharq
           </Link>
           <nav className="landing-auth">
-            <Link className="btn secondary landing-btn-ghost" to="/login">
+            <button type="button" className="btn secondary landing-btn-ghost" onClick={openLogin}>
               Log in
-            </Link>
-            <Link className="btn" to="/register">
+            </button>
+            <button type="button" className="btn" onClick={openRegister}>
               Register
-            </Link>
+            </button>
           </nav>
         </div>
       </header>
 
       <section className="landing-hero-bleed">
-        <div className="landing-hero-media" aria-hidden="true" />
+        <div className="landing-hero-media" aria-hidden="true">
+          <MarketplaceScene className="landing-hero-scene marketplace-scene" idPrefix="landing" />
+        </div>
         <div className="landing-hero-veil" aria-hidden="true" />
         <div className="landing-hero-inner">
-          <h1 className="landing-title">LocalSync</h1>
+          <h1 className="landing-title">Gharq</h1>
           <p className="landing-lead">
             Book trusted local help — verified providers within 5 km of you.
           </p>
@@ -316,7 +505,7 @@ export function LandingPage() {
               {searchBusy ? "Searching…" : "Search"}
             </button>
           </form>
-          {error && !searchDone && <p className="error landing-hero-error">{error}</p>}
+          {error && !searchDone && !browsing && <p className="error landing-hero-error">{error}</p>}
         </div>
       </section>
 
@@ -365,73 +554,168 @@ export function LandingPage() {
           </section>
         )}
 
-        {!searchDone && (
+        {!searchDone && !browsing && (
           <section className="landing-section" id="categories">
             <div className="landing-section-head">
               <h2>Popular categories</h2>
-              <p className="muted">Browse services, then search above to find verified help near you.</p>
+              <p className="muted">
+                {hasCoords
+                  ? `Verified options near ${loc.label || "you"} within 5 km.`
+                  : loc.pincode.length === 6
+                    ? `Verified options in pincode ${loc.pincode}.`
+                    : "Allow location or enter a pincode to see how many options are near you."}
+              </p>
             </div>
 
             <div className="landing-cat-grid">
               {tree.length === 0 && <p className="muted">Loading categories…</p>}
-              {tree.map((cat) => {
-                const isActive =
-                  selected?.id === cat.id ||
-                  activeParent?.id === cat.id ||
-                  Boolean(cat.subcategories?.some((s) => s.id === selected?.id));
-                const count = cat.subcategories?.length || 0;
+              {popularTree.map((cat) => {
+                const nearby = nearbyCounts[cat.id];
+                const subCount = cat.subcategories?.length || 0;
+                let meta: string;
+                if (hasLocation && countsReady) {
+                  meta = `${nearby || 0} option${nearby === 1 ? "" : "s"} nearby`;
+                } else if (hasLocation && !countsReady) {
+                  meta = "Counting nearby…";
+                } else if (subCount > 0) {
+                  meta = `${subCount} option${subCount === 1 ? "" : "s"}`;
+                } else {
+                  meta = offerKindLabel(cat.kind);
+                }
                 return (
                   <button
                     key={cat.id}
                     type="button"
-                    className={`landing-cat ${isActive ? "active" : ""}`}
+                    className="landing-cat"
                     onClick={() => onSelectCategory(cat)}
                   >
                     <span className="landing-cat-mark" aria-hidden="true">
                       {cat.name.slice(0, 1)}
                     </span>
                     <strong>{cat.name}</strong>
-                    <span className="muted">
-                      {count > 0
-                        ? `${count} option${count === 1 ? "" : "s"}`
-                        : offerKindLabel(cat.kind)}
-                    </span>
+                    <span className="muted">{meta}</span>
                   </button>
                 );
               })}
             </div>
+          </section>
+        )}
 
-            {activeParent && subcats.length > 0 && (
-              <div className="landing-subcat-panel">
-                <p className="landing-subcat-label">
-                  Refine <strong>{activeParent.name}</strong>
+        {browsing && selected && (
+          <section
+            className={`landing-section ${filterOpen ? "landing-browse-filter-open" : ""}`}
+            ref={browseRef}
+            id="category-browse"
+          >
+            <div className="landing-browse-head">
+              <div className="landing-section-head" style={{ marginBottom: 0 }}>
+                <h2>{selected.name}</h2>
+                <p className="muted">
+                  {hasLocation
+                    ? `${matchHint}${
+                        countsReady && nearbyForSelected != null
+                          ? ` · ${nearbyForSelected} option${nearbyForSelected === 1 ? "" : "s"}`
+                          : ""
+                      }`
+                    : "Allow location or enter a pincode to see nearby providers"}
                 </p>
-                <div className="landing-subcat-row">
-                  <button
-                    type="button"
-                    className={`landing-subcat-chip ${selected?.id === activeParent.id ? "active" : ""}`}
-                    onClick={() => onSelectCategory(activeParent)}
-                  >
-                    All {activeParent.name}
-                  </button>
-                  {subcats.map((sub) => (
-                    <button
-                      key={sub.id}
-                      type="button"
-                      className={`landing-subcat-chip ${selected?.id === sub.id ? "active" : ""}`}
-                      onClick={() => onSelectCategory(sub, activeParent)}
-                    >
-                      {sub.name}
-                    </button>
-                  ))}
-                </div>
               </div>
-            )}
+
+              <div className="landing-cat-filter-menu">
+                <button
+                  type="button"
+                  className={`icon-btn landing-cat-filter-btn has-filter ${filterOpen ? "open" : ""}`}
+                  aria-label="Filter by category"
+                  aria-expanded={filterOpen}
+                  aria-haspopup="listbox"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFilterOpen((v) => !v);
+                  }}
+                >
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    aria-hidden="true"
+                  >
+                    <path d="M4 5h16M7 12h10M10 19h4" strokeLinecap="round" />
+                  </svg>
+                  <span className="landing-cat-filter-dot" aria-hidden="true" />
+                </button>
+                {filterOpen && (
+                  <ul className="landing-cat-filter-list" role="listbox">
+                    <li role="option" aria-selected={false}>
+                      <button type="button" onClick={clearCategoryBrowse}>
+                        <span>All categories</span>
+                      </button>
+                    </li>
+                    {popularTree.map((cat) => (
+                      <li key={cat.id} className="landing-cat-filter-group">
+                        <button
+                          type="button"
+                          className={selected.id === cat.id ? "active" : ""}
+                          onClick={() => onSelectCategory(cat)}
+                        >
+                          <span>{cat.name}</span>
+                          {categoryMeta(cat) !== "" && (
+                            <span className="landing-cat-filter-count">{categoryMeta(cat)}</span>
+                          )}
+                        </button>
+                        {(cat.subcategories?.length || 0) > 0 && (
+                          <ul className="landing-cat-filter-sub">
+                            {cat.subcategories.map((sub) => (
+                              <li
+                                key={sub.id}
+                                role="option"
+                                aria-selected={selected.id === sub.id}
+                              >
+                                <button
+                                  type="button"
+                                  className={selected.id === sub.id ? "active" : ""}
+                                  onClick={() => onSelectCategory(sub, cat)}
+                                >
+                                  <span>{sub.name}</span>
+                                  {categoryMeta(sub) !== "" && (
+                                    <span className="landing-cat-filter-count">
+                                      {categoryMeta(sub)}
+                                    </span>
+                                  )}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+
+            {error && <p className="error">{error}</p>}
+
+            <div className="landing-provider-list">
+              {categoryBusy && <p className="muted">Loading providers…</p>}
+              {!categoryBusy && !hasLocation && (
+                <p className="muted">
+                  Allow location or enter a pincode above to see providers in this category.
+                </p>
+              )}
+              {!categoryBusy && hasLocation && categoryProviders.length === 0 && (
+                <p className="muted">No verified providers nearby in this category.</p>
+              )}
+              {!categoryBusy &&
+                categoryProviders.map((p) => <ProviderCard key={p.user_id} provider={p} />)}
+            </div>
           </section>
         )}
 
         <footer className="landing-footer">
-          <strong>LocalSync</strong>
+          <strong>Gharq</strong>
           <span className="muted">Verified providers · nearby matching</span>
         </footer>
       </div>
@@ -466,37 +750,67 @@ export function LandingPage() {
 }
 
 function ProviderCard({ provider: p }: { provider: ProviderCatalogItem }) {
+  const kind = p.offer_kind || "BOTH";
+  const kindClass = offerKindClass(kind);
+  const blurb = p.offerings_detail || p.description;
+  const initial = (p.business_name || "?").trim().slice(0, 1).toUpperCase();
+  const hours =
+    p.opening_time && p.closing_time ? `${p.opening_time}–${p.closing_time}` : null;
+
   return (
-    <div className="card landing-provider">
-      <div className="topbar" style={{ marginBottom: "0.35rem" }}>
-        <div>
-          <strong>
-            <Link to={providerPublicPath(p)}>{p.business_name}</Link>
-          </strong>
-          <div className="muted">{p.full_name}</div>
+    <article className={`landing-provider ${kindClass}`}>
+      <div className="landing-provider-accent" aria-hidden="true" />
+      <div className="landing-provider-body">
+        <div className="landing-provider-top">
+          <span className={`landing-provider-mark ${kindClass}`} aria-hidden="true">
+            {initial}
+          </span>
+          <div className="landing-provider-identity">
+            <div className="landing-provider-title-row">
+              <strong className="landing-provider-name">
+                <Link to={providerPublicPath(p)}>{p.business_name}</Link>
+              </strong>
+              <span className={`pill ${p.is_online ? "online" : "offline"}`}>
+                {p.is_online ? "Online" : "Offline"}
+              </span>
+            </div>
+            {p.full_name && <p className="landing-provider-owner muted">{p.full_name}</p>}
+            <div className="landing-provider-chips">
+              <span className={`pill ${kindClass}`}>{offerKindLabel(kind)}</span>
+              {(p.categories || []).slice(0, 3).map((cat) => (
+                <span key={cat} className="landing-provider-chip">
+                  {cat}
+                </span>
+              ))}
+            </div>
+          </div>
         </div>
-        <span className={`pill ${p.is_online ? "online" : "offline"}`}>
-          {p.is_online ? "Online" : "Offline"}
-        </span>
+
+        {blurb && <p className="landing-provider-blurb">{blurb}</p>}
+
+        <div className="landing-provider-meta">
+          <span>
+            ★ {p.average_rating.toFixed(1)}
+            <span className="muted"> ({p.rating_count})</span>
+          </span>
+          {hours && <span className="muted">{hours}</span>}
+          {isMeaningfulLocationLabel(p.location_label) && (
+            <span className="muted">{p.location_label}</span>
+          )}
+        </div>
+
+        <div className="landing-provider-footer">
+          <MapsLink
+            latitude={p.latitude}
+            longitude={p.longitude}
+            maps_url={p.maps_url}
+            label="Map"
+          />
+          <Link className="btn landing-provider-cta" to={providerPublicPath(p)}>
+            View profile
+          </Link>
+        </div>
       </div>
-      <p className="muted">
-        {offerKindLabel(p.offer_kind || "BOTH")}
-        {p.categories?.length ? ` · ${p.categories.join(", ")}` : ""}
-      </p>
-      {(p.offerings_detail || p.description) && (
-        <p className="muted">{p.offerings_detail || p.description}</p>
-      )}
-      <MapsLink
-        latitude={p.latitude}
-        longitude={p.longitude}
-        maps_url={p.maps_url}
-        label={p.location_label || undefined}
-      />
-      <div className="landing-cta" style={{ marginTop: "0.85rem" }}>
-        <Link className="btn" to={providerPublicPath(p)}>
-          View profile
-        </Link>
-      </div>
-    </div>
+    </article>
   );
 }

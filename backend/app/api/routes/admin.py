@@ -1,11 +1,11 @@
 from datetime import date, datetime, time, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
-from app.api.deps import require_roles
+from app.api.deps import require_roles, require_staff, is_staff
 from app.api.routes.auth import user_to_out
 from app.db.models import (
     Attachment,
@@ -15,6 +15,7 @@ from app.db.models import (
     InquiryMessage,
     AdminConversation,
     AdminMessage,
+    OfferKind,
     Order,
     OrderStatus,
     ProviderCategory,
@@ -24,8 +25,10 @@ from app.db.models import (
     ServiceRequest,
     User,
     UserRole,
+    VerificationStatus,
 )
 from app.db.session import get_db
+from app.core.security import get_password_hash
 from app.schemas import (
     AdminAnalyticsBucket,
     AdminAnalyticsFilterOptions,
@@ -33,25 +36,68 @@ from app.schemas import (
     AdminAnalyticsStatusBucket,
     AdminAnalyticsSummary,
     AdminAnalyticsTimelinePoint,
+    AdminCustomerServiceCreate,
+    AdminCustomerServiceOut,
     AdminOrderOut,
+    AdminProviderCreate,
     AdminProviderDetailOut,
     AdminProviderOut,
+    AdminProviderUpdate,
     SmtpConfigOut,
     SmtpConfigUpdate,
     SmtpTestRequest,
     UserOut,
 )
-from app.services.email import get_or_create_smtp_config, send_email
-from app.services.geo import get_lon_lat_from_profile, normalize_pincode
+from app.services.email import get_or_create_smtp_config, send_email, send_provider_approved
+from app.services.business_hours import effective_is_online, sync_online_flag_with_hours
+from app.services.geo import get_lon_lat_from_profile, make_point, normalize_lat_lon, normalize_pincode
 from app.services.maps import google_maps_url
-from app.services.provider_catalog import provider_category_names
-from app.services.slugs import public_url_path_for
+from app.services.provider_catalog import provider_category_names, set_provider_categories
+from app.services.slugs import allocate_public_slug, ensure_profile_public_slug, public_url_path_for
+from app.services.uploads import media_url, save_upload_file
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 _UNKNOWN = "Unknown"
 _GROUP_BY_VALUES = {"state", "city", "area", "pincode"}
 _LOCATION_OF_VALUES = {"consumer", "provider"}
+
+_DOC_FIELD_MAP = {
+    "aadhaar": "aadhaar_doc_url",
+    "gst": "gst_doc_url",
+    "government_id": "government_id_url",
+    "business_reg": "business_reg_url",
+}
+
+_USER_UPDATE_FIELDS = {
+    "full_name",
+    "email",
+    "alternate_phone",
+    "address_line1",
+    "address_line2",
+    "city",
+    "state",
+    "pincode",
+    "location_label",
+    "latitude",
+    "longitude",
+}
+
+_PROFILE_UPDATE_FIELDS = {
+    "business_name",
+    "description",
+    "offerings_detail",
+    "offer_kind",
+    "website_url",
+    "instagram_url",
+    "youtube_url",
+    "opening_time",
+    "closing_time",
+    "max_radius_km",
+    "tax_id",
+    "gst_number",
+    "aadhaar_number",
+}
 
 
 def _location_column(group_by: str):
@@ -147,13 +193,14 @@ def _admin_provider_base(
         aadhaar_number=profile.aadhaar_number,
         aadhaar_doc_url=profile.aadhaar_doc_url,
         verification_status=profile.verification_status,
-        is_online=profile.is_online,
+        is_online=effective_is_online(profile),
         is_active=user.is_active,
         average_rating=user.average_rating,
         rating_count=user.rating_count,
         latitude=lat,
         longitude=lon,
         location_label=user.location_label,
+        pincode=user.pincode,
         maps_url=google_maps_url(lat, lon),
         created_at=user.created_at,
     )
@@ -162,7 +209,7 @@ def _admin_provider_base(
 @router.get("/consumers", response_model=list[UserOut])
 def list_consumers(
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_staff()),
 ):
     rows = db.scalars(
         select(User).where(User.role == UserRole.CONSUMER).order_by(User.created_at.desc())
@@ -170,14 +217,139 @@ def list_consumers(
     return [user_to_out(u, db) for u in rows]
 
 
+def _cs_agent_status(user: User) -> str:
+    if user.is_active and user.is_verified:
+        return "APPROVED"
+    if user.is_verified and not user.is_active:
+        return "REVOKED"
+    return "PENDING"
+
+
+def _cs_agent_out(user: User) -> AdminCustomerServiceOut:
+    return AdminCustomerServiceOut(
+        id=user.id,
+        phone_number=user.phone_number,
+        email=user.email,
+        full_name=user.full_name,
+        is_active=user.is_active,
+        is_verified=user.is_verified,
+        created_at=user.created_at,
+        status=_cs_agent_status(user),
+    )
+
+
+def _load_cs_agent(db: Session, user_id: UUID) -> User:
+    user = db.get(User, user_id)
+    if not user or user.role != UserRole.CUSTOMER_SERVICE:
+        raise HTTPException(status_code=404, detail="Customer service agent not found")
+    return user
+
+
+@router.get("/customer-service-agents", response_model=list[AdminCustomerServiceOut])
+def list_customer_service_agents(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    rows = db.scalars(
+        select(User)
+        .where(User.role == UserRole.CUSTOMER_SERVICE)
+        .order_by(User.created_at.desc())
+    ).all()
+    return [_cs_agent_out(u) for u in rows]
+
+
+@router.post(
+    "/customer-service-agents",
+    response_model=AdminCustomerServiceOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_customer_service_agent(
+    payload: AdminCustomerServiceCreate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    phone = payload.phone_number.strip()
+    existing = db.scalar(select(User).where(User.phone_number == phone))
+    if existing:
+        raise HTTPException(status_code=400, detail="Phone number already registered")
+
+    email = str(payload.email).strip().lower()
+    email_clash = db.scalar(select(User).where(User.email == email))
+    if email_clash:
+        raise HTTPException(status_code=400, detail="Email already in use")
+
+    approved = bool(payload.approve)
+    user = User(
+        role=UserRole.CUSTOMER_SERVICE,
+        phone_number=phone,
+        full_name=payload.full_name.strip(),
+        email=email,
+        hashed_password=get_password_hash(payload.password),
+        is_active=approved,
+        is_verified=approved,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return _cs_agent_out(user)
+
+
+@router.post("/customer-service-agents/{user_id}/approve", response_model=AdminCustomerServiceOut)
+def approve_customer_service_agent(
+    user_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    user = _load_cs_agent(db, user_id)
+    if _cs_agent_status(user) != "PENDING":
+        raise HTTPException(status_code=400, detail="Only pending agents can be approved")
+    user.is_active = True
+    user.is_verified = True
+    db.commit()
+    db.refresh(user)
+    return _cs_agent_out(user)
+
+
+@router.post("/customer-service-agents/{user_id}/reapprove", response_model=AdminCustomerServiceOut)
+def reapprove_customer_service_agent(
+    user_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    user = _load_cs_agent(db, user_id)
+    if _cs_agent_status(user) != "REVOKED":
+        raise HTTPException(status_code=400, detail="Only revoked agents can be re-approved")
+    user.is_active = True
+    user.is_verified = True
+    db.commit()
+    db.refresh(user)
+    return _cs_agent_out(user)
+
+
+@router.post("/customer-service-agents/{user_id}/revoke", response_model=AdminCustomerServiceOut)
+def revoke_customer_service_agent(
+    user_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    user = _load_cs_agent(db, user_id)
+    if _cs_agent_status(user) != "APPROVED":
+        raise HTTPException(status_code=400, detail="Only approved agents can be revoked")
+    user.is_active = False
+    user.is_verified = True
+    db.commit()
+    db.refresh(user)
+    return _cs_agent_out(user)
+
+
 @router.get("/providers", response_model=list[AdminProviderOut])
 def list_providers(
     status_filter: str | None = Query(
         default=None,
-        description="PENDING | APPROVED | REJECTED — omit for all",
+        description="PENDING | APPROVED | REJECTED | REVOKED — omit for all",
     ),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_staff()),
 ):
     stmt = (
         select(ProviderProfile, User, Category)
@@ -188,7 +360,7 @@ def list_providers(
     rows = db.execute(stmt).all()
 
     # Pending (new) first, then approved, then rejected; newest within each group
-    status_rank = {"PENDING": 0, "APPROVED": 1, "REJECTED": 2}
+    status_rank = {"PENDING": 0, "APPROVED": 1, "REVOKED": 2, "REJECTED": 3}
 
     items: list[AdminProviderOut] = []
     for profile, user, category in rows:
@@ -201,23 +373,97 @@ def list_providers(
     return items
 
 
-@router.get("/providers/{user_id}", response_model=AdminProviderDetailOut)
-def get_provider(
-    user_id: UUID,
+@router.post("/providers", response_model=AdminProviderDetailOut, status_code=status.HTTP_201_CREATED)
+def create_provider(
+    payload: AdminProviderCreate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_staff()),
 ):
-    row = db.execute(
-        select(ProviderProfile, User, Category)
-        .join(User, User.id == ProviderProfile.user_id)
-        .join(Category, Category.id == ProviderProfile.category_id, isouter=True)
-        .where(ProviderProfile.user_id == user_id)
-    ).first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Provider not found")
-    profile, user, category = row
+    phone = payload.phone_number.strip()
+    existing = db.scalar(select(User).where(User.phone_number == phone))
+    if existing:
+        raise HTTPException(status_code=400, detail="Phone number already registered")
+
+    email = str(payload.email).strip().lower()
+    email_clash = db.scalar(select(User).where(User.email == email))
+    if email_clash:
+        raise HTTPException(status_code=400, detail="Email already in use")
+
+    if not payload.category_ids:
+        raise HTTPException(status_code=400, detail="Select at least one category")
+
+    lat = payload.latitude
+    lon = payload.longitude
+    if lat is not None and lon is not None:
+        lon, lat = normalize_lat_lon(lon, lat)
+
+    pin = normalize_pincode(payload.pincode) if payload.pincode else None
+    status_val = (
+        VerificationStatus.APPROVED if payload.approve else VerificationStatus.PENDING
+    )
+
+    user = User(
+        role=UserRole.PROVIDER,
+        phone_number=phone,
+        full_name=payload.full_name.strip(),
+        email=email,
+        hashed_password=get_password_hash(payload.password),
+        is_verified=payload.approve,
+        is_active=True,
+        latitude=lat,
+        longitude=lon,
+        location_label=(payload.location_label or "").strip() or None,
+        address_line1=(payload.address_line1 or "").strip() or None,
+        city=(payload.city or "").strip() or None,
+        state=(payload.state or "").strip() or None,
+        pincode=pin,
+    )
+    db.add(user)
+    db.flush()
+
+    biz_name = payload.business_name.strip()
+    profile = ProviderProfile(
+        user_id=user.id,
+        business_name=biz_name,
+        public_slug=allocate_public_slug(db, biz_name),
+        offer_kind=payload.offer_kind or OfferKind.BOTH,
+        description=(payload.description or "").strip() or None,
+        offerings_detail=(payload.offerings_detail or "").strip() or None,
+        verification_status=status_val,
+        gst_number=(payload.gst_number or "").strip().upper() or None,
+        opening_time=(payload.opening_time or "").strip() or None,
+        closing_time=(payload.closing_time or "").strip() or None,
+        max_radius_km=payload.max_radius_km or 10,
+        base_location=(make_point(lon, lat) if lat is not None and lon is not None else None),
+        is_online=False,
+    )
+    db.add(profile)
+    db.flush()
+    try:
+        set_provider_categories(db, profile, payload.category_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    sync_online_flag_with_hours(profile)
+    db.commit()
+    db.refresh(profile)
+    db.refresh(user)
+
+    if payload.approve:
+        send_provider_approved(db, to_email=user.email, full_name=user.full_name)
+
+    category = db.get(Category, profile.category_id) if profile.category_id else None
+    return _admin_provider_detail_out(db, profile, user, category)
+
+
+def _admin_provider_detail_out(
+    db: Session,
+    profile: ProviderProfile,
+    user: User,
+    category: Category | None,
+) -> AdminProviderDetailOut:
     order_count = db.scalar(
-        select(func.count()).select_from(Order).where(Order.provider_id == user_id)
+        select(func.count()).select_from(Order).where(Order.provider_id == user.id)
     ) or 0
     base = _admin_provider_base(db, profile, user, category)
     return AdminProviderDetailOut(
@@ -237,7 +483,6 @@ def get_provider(
         address_line2=user.address_line2,
         city=user.city,
         state=user.state,
-        pincode=user.pincode,
         government_id_url=profile.government_id_url,
         business_reg_url=profile.business_reg_url,
         gst_doc_url=profile.gst_doc_url,
@@ -245,6 +490,110 @@ def get_provider(
         order_count=int(order_count),
         updated_at=profile.updated_at,
     )
+
+
+def _load_provider_row(db: Session, user_id: UUID):
+    row = db.execute(
+        select(ProviderProfile, User, Category)
+        .join(User, User.id == ProviderProfile.user_id)
+        .join(Category, Category.id == ProviderProfile.category_id, isouter=True)
+        .where(ProviderProfile.user_id == user_id)
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Provider not found")
+    return row
+
+
+@router.get("/providers/{user_id}", response_model=AdminProviderDetailOut)
+def get_provider(
+    user_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_staff()),
+):
+    profile, user, category = _load_provider_row(db, user_id)
+    return _admin_provider_detail_out(db, profile, user, category)
+
+
+@router.patch("/providers/{user_id}", response_model=AdminProviderDetailOut)
+def update_provider(
+    user_id: UUID,
+    payload: AdminProviderUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_staff()),
+):
+    profile, user, category = _load_provider_row(db, user_id)
+    data = payload.model_dump(exclude_unset=True)
+
+    if "aadhaar_number" in data and data["aadhaar_number"]:
+        digits = "".join(ch for ch in str(data["aadhaar_number"]) if ch.isdigit())
+        if len(digits) != 12:
+            raise HTTPException(status_code=400, detail="Aadhaar must be 12 digits")
+        data["aadhaar_number"] = digits
+
+    if "pincode" in data and data["pincode"]:
+        data["pincode"] = normalize_pincode(data["pincode"]) or str(data["pincode"]).strip()
+
+    if "email" in data:
+        email = data["email"]
+        if email:
+            clash = db.scalar(select(User).where(User.email == email, User.id != user.id))
+            if clash:
+                raise HTTPException(status_code=400, detail="Email already in use")
+        else:
+            data["email"] = None
+
+    for key in _USER_UPDATE_FIELDS:
+        if key in data:
+            setattr(user, key, data[key])
+
+    for key in _PROFILE_UPDATE_FIELDS:
+        if key in data:
+            setattr(profile, key, data[key])
+
+    if "business_name" in data and data["business_name"]:
+        profile.public_slug = allocate_public_slug(
+            db, profile.business_name, exclude_profile_id=profile.id
+        )
+    else:
+        ensure_profile_public_slug(db, profile)
+
+    lat = user.latitude
+    lon = user.longitude
+    if "latitude" in data or "longitude" in data:
+        if lat is not None and lon is not None:
+            lon, lat = normalize_lat_lon(lon, lat)
+            user.longitude = lon
+            user.latitude = lat
+            profile.base_location = make_point(lon, lat)
+
+    sync_online_flag_with_hours(profile)
+    db.commit()
+    db.refresh(profile)
+    db.refresh(user)
+    category = db.get(Category, profile.category_id) if profile.category_id else None
+    return _admin_provider_detail_out(db, profile, user, category)
+
+
+@router.post("/providers/{user_id}/documents", response_model=AdminProviderDetailOut)
+async def upload_provider_document(
+    user_id: UUID,
+    doc_type: str = Query(..., description="aadhaar | gst | government_id | business_reg"),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_staff()),
+):
+    field = _DOC_FIELD_MAP.get(doc_type)
+    if not field:
+        raise HTTPException(
+            status_code=400,
+            detail="doc_type must be one of: aadhaar, gst, government_id, business_reg",
+        )
+    profile, user, category = _load_provider_row(db, user_id)
+    stored_name, _, _, _ = await save_upload_file(file)
+    setattr(profile, field, media_url(stored_name))
+    db.commit()
+    db.refresh(profile)
+    return _admin_provider_detail_out(db, profile, user, category)
 
 
 def _parse_bound_date(value: str | None, *, end_of_day: bool = False) -> datetime | None:
@@ -276,7 +625,7 @@ def list_all_orders(
     date_from: str | None = Query(default=None, description="YYYY-MM-DD"),
     date_to: str | None = Query(default=None, description="YYYY-MM-DD"),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_staff()),
 ):
     start = _parse_bound_date(date_from)
     end = _parse_bound_date(date_to, end_of_day=True)
@@ -330,7 +679,7 @@ def location_analytics(
     date_from: str | None = Query(default=None, description="YYYY-MM-DD"),
     date_to: str | None = Query(default=None, description="YYYY-MM-DD"),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_staff()),
 ):
     gb = (group_by or "city").strip().lower()
     loc_of = (location_of or "consumer").strip().lower()
@@ -524,15 +873,25 @@ def location_analytics(
 def delete_user(
     user_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(require_staff()),
 ):
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if user.id == current_user.id:
-        raise HTTPException(status_code=400, detail="Cannot delete your own admin account")
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
     if user.role == UserRole.ADMIN:
         raise HTTPException(status_code=400, detail="Cannot delete admin accounts")
+    if user.role == UserRole.CUSTOMER_SERVICE:
+        if current_user.role != UserRole.ADMIN:
+            raise HTTPException(
+                status_code=403, detail="Only admins can delete customer service agents"
+            )
+        db.delete(user)
+        db.commit()
+        return None
+    if is_staff(user):
+        raise HTTPException(status_code=400, detail="Cannot delete staff accounts")
 
     # Orders (and their chat/ratings) — no ON DELETE CASCADE from users
     order_ids = db.scalars(
@@ -614,7 +973,7 @@ def _smtp_to_out(cfg) -> SmtpConfigOut:
         username=cfg.username,
         password_set=bool(cfg.password),
         from_email=cfg.from_email or "",
-        from_name=cfg.from_name or "LocalSync",
+        from_name=cfg.from_name or "Gharq",
         use_tls=bool(cfg.use_tls),
         use_ssl=bool(cfg.use_ssl),
         is_enabled=bool(cfg.is_enabled),
@@ -642,7 +1001,7 @@ def update_smtp_config(
     if payload.password is not None and payload.password != "":
         cfg.password = payload.password
     cfg.from_email = str(payload.from_email).strip()
-    cfg.from_name = payload.from_name.strip() or "LocalSync"
+    cfg.from_name = payload.from_name.strip() or "Gharq"
     cfg.use_tls = payload.use_tls
     cfg.use_ssl = payload.use_ssl
     cfg.is_enabled = payload.is_enabled
@@ -664,13 +1023,13 @@ def test_smtp_config(
         send_email(
             db,
             to_email=str(payload.to_email),
-            subject="LocalSync SMTP test",
+            subject="Gharq SMTP test",
             body_text=(
-                "This is a test email from LocalSync.\n\n"
+                "This is a test email from Gharq.\n\n"
                 "Your SMTP configuration is working."
             ),
             body_html=(
-                "<p>This is a test email from <strong>LocalSync</strong>.</p>"
+                "<p>This is a test email from <strong>Gharq</strong>.</p>"
                 "<p>Your SMTP configuration is working.</p>"
             ),
         )

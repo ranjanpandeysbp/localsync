@@ -103,6 +103,52 @@ def _run_startup_migrations() -> None:
             print(f"[startup] request_location nullable: {exc}")
 
         try:
+            conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                      IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'verification_status')
+                         AND NOT EXISTS (
+                           SELECT 1
+                           FROM pg_enum e
+                           JOIN pg_type t ON e.enumtypid = t.oid
+                           WHERE t.typname = 'verification_status' AND e.enumlabel = 'REVOKED'
+                         )
+                      THEN
+                        ALTER TYPE verification_status ADD VALUE 'REVOKED';
+                      END IF;
+                    END $$;
+                    """
+                )
+            )
+        except Exception as exc:
+            print(f"[startup] verification_status REVOKED: {exc}")
+
+        try:
+            conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                      IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'user_role')
+                         AND NOT EXISTS (
+                           SELECT 1
+                           FROM pg_enum e
+                           JOIN pg_type t ON e.enumtypid = t.oid
+                           WHERE t.typname = 'user_role' AND e.enumlabel = 'CUSTOMER_SERVICE'
+                         )
+                      THEN
+                        ALTER TYPE user_role ADD VALUE 'CUSTOMER_SERVICE';
+                      END IF;
+                    END $$;
+                    """
+                )
+            )
+        except Exception as exc:
+            print(f"[startup] user_role CUSTOMER_SERVICE: {exc}")
+
+        try:
             conn.execute(text("ALTER TABLE provider_profiles ALTER COLUMN category_id DROP NOT NULL"))
         except Exception as exc:
             print(f"[startup] category_id nullable: {exc}")

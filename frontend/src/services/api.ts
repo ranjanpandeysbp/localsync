@@ -36,10 +36,17 @@ api.interceptors.response.use(
     if (error.response?.status === 401) {
       localStorage.removeItem("ls_token");
       if (
-        !window.location.pathname.startsWith("/login") &&
-        !window.location.pathname.startsWith("/register")
+        window.location.pathname.startsWith("/forgot-password") ||
+        window.location.pathname.startsWith("/reset-password")
       ) {
-        window.location.href = "/login";
+        return Promise.reject(error);
+      }
+      const params = new URLSearchParams(window.location.search);
+      const onLandingAuth =
+        window.location.pathname === "/" &&
+        (params.get("login") === "1" || params.get("register") === "1");
+      if (!onLandingAuth) {
+        window.location.href = "/?login=1";
       }
     }
     return Promise.reject(error);

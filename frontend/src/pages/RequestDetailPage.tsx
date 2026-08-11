@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useParams } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { AttachmentGallery } from "../components/Attachments";
 import { startOrOpenChat, InquiryChatPanel } from "../components/InquiryChat";
-import { ProviderTrustBlock } from "../components/ProviderTrust";
+import { MapsLink } from "../components/MapsLink";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { api } from "../services/api";
 import { playQuoteBell } from "../services/sounds";
@@ -16,10 +17,25 @@ export function RequestDetailPage() {
   const [fulfillment, setFulfillment] = useState("PROVIDER_DELIVERY");
   const [paymentMode, setPaymentMode] = useState("CASH");
   const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState<"success" | "error">("success");
   const [chatId, setChatId] = useState<string | null>(null);
   const [chatTitle, setChatTitle] = useState("");
   const knownIds = useRef<Set<string>>(new Set());
   const primed = useRef(false);
+
+  function showMessage(text: string, tone: "success" | "error" = "success") {
+    setMessageTone(tone);
+    setMessage(text);
+  }
+
+  useEffect(() => {
+    if (!message) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [message]);
 
   async function load(opts?: { silent?: boolean }) {
     if (!id) return;
@@ -58,13 +74,20 @@ export function RequestDetailPage() {
   }, [id]);
 
   async function accept(quoteId: string) {
-    const { data } = await api.post<Order>("/orders/accept", {
-      quote_id: quoteId,
-      fulfillment_type: fulfillment,
-      payment_mode: paymentMode,
-    });
-    setMessage(`Deal locked. OTP: ${data.completion_otp}`);
-    await load({ silent: true });
+    try {
+      const { data } = await api.post<Order>("/orders/accept", {
+        quote_id: quoteId,
+        fulfillment_type: fulfillment,
+        payment_mode: paymentMode,
+      });
+      showMessage(`Deal locked. OTP: ${data.completion_otp}`, "success");
+      await load({ silent: true });
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        "Could not accept quote";
+      showMessage(String(msg), "error");
+    }
   }
 
   async function chatWithProvider(providerId: string, name: string) {
@@ -80,85 +103,300 @@ export function RequestDetailPage() {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
         "Cannot start chat";
-      setMessage(String(msg));
+      showMessage(String(msg), "error");
     }
   }
 
+  const statusKey = request?.status.toLowerCase() || "active";
+  const canAccept = request?.status === "ACTIVE";
+
   return (
     <AppShell title="Request quotes" connected={connected}>
-      <div className="card">
-        <Link to="/consumer/requests">← Back</Link>
-        {request && (
-          <>
-            <h2>{request.title}</h2>
-            <p>{request.description}</p>
-            <p className="muted">
-              Status: {request.status}
-              {request.target_mode === "TARGETED"
-                ? ` · Targeted (${request.target_provider_ids?.length || 0} providers)`
-                : ` · Broadcast · Radius: ${request.search_radius_km} km`}
-            </p>
-            <h3>Your attachments</h3>
-            <AttachmentGallery attachments={request.attachments} emptyText="No files attached." />
-          </>
-        )}
-        <div className="grid grid-2">
-          <div className="field">
-            <label>Delivery / fulfillment when accepting</label>
-            <select value={fulfillment} onChange={(e) => setFulfillment(e.target.value)}>
-              <option value="PROVIDER_DELIVERY">Provider delivery</option>
-              <option value="CONSUMER_PICKUP">Consumer pickup</option>
-              <option value="HOME_SERVICE">Home service</option>
-            </select>
-          </div>
-          <div className="field">
-            <label>Payment mode when accepting</label>
-            <select value={paymentMode} onChange={(e) => setPaymentMode(e.target.value)}>
-              <option value="CASH">Cash</option>
-              <option value="UPI">UPI</option>
-              <option value="CARD">Card</option>
-              <option value="BANK_TRANSFER">Bank transfer</option>
-              <option value="OTHER">Other</option>
-            </select>
-          </div>
-        </div>
-        <div className="list">
-          {quotes.length === 0 && <p className="muted">Waiting for quotes…</p>}
-          {quotes.map((q) => (
-            <div key={q.id} className="list-item">
-              <strong>
-                ₹{q.price_quote} · ETA {q.estimated_days} day{q.estimated_days === 1 ? "" : "s"}
-              </strong>
-              <div className="muted">
-                {q.provider_name} · rating {q.provider_rating ?? 0} · {q.status}
-              </div>
-              <ProviderTrustBlock trust={q.provider_trust} />
-              {q.message && <p>{q.message}</p>}
-              <AttachmentGallery attachments={q.attachments} />
-              <div className="nav-actions" style={{ marginTop: "0.5rem" }}>
-                <button
-                  className="btn secondary"
-                  type="button"
-                  onClick={() =>
-                    void chatWithProvider(
-                      q.provider_id,
-                      q.provider_trust?.business_name || q.provider_name || "Provider",
-                    )
-                  }
-                >
-                  Chat
+      <div className="request-detail">
+        <Link className="request-detail-back" to="/consumer/requests">
+          ← Back to requests
+        </Link>
+
+        {message &&
+          createPortal(
+            <div
+              className="modal-backdrop request-detail-popup-backdrop"
+              onClick={() => setMessage("")}
+              role="presentation"
+            >
+              <div
+                className={`modal-dialog card request-detail-popup ${messageTone}`}
+                role="alertdialog"
+                aria-modal="true"
+                aria-labelledby="request-detail-popup-title"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <p className="dash-eyebrow">
+                  {messageTone === "error" ? "Something went wrong" : "Action complete"}
+                </p>
+                <h3 id="request-detail-popup-title">
+                  {messageTone === "error" ? "Couldn’t finish that" : "Success"}
+                </h3>
+                <p className="request-detail-popup-message">{message}</p>
+                <button className="btn" type="button" onClick={() => setMessage("")}>
+                  OK
                 </button>
-                {q.status === "PENDING" && request?.status === "ACTIVE" && (
-                  <button className="btn" type="button" onClick={() => void accept(q.id)}>
-                    Accept quote
-                  </button>
+              </div>
+            </div>,
+            document.body,
+          )}
+
+        {request ? (
+          <section className={`dash-surface request-detail-hero status-${statusKey}`}>
+            <div className="request-detail-hero-top">
+              <div className="request-detail-hero-main">
+                <span className="request-detail-mark" aria-hidden="true">
+                  {request.title.slice(0, 1).toUpperCase()}
+                </span>
+                <div className="request-detail-identity">
+                  <p className="dash-eyebrow">Your request</p>
+                  <div className="request-detail-title-row">
+                    <h2>{request.title}</h2>
+                    <span className={`pill request-status ${statusKey}`}>{request.status}</span>
+                  </div>
+                  {request.description && (
+                    <p className="request-detail-desc">{request.description}</p>
+                  )}
+                </div>
+              </div>
+              <span className="request-detail-quote-total">
+                <strong>{quotes.length}</strong>
+                quote{quotes.length === 1 ? "" : "s"}
+              </span>
+            </div>
+
+            <div className="request-detail-chips">
+              <span className="request-detail-chip">
+                <strong>{request.target_mode === "TARGETED" ? "Targeted" : "Broadcast"}</strong>
+                mode
+              </span>
+              <span className="request-detail-chip">
+                <strong>{request.search_radius_km} km</strong>
+                radius
+              </span>
+              {request.target_mode === "TARGETED" && (
+                <span className="request-detail-chip">
+                  <strong>{request.target_provider_ids?.length || 0}</strong>
+                  providers
+                </span>
+              )}
+              {request.request_pincode && (
+                <span className="request-detail-chip">
+                  <strong>{request.request_pincode}</strong>
+                  pincode
+                </span>
+              )}
+              {request.matched_provider_count != null && (
+                <span className="request-detail-chip">
+                  <strong>{request.matched_provider_count}</strong>
+                  matched
+                </span>
+              )}
+              <span className="request-detail-chip">
+                <strong>{new Date(request.created_at).toLocaleDateString()}</strong>
+                posted
+              </span>
+            </div>
+
+            {(request.latitude != null || (request.attachments?.length || 0) > 0) && (
+              <div className="request-detail-links">
+                <MapsLink latitude={request.latitude} longitude={request.longitude} />
+                {(request.attachments?.length || 0) > 0 && (
+                  <span className="request-detail-attach-count">
+                    {request.attachments!.length} file
+                    {request.attachments!.length === 1 ? "" : "s"}
+                  </span>
                 )}
               </div>
+            )}
+
+            {(request.attachments?.length || 0) > 0 && (
+              <div className="request-detail-attachments">
+                <p className="dash-eyebrow">Your attachments</p>
+                <AttachmentGallery attachments={request.attachments} emptyText="No files attached." />
+              </div>
+            )}
+          </section>
+        ) : (
+          <div className="dash-surface request-detail-loading">
+            <p className="muted">Loading request…</p>
+          </div>
+        )}
+
+        <section className="dash-surface request-detail-deal">
+          <div className="dash-section-head">
+            <p className="dash-eyebrow">When you accept</p>
+            <h3>Deal preferences</h3>
+            <p className="muted">Applied to the quote you accept for this request.</p>
+          </div>
+          <div className="request-detail-deal-grid">
+            <div className="field">
+              <label htmlFor="fulfillment">Delivery / fulfillment</label>
+              <select
+                id="fulfillment"
+                value={fulfillment}
+                onChange={(e) => setFulfillment(e.target.value)}
+              >
+                <option value="PROVIDER_DELIVERY">Provider delivery</option>
+                <option value="CONSUMER_PICKUP">Consumer pickup</option>
+                <option value="HOME_SERVICE">Home service</option>
+              </select>
             </div>
-          ))}
-        </div>
+            <div className="field">
+              <label htmlFor="paymentMode">Payment mode</label>
+              <select
+                id="paymentMode"
+                value={paymentMode}
+                onChange={(e) => setPaymentMode(e.target.value)}
+              >
+                <option value="CASH">Cash</option>
+                <option value="UPI">UPI</option>
+                <option value="CARD">Card</option>
+                <option value="BANK_TRANSFER">Bank transfer</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section className="request-detail-quotes">
+          <div className="request-detail-quotes-head">
+            <div>
+              <p className="dash-eyebrow">Offers</p>
+              <h3>Quotes received</h3>
+            </div>
+          </div>
+
+          {quotes.length === 0 ? (
+            <div className="dash-surface request-detail-empty">
+              <h3>Waiting for quotes</h3>
+              <p className="muted">
+                Providers nearby will reply here. This page refreshes automatically.
+              </p>
+            </div>
+          ) : (
+            <div className="request-detail-quotes-grid">
+              {quotes.map((q) => {
+                const qStatus = q.status.toLowerCase();
+                const providerLabel =
+                  q.provider_trust?.business_name || q.provider_name || "Provider";
+                const initial = providerLabel.trim().slice(0, 1).toUpperCase() || "Q";
+                return (
+                  <article key={q.id} className={`consumer-quote-card status-${qStatus}`}>
+                    <div className="consumer-quote-card-accent" aria-hidden="true" />
+                    <div className="consumer-quote-card-body">
+                      <header className="consumer-quote-card-head">
+                        <span className="consumer-quote-mark" aria-hidden="true">
+                          {initial}
+                        </span>
+                        <div className="consumer-quote-card-title">
+                          <div className="consumer-quote-card-topline">
+                            <span className={`pill quote-status ${qStatus}`}>{q.status}</span>
+                          </div>
+                          <div className="request-detail-provider-row">
+                            <div className="request-detail-provider-identity">
+                              {q.provider_id ? (
+                                <Link
+                                  className="request-detail-provider-name"
+                                  to={`/p/${q.provider_id}`}
+                                >
+                                  {providerLabel}
+                                </Link>
+                              ) : (
+                                <h3>{providerLabel}</h3>
+                              )}
+                              {q.provider_trust?.verification_status === "APPROVED" && (
+                                <span className="pill online">Verified</span>
+                              )}
+                            </div>
+                            <button
+                              className="icon-btn request-detail-chat-icon"
+                              type="button"
+                              title="Chat"
+                              aria-label={`Chat with ${providerLabel}`}
+                              onClick={() => void chatWithProvider(q.provider_id, providerLabel)}
+                            >
+                              <svg
+                                width="16"
+                                height="16"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                aria-hidden="true"
+                              >
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                              </svg>
+                            </button>
+                          </div>
+                          <p className="muted consumer-quote-meta">
+                            ★ {(q.provider_rating ?? 0).toFixed(1)}
+                            {q.provider_trust?.full_name
+                              ? ` · ${q.provider_trust.full_name}`
+                              : q.provider_name
+                                ? ` · ${q.provider_name}`
+                                : ""}
+                          </p>
+                        </div>
+                        <div className="request-detail-price-row">
+                          <div className="consumer-quote-price">
+                            <span className="consumer-quote-price-label">Quote</span>
+                            <strong>₹{Number(q.price_quote).toLocaleString("en-IN")}</strong>
+                            <span className="muted">
+                              ETA {q.estimated_days} day{q.estimated_days === 1 ? "" : "s"}
+                            </span>
+                          </div>
+                          {q.status === "PENDING" && canAccept && (
+                            <button
+                              className="btn request-detail-accept"
+                              type="button"
+                              onClick={() => void accept(q.id)}
+                            >
+                              Accept quote
+                            </button>
+                          )}
+                        </div>
+                      </header>
+
+                      {q.message && <p className="consumer-quote-message">{q.message}</p>}
+
+                      {(q.attachments?.length || 0) > 0 && (
+                        <div className="consumer-quote-attachments">
+                          <AttachmentGallery attachments={q.attachments} />
+                        </div>
+                      )}
+
+                      <footer className="consumer-quote-card-footer">
+                        <time className="muted" dateTime={q.created_at}>
+                          {new Date(q.created_at).toLocaleString()}
+                        </time>
+                        <div className="consumer-quote-card-actions">
+                          <button
+                            className="btn secondary request-detail-chat-btn"
+                            type="button"
+                            onClick={() => void chatWithProvider(q.provider_id, providerLabel)}
+                          >
+                            Chat
+                          </button>
+                        </div>
+                      </footer>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
         {chatId && (
-          <div style={{ marginTop: "1rem" }}>
+          <div className="request-detail-chat">
             <InquiryChatPanel
               conversationId={chatId}
               title={chatTitle}
@@ -166,7 +404,6 @@ export function RequestDetailPage() {
             />
           </div>
         )}
-        {message && <p className="pill online">{message}</p>}
       </div>
     </AppShell>
   );

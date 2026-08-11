@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_roles
+from app.api.deps import STAFF_ROLES, is_staff, require_roles, require_staff
 from app.db.models import (
     AdminConversation,
     AdminMessage,
@@ -83,7 +83,7 @@ def _support_out(
         .order_by(AdminMessage.created_at.desc())
         .limit(1)
     ).first()
-    if viewer and viewer.role == UserRole.ADMIN:
+    if viewer and is_staff(viewer):
         unread = _unread_from_provider(db, conv)
     elif viewer and viewer.role == UserRole.PROVIDER:
         unread = _unread_from_admin(db, conv)
@@ -97,7 +97,7 @@ def _support_out(
         updated_at=conv.updated_at,
         provider_name=provider.full_name if provider else None,
         provider_business_name=profile.business_name if profile else None,
-        admin_name=admin.full_name if admin else "LocalSync Admin",
+        admin_name=admin.full_name if admin else "Gharq Admin",
         last_message=last.body if last else None,
         unread_count=unread,
         provider_message_count=_provider_message_count(db, conv),
@@ -110,7 +110,7 @@ def _get_participant_conversation(
     conv = db.get(AdminConversation, conversation_id)
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    if current_user.role == UserRole.ADMIN:
+    if is_staff(current_user):
         return conv
     if current_user.role == UserRole.PROVIDER and conv.provider_id == current_user.id:
         return conv
@@ -132,7 +132,7 @@ def _mark_admin_read(db: Session, conv: AdminConversation) -> None:
 @router.get("/unread-count", response_model=AdminSupportUnreadOut)
 def support_unread_count(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.PROVIDER)),
+    current_user: User = Depends(require_roles(*STAFF_ROLES, UserRole.PROVIDER)),
 ):
     if current_user.role == UserRole.PROVIDER:
         conv = db.scalar(
@@ -150,9 +150,9 @@ def support_unread_count(
 @router.get("", response_model=list[AdminSupportConversationOut])
 def list_support_conversations(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.PROVIDER)),
+    current_user: User = Depends(require_roles(*STAFF_ROLES, UserRole.PROVIDER)),
 ):
-    if current_user.role == UserRole.ADMIN:
+    if is_staff(current_user):
         rows = db.scalars(
             select(AdminConversation).order_by(AdminConversation.updated_at.desc())
         ).all()
@@ -169,7 +169,7 @@ def list_support_conversations(
 def get_support_with_provider(
     provider_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(require_staff()),
 ):
     profile = db.query(ProviderProfile).filter(ProviderProfile.user_id == provider_id).first()
     if not profile:
@@ -186,7 +186,7 @@ def get_support_with_provider(
 async def start_or_open_support(
     payload: AdminSupportCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(require_staff()),
 ):
     profile = (
         db.query(ProviderProfile).filter(ProviderProfile.user_id == payload.provider_id).first()
@@ -240,7 +240,7 @@ async def start_or_open_support(
 def get_support_conversation(
     conversation_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.PROVIDER)),
+    current_user: User = Depends(require_roles(*STAFF_ROLES, UserRole.PROVIDER)),
 ):
     conv = _get_participant_conversation(db, conversation_id, current_user)
     return _support_out(db, conv, viewer=current_user)
@@ -250,7 +250,7 @@ def get_support_conversation(
 def mark_support_read(
     conversation_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.PROVIDER)),
+    current_user: User = Depends(require_roles(*STAFF_ROLES, UserRole.PROVIDER)),
 ):
     conv = _get_participant_conversation(db, conversation_id, current_user)
     if current_user.role == UserRole.PROVIDER:
@@ -264,7 +264,7 @@ def mark_support_read(
 def list_support_messages(
     conversation_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.PROVIDER)),
+    current_user: User = Depends(require_roles(*STAFF_ROLES, UserRole.PROVIDER)),
 ):
     conv = _get_participant_conversation(db, conversation_id, current_user)
     rows = db.scalars(
@@ -274,7 +274,7 @@ def list_support_messages(
     ).all()
     if current_user.role == UserRole.PROVIDER:
         _mark_provider_read(db, conv)
-    elif current_user.role == UserRole.ADMIN:
+    elif is_staff(current_user):
         _mark_admin_read(db, conv)
     return rows
 
@@ -288,7 +288,7 @@ async def send_support_message(
     conversation_id: UUID,
     payload: ChatMessageCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.PROVIDER)),
+    current_user: User = Depends(require_roles(*STAFF_ROLES, UserRole.PROVIDER)),
 ):
     conv = _get_participant_conversation(db, conversation_id, current_user)
     msg = AdminMessage(
@@ -305,7 +305,7 @@ async def send_support_message(
     db.commit()
     db.refresh(msg)
 
-    if current_user.role == UserRole.ADMIN:
+    if is_staff(current_user):
         await ws_manager.send_to_user(
             conv.provider_id,
             {
@@ -320,8 +320,8 @@ async def send_support_message(
             },
         )
     elif current_user.role == UserRole.PROVIDER:
-        admin_ids = db.scalars(
-            select(User.id).where(User.role == UserRole.ADMIN, User.is_active.is_(True))
+        staff_ids = db.scalars(
+            select(User.id).where(User.role.in_(STAFF_ROLES), User.is_active.is_(True))
         ).all()
         payload_msg = {
             "type": "admin_message",
@@ -333,7 +333,7 @@ async def send_support_message(
                 "created_at": msg.created_at.isoformat() if msg.created_at else None,
             },
         }
-        for admin_id in admin_ids:
-            await ws_manager.send_to_user(admin_id, payload_msg)
+        for staff_id in staff_ids:
+            await ws_manager.send_to_user(staff_id, payload_msg)
 
     return msg

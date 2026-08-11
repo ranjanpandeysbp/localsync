@@ -1,4 +1,5 @@
 import type { CategoryTree, OfferKind, ProviderTrustInfo } from "../types";
+import { isMeaningfulLocationLabel } from "../services/geo";
 
 export function offerKindLabel(kind?: OfferKind | null): string {
   if (kind === "PRODUCT") return "Products";
@@ -62,7 +63,7 @@ export function ProviderTrustBlock({
         {hours ? ` · Hours ${hours}` : ""}
         {trust.gst_number ? ` · GST ${trust.gst_number}` : ""}
       </p>
-      {trust.location_label && (
+      {isMeaningfulLocationLabel(trust.location_label) && (
         <p className="muted" style={{ fontSize: "0.8rem", margin: 0 }}>
           {trust.location_label}
         </p>

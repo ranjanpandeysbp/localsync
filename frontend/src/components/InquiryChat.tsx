@@ -54,7 +54,7 @@ export function InquiryChatPanel({
   }
 
   return (
-    <div className="card inquiry-panel">
+    <div className="inquiry-panel">
       <div className="topbar" style={{ marginBottom: "0.75rem" }}>
         <h3 style={{ margin: 0 }}>{title}</h3>
         {onClose && (

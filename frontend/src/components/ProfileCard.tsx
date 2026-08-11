@@ -12,39 +12,42 @@ export function ProfileCard({ title = "Your profile" }: { title?: string }) {
   const address = [user.address_line1, user.city, user.pincode].filter(Boolean).join(", ");
 
   return (
-    <div className="card profile-card">
-      <div className="topbar" style={{ marginBottom: "0.5rem" }}>
-        <h2 style={{ margin: 0 }}>{title}</h2>
-        <Link className="btn secondary" to="/profile">
-          Edit profile
-        </Link>
-      </div>
-      <p>
-        <strong>{user.full_name}</strong>
-        <span className="pill" style={{ marginLeft: "0.5rem" }}>
-          {user.role}
-        </span>
-        {!user.profile_complete && (
-          <span className="pill" style={{ marginLeft: "0.35rem" }}>
-            Incomplete
-          </span>
-        )}
-      </p>
-      <p className="muted">Mobile: {user.phone_number}</p>
-      {user.alternate_phone && <p className="muted">Alt: {user.alternate_phone}</p>}
-      {user.email && <p className="muted">Email: {user.email}</p>}
-      {address && <p className="muted">{address}</p>}
-      <p className="muted">
-        Rating: {user.average_rating.toFixed(1)} ({user.rating_count})
-      </p>
-      <div style={{ marginTop: "0.5rem" }}>
+    <div className="page-stack narrow">
+      <header className="page-hero">
+        <p className="dash-eyebrow">Account</p>
+        <div className="page-hero-row">
+          <div>
+            <h2>{title}</h2>
+            <p className="muted page-meta">
+              <span>{user.phone_number}</span>
+              <span aria-hidden="true">·</span>
+              <span>{user.role}</span>
+            </p>
+          </div>
+          <Link className="btn secondary" to="/profile">
+            Edit profile
+          </Link>
+        </div>
+      </header>
+
+      <section className="page-panel profile-summary">
+        <p className="profile-summary-name">
+          <strong>{user.full_name}</strong>
+          {!user.profile_complete && <span className="pill">Incomplete</span>}
+        </p>
+        {user.alternate_phone && <p className="muted">Alt: {user.alternate_phone}</p>}
+        {user.email && <p className="muted">Email: {user.email}</p>}
+        {address && <p className="muted">{address}</p>}
+        <p className="muted">
+          Rating: {user.average_rating.toFixed(1)} ({user.rating_count})
+        </p>
         <MapsLink
           latitude={user.latitude}
           longitude={user.longitude}
           maps_url={user.maps_url}
           label={user.location_label || undefined}
         />
-      </div>
+      </section>
     </div>
   );
 }

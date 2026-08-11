@@ -10,11 +10,12 @@ interface AuthState {
   logout: () => void;
   bootstrap: () => Promise<void>;
   login: (phone: string, password: string) => Promise<User>;
+  refreshUser: () => Promise<User | null>;
 }
 
 const BOOTSTRAP_MS = 8000;
 
-export const useAuth = create<AuthState>((set) => ({
+export const useAuth = create<AuthState>((set, get) => ({
   token: localStorage.getItem("ls_token"),
   user: null,
   loading: true,
@@ -60,5 +61,16 @@ export const useAuth = create<AuthState>((set) => ({
     const { data: user } = await api.get<User>("/auth/me");
     set({ token: tokenData.access_token, user, loading: false });
     return user;
+  },
+
+  refreshUser: async () => {
+    if (!get().token) return null;
+    try {
+      const { data } = await api.get<User>("/auth/me");
+      set({ user: data });
+      return data;
+    } catch {
+      return null;
+    }
   },
 }));

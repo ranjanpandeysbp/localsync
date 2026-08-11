@@ -1,4 +1,4 @@
-# LocalSync — How to Start Frontend & Backend
+# Gharq — How to Start Frontend & Backend
 
 ## Prerequisites
 
@@ -116,6 +116,7 @@ Start order: **Docker → Backend → Frontend**.
 | Consumer | `9000000002` | `consumer123` |
 | Provider | `9000000003` | `provider123` |
 | Admin | `9000000001` | `admin123` |
+| Customer service | `9000000004` | `support123` |
 
 ### Attachments
 

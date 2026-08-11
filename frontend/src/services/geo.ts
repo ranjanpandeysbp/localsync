@@ -10,6 +10,18 @@ export type ReverseGeoResult = {
   coords_label?: string | null;
 };
 
+const PLACEHOLDER_LOCATION_LABELS = new Set([
+  "detected from device",
+  "current location",
+]);
+
+/** True when a location label is worth showing in the UI. */
+export function isMeaningfulLocationLabel(label?: string | null): boolean {
+  const text = label?.trim();
+  if (!text) return false;
+  return !PLACEHOLDER_LOCATION_LABELS.has(text.toLowerCase());
+}
+
 /** Resolve coordinates to local place name, city, and pincode via the backend. */
 export async function reverseGeocodeDetails(
   latitude: number,

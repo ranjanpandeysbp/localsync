@@ -1,24 +1,36 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Link, Navigate, useParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { AdminOrdersDashboard } from "../components/AdminOrdersDashboard";
 import { AppShell } from "../components/AppShell";
 import { mediaSrc } from "../components/Attachments";
+import { CategoryMultiSelect } from "../components/CategoryMultiSelect";
 import { InquiryChatPanel } from "../components/InquiryChat";
 import { MapsLink } from "../components/MapsLink";
 import { offerKindClass, offerKindLabel } from "../components/ProviderTrust";
 import { api } from "../services/api";
 import { useAdminNav } from "../store/adminNav";
+import { useAuth } from "../store/auth";
 import type {
+  AdminCustomerServiceAgent,
   AdminOrder,
   AdminProvider,
+  AdminProviderDetail,
   AdminSupportConversation,
   Category,
+  CategoryTree,
   OfferKind,
   SmtpConfig,
   User,
 } from "../types";
 
-type AdminTab = "providers" | "consumers" | "orders" | "categories" | "messages" | "config";
+type AdminTab =
+  | "providers"
+  | "consumers"
+  | "orders"
+  | "categories"
+  | "messages"
+  | "customer-service"
+  | "config";
 
 const TITLES: Record<AdminTab, string> = {
   providers: "Providers",
@@ -26,22 +38,69 @@ const TITLES: Record<AdminTab, string> = {
   orders: "Order dashboard",
   categories: "Categories",
   messages: "Provider messages",
+  "customer-service": "Customer service agents",
   config: "Config",
 };
 
+const STAFF_SECTIONS = ["providers", "consumers", "orders", "categories", "messages"] as const;
+const ADMIN_ONLY_SECTIONS = ["customer-service", "config"] as const;
+
 export function AdminPage() {
+  const { user } = useAuth();
   const { section } = useParams<{ section?: string }>();
+  const isAdmin = user?.role === "ADMIN";
+  const allowedSections = isAdmin
+    ? [...STAFF_SECTIONS, ...ADMIN_ONLY_SECTIONS]
+    : [...STAFF_SECTIONS];
   const tab = (
-    section &&
-    ["providers", "consumers", "orders", "categories", "messages", "config"].includes(section)
+    section && allowedSections.includes(section as (typeof allowedSections)[number])
       ? section
       : "providers"
   ) as AdminTab;
   const refreshCounts = useAdminNav((s) => s.refreshCounts);
+  const navigate = useNavigate();
 
   const [providerFilter, setProviderFilter] = useState<
-    "ALL" | "PENDING" | "APPROVED" | "REJECTED" | "MESSAGES"
+    "ALL" | "PENDING" | "APPROVED" | "REJECTED" | "REVOKED" | "MESSAGES"
   >("ALL");
+  const [providerSearch, setProviderSearch] = useState("");
+  const [providerView, setProviderView] = useState<"list" | "create">("list");
+  const [providerCreateBusy, setProviderCreateBusy] = useState(false);
+  const [providerCategoryIds, setProviderCategoryIds] = useState<number[]>([]);
+  const [providerCreate, setProviderCreate] = useState({
+    phone_number: "",
+    full_name: "",
+    email: "",
+    password: "",
+    business_name: "",
+    offer_kind: "BOTH" as OfferKind,
+    description: "",
+    offerings_detail: "",
+    gst_number: "",
+    city: "",
+    state: "",
+    pincode: "",
+    location_label: "",
+    address_line1: "",
+    opening_time: "09:00",
+    closing_time: "18:00",
+    max_radius_km: "10",
+    approve: true,
+  });
+  const [consumerSearch, setConsumerSearch] = useState("");
+  const [messagesSearch, setMessagesSearch] = useState("");
+  const [csAgents, setCsAgents] = useState<AdminCustomerServiceAgent[]>([]);
+  const [csSearch, setCsSearch] = useState("");
+  const [csView, setCsView] = useState<"list" | "create">("list");
+  const [csBusyId, setCsBusyId] = useState<string | null>(null);
+  const [csCreateBusy, setCsCreateBusy] = useState(false);
+  const [csCreate, setCsCreate] = useState({
+    phone_number: "",
+    full_name: "",
+    email: "",
+    password: "",
+    approve: false,
+  });
   const [categories, setCategories] = useState<Category[]>([]);
   const [providers, setProviders] = useState<AdminProvider[]>([]);
   const [consumers, setConsumers] = useState<User[]>([]);
@@ -67,7 +126,7 @@ export function AdminPage() {
     username: "",
     password: "",
     from_email: "",
-    from_name: "LocalSync",
+    from_name: "Gharq",
     use_tls: true,
     use_ssl: false,
     is_enabled: false,
@@ -79,8 +138,7 @@ export function AdminPage() {
   const [categorySearch, setCategorySearch] = useState("");
 
   const invalidSection =
-    !!section &&
-    !["providers", "consumers", "orders", "categories", "messages", "config"].includes(section);
+    !!section && !allowedSections.includes(section as (typeof allowedSections)[number]);
 
   async function load() {
     setError("");
@@ -93,12 +151,19 @@ export function AdminPage() {
           username: data.username || "",
           password: "",
           from_email: data.from_email || "",
-          from_name: data.from_name || "LocalSync",
+          from_name: data.from_name || "Gharq",
           use_tls: data.use_tls,
           use_ssl: data.use_ssl,
           is_enabled: data.is_enabled,
           password_set: data.password_set,
         });
+        return;
+      }
+      if (tab === "customer-service") {
+        const { data } = await api.get<AdminCustomerServiceAgent[]>(
+          "/admin/customer-service-agents",
+        );
+        setCsAgents(data);
         return;
       }
       if (tab === "messages") {
@@ -138,6 +203,16 @@ export function AdminPage() {
       setCategoryView("manage");
       setCategorySearch("");
     }
+    if (tab !== "providers") {
+      setProviderSearch("");
+      setProviderView("list");
+    }
+    if (tab !== "consumers") setConsumerSearch("");
+    if (tab !== "messages") setMessagesSearch("");
+    if (tab !== "customer-service") {
+      setCsSearch("");
+      setCsView("list");
+    }
   }, [tab]);
 
   const supportByProvider = useMemo(() => {
@@ -148,15 +223,31 @@ export function AdminPage() {
     return map;
   }, [supportThreads]);
 
+  const categoryTree = useMemo<CategoryTree[]>(
+    () =>
+      categories.map((p) => ({
+        id: p.id,
+        name: p.name,
+        slug: p.slug,
+        description: p.description,
+        kind: (p.kind || "BOTH") as OfferKind,
+        is_active: p.is_active,
+        subcategories: p.children || [],
+      })),
+    [categories],
+  );
+
   const providerFilterCounts = useMemo(() => {
     let pending = 0;
     let approved = 0;
     let rejected = 0;
+    let revoked = 0;
     let messages = 0;
     for (const p of providers) {
       if (p.verification_status === "PENDING") pending += 1;
       else if (p.verification_status === "APPROVED") approved += 1;
       else if (p.verification_status === "REJECTED") rejected += 1;
+      else if (p.verification_status === "REVOKED") revoked += 1;
       if ((supportByProvider.get(p.user_id)?.unread_count || 0) > 0) messages += 1;
     }
     return {
@@ -164,17 +255,79 @@ export function AdminPage() {
       PENDING: pending,
       APPROVED: approved,
       REJECTED: rejected,
+      REVOKED: revoked,
       MESSAGES: messages,
     };
   }, [providers, supportByProvider]);
 
+  function matchesAdminUserSearch(
+    q: string,
+    fields: Array<string | null | undefined>,
+  ): boolean {
+    if (!q) return true;
+    const haystack = fields
+      .filter((v): v is string => Boolean(v && String(v).trim()))
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(q);
+  }
+
   const filteredProviders = useMemo(() => {
+    let list = providers;
     if (providerFilter === "MESSAGES") {
-      return providers.filter((p) => (supportByProvider.get(p.user_id)?.unread_count || 0) > 0);
+      list = list.filter((p) => (supportByProvider.get(p.user_id)?.unread_count || 0) > 0);
+    } else if (providerFilter !== "ALL") {
+      list = list.filter((p) => p.verification_status === providerFilter);
     }
-    if (providerFilter === "ALL") return providers;
-    return providers.filter((p) => p.verification_status === providerFilter);
-  }, [providers, providerFilter, supportByProvider]);
+    const q = providerSearch.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((p) =>
+      matchesAdminUserSearch(q, [
+        p.full_name,
+        p.business_name,
+        p.phone_number,
+        p.email,
+        p.pincode,
+        p.username,
+      ]),
+    );
+  }, [providers, providerFilter, providerSearch, supportByProvider]);
+
+  const filteredConsumers = useMemo(() => {
+    const q = consumerSearch.trim().toLowerCase();
+    if (!q) return consumers;
+    return consumers.filter((c) =>
+      matchesAdminUserSearch(q, [
+        c.full_name,
+        c.phone_number,
+        c.alternate_phone,
+        c.email,
+        c.pincode,
+      ]),
+    );
+  }, [consumers, consumerSearch]);
+
+  const filteredSupportThreads = useMemo(() => {
+    const q = messagesSearch.trim().toLowerCase();
+    if (!q) return supportThreads;
+    return supportThreads.filter((t) =>
+      matchesAdminUserSearch(q, [
+        t.provider_business_name,
+        t.provider_name,
+        t.admin_name,
+        t.last_message,
+        t.provider_id,
+      ]),
+    );
+  }, [supportThreads, messagesSearch]);
+
+  const filteredCsAgents = useMemo(() => {
+    const q = csSearch.trim().toLowerCase();
+    if (!q) return csAgents;
+    return csAgents.filter((a) =>
+      matchesAdminUserSearch(q, [a.full_name, a.phone_number, a.email, a.status]),
+    );
+  }, [csAgents, csSearch]);
 
   const parents = categories;
 
@@ -200,7 +353,7 @@ export function AdminPage() {
       .filter((p): p is Category => p !== null);
   }, [parents, categorySearch]);
 
-  if (invalidSection) {
+  if (invalidSection || ((section === "config" || section === "customer-service") && !isAdmin)) {
     return <Navigate to="/admin/providers" replace />;
   }
 
@@ -307,7 +460,7 @@ export function AdminPage() {
         username: data.username || "",
         password: "",
         from_email: data.from_email || "",
-        from_name: data.from_name || "LocalSync",
+        from_name: data.from_name || "Gharq",
         use_tls: data.use_tls,
         use_ssl: data.use_ssl,
         is_enabled: data.is_enabled,
@@ -341,16 +494,174 @@ export function AdminPage() {
     }
   }
 
-  async function verify(userId: string, status: "APPROVED" | "REJECTED") {
+  function resetProviderCreate() {
+    setProviderCreate({
+      phone_number: "",
+      full_name: "",
+      email: "",
+      password: "",
+      business_name: "",
+      offer_kind: "BOTH",
+      description: "",
+      offerings_detail: "",
+      gst_number: "",
+      city: "",
+      state: "",
+      pincode: "",
+      location_label: "",
+      address_line1: "",
+      opening_time: "09:00",
+      closing_time: "18:00",
+      max_radius_km: "10",
+      approve: true,
+    });
+    setProviderCategoryIds([]);
+  }
+
+  async function createProvider(e: FormEvent) {
+    e.preventDefault();
+    if (providerCategoryIds.length === 0) {
+      setError("Select at least one category");
+      return;
+    }
+    setProviderCreateBusy(true);
+    setError("");
+    setNote("");
+    try {
+      const { data } = await api.post<AdminProviderDetail>("/admin/providers", {
+        phone_number: providerCreate.phone_number.trim(),
+        full_name: providerCreate.full_name.trim(),
+        email: providerCreate.email.trim(),
+        password: providerCreate.password,
+        business_name: providerCreate.business_name.trim(),
+        category_ids: providerCategoryIds,
+        offer_kind: providerCreate.offer_kind,
+        description: providerCreate.description.trim() || null,
+        offerings_detail: providerCreate.offerings_detail.trim() || null,
+        gst_number: providerCreate.gst_number.trim() || null,
+        city: providerCreate.city.trim() || null,
+        state: providerCreate.state.trim() || null,
+        pincode: providerCreate.pincode.trim() || null,
+        location_label: providerCreate.location_label.trim() || null,
+        address_line1: providerCreate.address_line1.trim() || null,
+        opening_time: providerCreate.opening_time.trim() || null,
+        closing_time: providerCreate.closing_time.trim() || null,
+        max_radius_km: Number(providerCreate.max_radius_km) || 10,
+        approve: providerCreate.approve,
+      });
+      resetProviderCreate();
+      setProviderView("list");
+      setNote(`Provider “${data.business_name}” created`);
+      await load();
+      navigate(`/admin/providers/${data.user_id}`);
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        "Failed to create provider";
+      setError(String(msg));
+    } finally {
+      setProviderCreateBusy(false);
+    }
+  }
+
+  async function verify(userId: string, status: "APPROVED" | "REJECTED" | "REVOKED") {
     try {
       await api.post(`/providers/${userId}/verify`, { verification_status: status });
-      setNote(`Provider ${status.toLowerCase()}`);
+      setNote(
+        status === "REVOKED"
+          ? "Provider revoked — notification sent"
+          : `Provider ${status.toLowerCase()}`,
+      );
       await load();
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
         "Verification failed";
       setError(String(msg));
+    }
+  }
+
+  function resetCsCreate() {
+    setCsCreate({
+      phone_number: "",
+      full_name: "",
+      email: "",
+      password: "",
+      approve: false,
+    });
+  }
+
+  async function createCsAgent(e: FormEvent) {
+    e.preventDefault();
+    setCsCreateBusy(true);
+    setError("");
+    setNote("");
+    try {
+      await api.post<AdminCustomerServiceAgent>("/admin/customer-service-agents", {
+        phone_number: csCreate.phone_number.trim(),
+        full_name: csCreate.full_name.trim(),
+        email: csCreate.email.trim(),
+        password: csCreate.password,
+        approve: csCreate.approve,
+      });
+      resetCsCreate();
+      setCsView("list");
+      setNote("Customer service agent created");
+      await load();
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        "Failed to create customer service agent";
+      setError(String(msg));
+    } finally {
+      setCsCreateBusy(false);
+    }
+  }
+
+  async function csAgentAction(
+    userId: string,
+    action: "approve" | "reapprove" | "revoke",
+    label: string,
+  ) {
+    setCsBusyId(userId);
+    setError("");
+    try {
+      await api.post(`/admin/customer-service-agents/${userId}/${action}`);
+      setNote(
+        action === "approve"
+          ? `${label} approved`
+          : action === "reapprove"
+            ? `${label} re-approved`
+            : `${label} access revoked`,
+      );
+      await load();
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        "Action failed";
+      setError(String(msg));
+    } finally {
+      setCsBusyId(null);
+    }
+  }
+
+  async function deleteCsAgent(userId: string, label: string) {
+    if (!window.confirm(`Delete customer service agent ${label}? This cannot be undone.`)) {
+      return;
+    }
+    setCsBusyId(userId);
+    setError("");
+    try {
+      await api.delete(`/admin/users/${userId}`);
+      setNote(`${label} deleted`);
+      await load();
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        "Failed to delete agent";
+      setError(String(msg));
+    } finally {
+      setCsBusyId(null);
     }
   }
 
@@ -399,16 +710,302 @@ export function AdminPage() {
       {error && <p className="error" style={{ marginBottom: "1rem" }}>{error}</p>}
 
       {tab === "providers" && (
-        <div className="card">
-          <h2>All providers</h2>
-          <p className="muted">Review providers, open chat, and filter by status or new messages.</p>
-
+        <div className="page-stack">
+          {providerView === "create" ? (
+            <>
+              <header className="page-hero admin-provider-create-head">
+                <div>
+                  <p className="dash-eyebrow">Admin</p>
+                  <h2>Add provider</h2>
+                  <p className="page-lead">
+                    Create a provider account. Approved accounts can sign in immediately.
+                  </p>
+                </div>
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={() => {
+                    setProviderView("list");
+                    resetProviderCreate();
+                  }}
+                >
+                  ← Back to list
+                </button>
+              </header>
+              <section className="page-panel">
+                <form className="page-form admin-provider-create-form" onSubmit={createProvider}>
+                  <div className="admin-provider-edit-grid">
+                    <label className="field">
+                      <span>Full name</span>
+                      <input
+                        required
+                        value={providerCreate.full_name}
+                        onChange={(e) =>
+                          setProviderCreate({ ...providerCreate, full_name: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Business / shop name</span>
+                      <input
+                        required
+                        value={providerCreate.business_name}
+                        onChange={(e) =>
+                          setProviderCreate({ ...providerCreate, business_name: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Phone</span>
+                      <input
+                        required
+                        autoComplete="tel"
+                        value={providerCreate.phone_number}
+                        onChange={(e) =>
+                          setProviderCreate({ ...providerCreate, phone_number: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Email</span>
+                      <input
+                        required
+                        type="email"
+                        autoComplete="email"
+                        value={providerCreate.email}
+                        onChange={(e) =>
+                          setProviderCreate({ ...providerCreate, email: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Temporary password</span>
+                      <input
+                        required
+                        type="password"
+                        minLength={6}
+                        autoComplete="new-password"
+                        value={providerCreate.password}
+                        onChange={(e) =>
+                          setProviderCreate({ ...providerCreate, password: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Offer kind</span>
+                      <select
+                        value={providerCreate.offer_kind}
+                        onChange={(e) =>
+                          setProviderCreate({
+                            ...providerCreate,
+                            offer_kind: e.target.value as OfferKind,
+                          })
+                        }
+                      >
+                        <option value="PRODUCT">Product</option>
+                        <option value="SERVICE">Service</option>
+                        <option value="BOTH">Both</option>
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Opens</span>
+                      <input
+                        value={providerCreate.opening_time}
+                        onChange={(e) =>
+                          setProviderCreate({ ...providerCreate, opening_time: e.target.value })
+                        }
+                        placeholder="09:00"
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Closes</span>
+                      <input
+                        value={providerCreate.closing_time}
+                        onChange={(e) =>
+                          setProviderCreate({ ...providerCreate, closing_time: e.target.value })
+                        }
+                        placeholder="18:00"
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Max radius (km)</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={providerCreate.max_radius_km}
+                        onChange={(e) =>
+                          setProviderCreate({ ...providerCreate, max_radius_km: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>GST number</span>
+                      <input
+                        value={providerCreate.gst_number}
+                        onChange={(e) =>
+                          setProviderCreate({ ...providerCreate, gst_number: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field admin-provider-edit-wide">
+                      <span>About</span>
+                      <textarea
+                        rows={3}
+                        value={providerCreate.description}
+                        onChange={(e) =>
+                          setProviderCreate({ ...providerCreate, description: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field admin-provider-edit-wide">
+                      <span>What they offer</span>
+                      <textarea
+                        rows={3}
+                        value={providerCreate.offerings_detail}
+                        onChange={(e) =>
+                          setProviderCreate({
+                            ...providerCreate,
+                            offerings_detail: e.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Address line 1</span>
+                      <input
+                        value={providerCreate.address_line1}
+                        onChange={(e) =>
+                          setProviderCreate({ ...providerCreate, address_line1: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Location label</span>
+                      <input
+                        value={providerCreate.location_label}
+                        onChange={(e) =>
+                          setProviderCreate({ ...providerCreate, location_label: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>City</span>
+                      <input
+                        value={providerCreate.city}
+                        onChange={(e) =>
+                          setProviderCreate({ ...providerCreate, city: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>State</span>
+                      <input
+                        value={providerCreate.state}
+                        onChange={(e) =>
+                          setProviderCreate({ ...providerCreate, state: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Pincode</span>
+                      <input
+                        value={providerCreate.pincode}
+                        onChange={(e) =>
+                          setProviderCreate({ ...providerCreate, pincode: e.target.value })
+                        }
+                      />
+                    </label>
+                    <div className="field admin-provider-edit-wide">
+                      <span>Categories</span>
+                      <CategoryMultiSelect
+                        tree={categoryTree}
+                        selected={providerCategoryIds}
+                        onChange={setProviderCategoryIds}
+                      />
+                    </div>
+                    <label className="check-row admin-provider-edit-wide">
+                      <input
+                        type="checkbox"
+                        checked={providerCreate.approve}
+                        onChange={(e) =>
+                          setProviderCreate({ ...providerCreate, approve: e.target.checked })
+                        }
+                      />
+                      <span>Approve immediately (provider can sign in)</span>
+                    </label>
+                  </div>
+                  <div className="admin-provider-create-actions">
+                    <button
+                      className="btn secondary"
+                      type="button"
+                      disabled={providerCreateBusy}
+                      onClick={() => {
+                        setProviderView("list");
+                        resetProviderCreate();
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button className="btn" type="submit" disabled={providerCreateBusy}>
+                      {providerCreateBusy ? "Creating…" : "Create provider"}
+                    </button>
+                  </div>
+                </form>
+              </section>
+            </>
+          ) : (
+            <>
+          <header className="page-hero admin-provider-list-head">
+            <div>
+              <p className="dash-eyebrow">Admin</p>
+              <h2>All providers</h2>
+              <p className="page-lead">
+                Review providers, open chat, and filter by status or new messages.
+              </p>
+            </div>
+            <button
+              className="btn btn-with-icon"
+              type="button"
+              onClick={() => {
+                resetProviderCreate();
+                setProviderView("create");
+              }}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.25"
+                aria-hidden="true"
+              >
+                <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+              </svg>
+              Add provider
+            </button>
+          </header>
+          <section className="page-panel">
+          <div className="admin-list-toolbar">
+            <label className="admin-list-search field">
+              <span>Search</span>
+              <input
+                type="search"
+                value={providerSearch}
+                onChange={(e) => setProviderSearch(e.target.value)}
+                placeholder="Phone, email, name, or pincode"
+                aria-label="Search providers"
+              />
+            </label>
+          </div>
           <div className="admin-filter-bar" role="tablist" aria-label="Provider filters">
             {(
               [
                 { id: "ALL", label: "All" },
                 { id: "PENDING", label: "Pending" },
                 { id: "APPROVED", label: "Approved" },
+                { id: "REVOKED", label: "Revoked" },
                 { id: "REJECTED", label: "Rejected" },
                 { id: "MESSAGES", label: "New messages" },
               ] as const
@@ -442,9 +1039,11 @@ export function AdminPage() {
           <div className="list admin-provider-list">
             {filteredProviders.length === 0 && (
               <p className="muted">
-                {providerFilter === "MESSAGES"
-                  ? "No providers with new messages."
-                  : "No providers in this filter."}
+                {providerSearch.trim()
+                  ? `No providers match “${providerSearch.trim()}”.`
+                  : providerFilter === "MESSAGES"
+                    ? "No providers with new messages."
+                    : "No providers in this filter."}
               </p>
             )}
             {filteredProviders.map((p) => {
@@ -457,7 +1056,9 @@ export function AdminPage() {
                   ? "Pending review"
                   : p.verification_status === "APPROVED"
                     ? "Approved"
-                    : "Rejected";
+                    : p.verification_status === "REVOKED"
+                      ? "Revoked"
+                      : "Rejected";
               const support = supportByProvider.get(p.user_id);
               const unreadFromProvider = support?.unread_count || 0;
               return (
@@ -613,12 +1214,13 @@ export function AdminPage() {
                         <button
                           className="btn secondary"
                           type="button"
-                          onClick={() => void verify(p.user_id, "REJECTED")}
+                          onClick={() => void verify(p.user_id, "REVOKED")}
                         >
                           Revoke
                         </button>
                       )}
-                      {p.verification_status === "REJECTED" && (
+                      {(p.verification_status === "REJECTED" ||
+                        p.verification_status === "REVOKED") && (
                         <button
                           className="btn"
                           type="button"
@@ -641,16 +1243,41 @@ export function AdminPage() {
               );
             })}
           </div>
+          </section>
+            </>
+          )}
         </div>
       )}
 
       {tab === "consumers" && (
-        <div className="card">
-          <h2>All consumers</h2>
-          <p className="muted">Registered consumers on the platform.</p>
-          <div className="list admin-consumer-list">
-            {consumers.length === 0 && <p className="muted">No consumers yet.</p>}
-            {consumers.map((c) => {
+        <div className="page-stack">
+          <header className="page-hero">
+            <p className="dash-eyebrow">Admin</p>
+            <h2>All consumers</h2>
+            <p className="page-lead">Registered consumers on the platform.</p>
+          </header>
+          <section className="page-panel">
+          <div className="admin-list-toolbar">
+            <label className="admin-list-search field">
+              <span>Search</span>
+              <input
+                type="search"
+                value={consumerSearch}
+                onChange={(e) => setConsumerSearch(e.target.value)}
+                placeholder="Phone, email, name, or pincode"
+                aria-label="Search consumers"
+              />
+            </label>
+          </div>
+          <div className="page-list list admin-consumer-list">
+            {filteredConsumers.length === 0 && (
+              <p className="muted">
+                {consumerSearch.trim()
+                  ? `No consumers match “${consumerSearch.trim()}”.`
+                  : "No consumers yet."}
+              </p>
+            )}
+            {filteredConsumers.map((c) => {
               const address = [c.address_line1, c.address_line2, c.city, c.state, c.pincode]
                 .filter(Boolean)
                 .join(", ");
@@ -747,17 +1374,22 @@ export function AdminPage() {
               );
             })}
           </div>
+          </section>
         </div>
       )}
 
       {tab === "orders" && <AdminOrdersDashboard />}
 
       {tab === "messages" && (
-        <div className="card">
-          <h2>Provider messages</h2>
-          <p className="muted">
-            Support threads with providers. Start a chat from a provider&apos;s detail page.
-          </p>
+        <div className="page-stack">
+          <header className="page-hero">
+            <p className="dash-eyebrow">Admin</p>
+            <h2>Provider messages</h2>
+            <p className="page-lead">
+              Support threads with providers. Start a chat from a provider&apos;s detail page.
+            </p>
+          </header>
+          <section className="page-panel">
           {activeSupportId ? (
             <InquiryChatPanel
               conversationId={activeSupportId}
@@ -768,11 +1400,28 @@ export function AdminPage() {
               onClose={() => setActiveSupportId(null)}
             />
           ) : (
-            <div className="list">
-              {supportThreads.length === 0 && (
-                <p className="muted">No provider chats yet. Open a provider and use Messaging.</p>
+            <>
+            <div className="admin-list-toolbar">
+              <label className="admin-list-search field">
+                <span>Search</span>
+                <input
+                  type="search"
+                  value={messagesSearch}
+                  onChange={(e) => setMessagesSearch(e.target.value)}
+                  placeholder="Provider name, business, or message"
+                  aria-label="Search provider messages"
+                />
+              </label>
+            </div>
+            <div className="page-list list">
+              {filteredSupportThreads.length === 0 && (
+                <p className="page-empty">
+                  {messagesSearch.trim()
+                    ? `No chats match “${messagesSearch.trim()}”.`
+                    : "No provider chats yet. Open a provider and use Messaging."}
+                </p>
               )}
-              {supportThreads.map((t) => (
+              {filteredSupportThreads.map((t) => (
                 <div key={t.id} className="list-item">
                   <div className="topbar" style={{ marginBottom: "0.35rem" }}>
                     <div>
@@ -808,7 +1457,9 @@ export function AdminPage() {
                 </div>
               ))}
             </div>
+            </>
           )}
+          </section>
         </div>
       )}
 
@@ -1159,11 +1810,254 @@ export function AdminPage() {
         </div>
       )}
 
+      {tab === "customer-service" && isAdmin && (
+        <div className="page-stack">
+          {csView === "create" ? (
+            <>
+              <header className="page-hero admin-provider-create-head">
+                <div>
+                  <p className="dash-eyebrow">Admin</p>
+                  <h2>Add customer service agent</h2>
+                  <p className="page-lead">
+                    Create a customer service account. Approve to allow sign-in.
+                  </p>
+                </div>
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={() => {
+                    setCsView("list");
+                    resetCsCreate();
+                  }}
+                >
+                  ← Back to list
+                </button>
+              </header>
+              <section className="page-panel">
+                <form className="page-form admin-provider-create-form" onSubmit={createCsAgent}>
+                  <div className="admin-provider-edit-grid">
+                    <label className="field">
+                      <span>Full name</span>
+                      <input
+                        required
+                        value={csCreate.full_name}
+                        onChange={(e) => setCsCreate({ ...csCreate, full_name: e.target.value })}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Phone</span>
+                      <input
+                        required
+                        autoComplete="tel"
+                        value={csCreate.phone_number}
+                        onChange={(e) =>
+                          setCsCreate({ ...csCreate, phone_number: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Email</span>
+                      <input
+                        required
+                        type="email"
+                        autoComplete="email"
+                        value={csCreate.email}
+                        onChange={(e) => setCsCreate({ ...csCreate, email: e.target.value })}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Temporary password</span>
+                      <input
+                        required
+                        type="password"
+                        minLength={6}
+                        autoComplete="new-password"
+                        value={csCreate.password}
+                        onChange={(e) => setCsCreate({ ...csCreate, password: e.target.value })}
+                      />
+                    </label>
+                    <label className="check-row admin-provider-edit-wide">
+                      <input
+                        type="checkbox"
+                        checked={csCreate.approve}
+                        onChange={(e) => setCsCreate({ ...csCreate, approve: e.target.checked })}
+                      />
+                      <span>Approve immediately (agent can sign in)</span>
+                    </label>
+                  </div>
+                  <div className="admin-provider-create-actions">
+                    <button
+                      className="btn secondary"
+                      type="button"
+                      disabled={csCreateBusy}
+                      onClick={() => {
+                        setCsView("list");
+                        resetCsCreate();
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button className="btn" type="submit" disabled={csCreateBusy}>
+                      {csCreateBusy ? "Creating…" : "Create agent"}
+                    </button>
+                  </div>
+                </form>
+              </section>
+            </>
+          ) : (
+            <>
+              <header className="page-hero admin-provider-list-head">
+                <div>
+                  <p className="dash-eyebrow">Admin</p>
+                  <h2>Customer service agents</h2>
+                  <p className="page-lead">
+                    Manage customer service accounts. They have admin ops access except Config.
+                  </p>
+                </div>
+                <button
+                  className="btn btn-with-icon"
+                  type="button"
+                  onClick={() => {
+                    resetCsCreate();
+                    setCsView("create");
+                  }}
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.25"
+                    aria-hidden="true"
+                  >
+                    <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+                  </svg>
+                  Create agent
+                </button>
+              </header>
+              <section className="page-panel">
+                <div className="admin-list-toolbar">
+                  <label className="admin-list-search field">
+                    <span>Search</span>
+                    <input
+                      type="search"
+                      value={csSearch}
+                      onChange={(e) => setCsSearch(e.target.value)}
+                      placeholder="Name, phone, email, or status"
+                      aria-label="Search customer service agents"
+                    />
+                  </label>
+                </div>
+                <div className="page-list list admin-consumer-list">
+                  {filteredCsAgents.length === 0 && (
+                    <p className="muted">
+                      {csSearch.trim()
+                        ? `No agents match “${csSearch.trim()}”.`
+                        : "No customer service agents yet."}
+                    </p>
+                  )}
+                  {filteredCsAgents.map((a) => {
+                    const statusLabel =
+                      a.status === "APPROVED"
+                        ? "Approved"
+                        : a.status === "REVOKED"
+                          ? "Revoked"
+                          : "Pending";
+                    const statusClass =
+                      a.status === "APPROVED"
+                        ? "online"
+                        : a.status === "PENDING"
+                          ? "pending"
+                          : "offline";
+                    return (
+                      <article
+                        key={a.id}
+                        className="list-item admin-provider-card admin-consumer-card"
+                      >
+                        <header className="admin-provider-card-head">
+                          <div className="admin-provider-card-title">
+                            <h3>{a.full_name}</h3>
+                            <p className="admin-provider-card-owner">
+                              Joined {new Date(a.created_at).toLocaleString()}
+                            </p>
+                          </div>
+                          <div className="admin-provider-card-badges">
+                            <span className={`pill ${statusClass}`}>{statusLabel}</span>
+                          </div>
+                        </header>
+                        <dl className="admin-provider-meta">
+                          <div>
+                            <dt>Phone</dt>
+                            <dd>{a.phone_number}</dd>
+                          </div>
+                          <div>
+                            <dt>Email</dt>
+                            <dd>{a.email || "Not provided"}</dd>
+                          </div>
+                        </dl>
+                        <footer className="admin-provider-card-actions">
+                          <div className="admin-provider-card-actions-main">
+                            {a.status === "PENDING" && (
+                              <button
+                                className="btn"
+                                type="button"
+                                disabled={csBusyId === a.id}
+                                onClick={() => void csAgentAction(a.id, "approve", a.full_name)}
+                              >
+                                Approve
+                              </button>
+                            )}
+                            {a.status === "APPROVED" && (
+                              <button
+                                className="btn secondary"
+                                type="button"
+                                disabled={csBusyId === a.id}
+                                onClick={() => void csAgentAction(a.id, "revoke", a.full_name)}
+                              >
+                                Revoke
+                              </button>
+                            )}
+                            {a.status === "REVOKED" && (
+                              <button
+                                className="btn"
+                                type="button"
+                                disabled={csBusyId === a.id}
+                                onClick={() => void csAgentAction(a.id, "reapprove", a.full_name)}
+                              >
+                                Re-approve
+                              </button>
+                            )}
+                          </div>
+                          <button
+                            className="btn danger admin-provider-delete"
+                            type="button"
+                            disabled={csBusyId === a.id}
+                            onClick={() => void deleteCsAgent(a.id, a.full_name)}
+                          >
+                            {csBusyId === a.id ? "Working…" : "Delete"}
+                          </button>
+                        </footer>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            </>
+          )}
+        </div>
+      )}
+
       {tab === "config" && (
-        <div className="grid" style={{ gap: "1rem", maxWidth: 720 }}>
-          <form className="card" onSubmit={saveSmtp}>
+        <div className="page-stack narrow">
+          <header className="page-hero">
+            <p className="dash-eyebrow">Admin</p>
+            <h2>Email config</h2>
+            <p className="page-lead">SMTP settings for transactional mail.</p>
+          </header>
+          <form className="page-panel page-form" onSubmit={saveSmtp}>
             <h2>SMTP email settings</h2>
-            <p className="muted">
+            <p className="page-lead">
               Used by the app to send emails (provider approval, future notifications, etc.).
             </p>
             <div className="field">
@@ -1176,68 +2070,62 @@ export function AdminPage() {
                 Enable SMTP sending
               </label>
             </div>
-            <div className="grid grid-2">
-              <div className="field">
-                <label>SMTP host</label>
-                <input
-                  required
-                  value={smtp.host}
-                  onChange={(e) => setSmtp({ ...smtp, host: e.target.value })}
-                  placeholder="smtp.gmail.com"
-                />
-              </div>
-              <div className="field">
-                <label>Port</label>
-                <input
-                  required
-                  type="number"
-                  min={1}
-                  max={65535}
-                  value={smtp.port}
-                  onChange={(e) => setSmtp({ ...smtp, port: e.target.value })}
-                />
-              </div>
+            <div className="field">
+              <label>SMTP host</label>
+              <input
+                required
+                value={smtp.host}
+                onChange={(e) => setSmtp({ ...smtp, host: e.target.value })}
+                placeholder="smtp.gmail.com"
+              />
             </div>
-            <div className="grid grid-2">
-              <div className="field">
-                <label>Username</label>
-                <input
-                  value={smtp.username}
-                  onChange={(e) => setSmtp({ ...smtp, username: e.target.value })}
-                  placeholder="optional"
-                />
-              </div>
-              <div className="field">
-                <label>Password {smtp.password_set ? "(saved — leave blank to keep)" : ""}</label>
-                <input
-                  type="password"
-                  value={smtp.password}
-                  onChange={(e) => setSmtp({ ...smtp, password: e.target.value })}
-                  placeholder={smtp.password_set ? "••••••••" : "SMTP password"}
-                  autoComplete="new-password"
-                />
-              </div>
+            <div className="field">
+              <label>Port</label>
+              <input
+                required
+                type="number"
+                min={1}
+                max={65535}
+                value={smtp.port}
+                onChange={(e) => setSmtp({ ...smtp, port: e.target.value })}
+              />
             </div>
-            <div className="grid grid-2">
-              <div className="field">
-                <label>From email</label>
-                <input
-                  required
-                  type="email"
-                  value={smtp.from_email}
-                  onChange={(e) => setSmtp({ ...smtp, from_email: e.target.value })}
-                  placeholder="noreply@localsync.app"
-                />
-              </div>
-              <div className="field">
-                <label>From name</label>
-                <input
-                  value={smtp.from_name}
-                  onChange={(e) => setSmtp({ ...smtp, from_name: e.target.value })}
-                />
-              </div>
+            <div className="field">
+              <label>Username</label>
+              <input
+                value={smtp.username}
+                onChange={(e) => setSmtp({ ...smtp, username: e.target.value })}
+                placeholder="optional"
+              />
             </div>
-            <div className="nav-actions">
+            <div className="field">
+              <label>Password {smtp.password_set ? "(saved — leave blank to keep)" : ""}</label>
+              <input
+                type="password"
+                value={smtp.password}
+                onChange={(e) => setSmtp({ ...smtp, password: e.target.value })}
+                placeholder={smtp.password_set ? "••••••••" : "SMTP password"}
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="field">
+              <label>From email</label>
+              <input
+                required
+                type="email"
+                value={smtp.from_email}
+                onChange={(e) => setSmtp({ ...smtp, from_email: e.target.value })}
+                placeholder="noreply@gharq.app"
+              />
+            </div>
+            <div className="field">
+              <label>From name</label>
+              <input
+                value={smtp.from_name}
+                onChange={(e) => setSmtp({ ...smtp, from_name: e.target.value })}
+              />
+            </div>
+            <div className="page-actions">
               <label>
                 <input
                   type="checkbox"
@@ -1267,14 +2155,16 @@ export function AdminPage() {
                 SSL (465)
               </label>
             </div>
-            <button className="btn" type="submit" disabled={smtpBusy} style={{ marginTop: "1rem" }}>
-              {smtpBusy ? "Saving…" : "Save SMTP settings"}
-            </button>
+            <div className="page-actions">
+              <button className="btn" type="submit" disabled={smtpBusy}>
+                {smtpBusy ? "Saving…" : "Save SMTP settings"}
+              </button>
+            </div>
           </form>
 
-          <form className="card" onSubmit={sendTestEmail}>
+          <form className="page-panel page-form" onSubmit={sendTestEmail}>
             <h2>Send test email</h2>
-            <p className="muted">Verify the SMTP connection by sending a test message.</p>
+            <p className="page-lead">Verify the SMTP connection by sending a test message.</p>
             <div className="field">
               <label>To email</label>
               <input
@@ -1285,9 +2175,15 @@ export function AdminPage() {
                 placeholder="you@example.com"
               />
             </div>
-            <button className="btn secondary" type="submit" disabled={smtpBusy || !smtp.is_enabled}>
-              {smtpBusy ? "Sending…" : "Send test"}
-            </button>
+            <div className="page-actions">
+              <button
+                className="btn secondary"
+                type="submit"
+                disabled={smtpBusy || !smtp.is_enabled}
+              >
+                {smtpBusy ? "Sending…" : "Send test"}
+              </button>
+            </div>
           </form>
         </div>
       )}

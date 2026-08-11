@@ -27,12 +27,14 @@ class UserRole(str, enum.Enum):
     CONSUMER = "CONSUMER"
     PROVIDER = "PROVIDER"
     ADMIN = "ADMIN"
+    CUSTOMER_SERVICE = "CUSTOMER_SERVICE"
 
 
 class VerificationStatus(str, enum.Enum):
     PENDING = "PENDING"
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
+    REVOKED = "REVOKED"
 
 
 class RequestStatus(str, enum.Enum):
@@ -448,7 +450,7 @@ class InquiryMessage(Base):
 
 
 class AdminConversation(Base):
-    """Support thread between LocalSync admins and a provider (one per provider)."""
+    """Support thread between Gharq admins and a provider (one per provider)."""
 
     __tablename__ = "admin_conversations"
 
@@ -509,7 +511,7 @@ class AppSmtpConfig(Base):
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     from_email: Mapped[str] = mapped_column(String(255), nullable=False, default="")
-    from_name: Mapped[str] = mapped_column(String(255), nullable=False, default="LocalSync")
+    from_name: Mapped[str] = mapped_column(String(255), nullable=False, default="Gharq")
     use_tls: Mapped[bool] = mapped_column(Boolean, default=True)
     use_ssl: Mapped[bool] = mapped_column(Boolean, default=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

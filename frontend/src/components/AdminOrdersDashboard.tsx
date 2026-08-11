@@ -15,9 +15,9 @@ const GROUP_OPTIONS: { value: AdminAnalyticsGroupBy; label: string }[] = [
 ];
 
 const STATUS_COLORS: Record<string, string> = {
-  COMPLETED: "#0f6b4c",
+  COMPLETED: "#0f4c43",
   CONFIRMED: "#2563eb",
-  IN_PROGRESS: "#d97706",
+  IN_PROGRESS: "#eaa11d",
   CANCELLED: "#b42318",
   DISPUTED: "#7c3aed",
 };

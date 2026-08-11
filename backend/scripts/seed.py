@@ -77,19 +77,31 @@ def seed() -> None:
             admin = User(
                 role=UserRole.ADMIN,
                 phone_number="9000000001",
-                email="admin@localsync.app",
-                full_name="LocalSync Admin",
+                email="admin@gharq.app",
+                full_name="Gharq Admin",
                 hashed_password=get_password_hash("admin123"),
                 is_verified=True,
             )
             db.add(admin)
+
+        cs = db.scalar(select(User).where(User.phone_number == "9000000004"))
+        if not cs:
+            cs = User(
+                role=UserRole.CUSTOMER_SERVICE,
+                phone_number="9000000004",
+                email="support@gharq.app",
+                full_name="Gharq Customer Service",
+                hashed_password=get_password_hash("support123"),
+                is_verified=True,
+            )
+            db.add(cs)
 
         consumer = db.scalar(select(User).where(User.phone_number == "9000000002"))
         if not consumer:
             consumer = User(
                 role=UserRole.CONSUMER,
                 phone_number="9000000002",
-                email="consumer@localsync.app",
+                email="consumer@gharq.app",
                 full_name="Demo Consumer",
                 hashed_password=get_password_hash("consumer123"),
                 is_verified=True,
@@ -114,7 +126,7 @@ def seed() -> None:
             provider = User(
                 role=UserRole.PROVIDER,
                 phone_number="9000000003",
-                email="provider@localsync.app",
+                email="provider@gharq.app",
                 full_name="Demo Provider",
                 hashed_password=get_password_hash("provider123"),
                 is_verified=True,
@@ -169,6 +181,7 @@ def seed() -> None:
         db.commit()
         print("Seed complete.")
         print("Admin:    9000000001 / admin123")
+        print("Support:  9000000004 / support123")
         print("Consumer: 9000000002 / consumer123")
         print("Provider: 9000000003 / provider123 (Plumbing + subcats, Bengaluru, online)")
     finally:

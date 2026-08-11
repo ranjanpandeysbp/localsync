@@ -1,5 +1,6 @@
 import { FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { MarketplaceScene } from "../components/MarketplaceScene";
 import { useAuth } from "../store/auth";
 
 export function LoginPage() {
@@ -18,7 +19,13 @@ export function LoginPage() {
     setError("");
     try {
       const user = await login(phoneTrimmed, password);
-      navigate(user.role === "PROVIDER" ? "/provider/overview" : user.role === "ADMIN" ? "/admin/providers" : "/consumer/details");
+      navigate(
+        user.role === "PROVIDER"
+          ? "/provider/overview"
+          : user.role === "ADMIN" || user.role === "CUSTOMER_SERVICE"
+            ? "/admin/providers"
+            : "/consumer/details",
+      );
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
@@ -30,39 +37,71 @@ export function LoginPage() {
   }
 
   return (
-    <div className="auth-wrap">
-      <form className="card auth-card" onSubmit={onSubmit}>
-        <h1 className="brand">
-          <Link to="/">LocalSync</Link>
-        </h1>
-        <p className="muted">Hyper-local supply & demand, with verified providers.</p>
-        <div className="field">
-          <label>Phone</label>
-          <input value={phone} onChange={(e) => setPhone(e.target.value)} required />
+    <div className="login-page">
+      <aside className="login-visual">
+        <div className="login-visual-copy">
+          <p className="login-visual-eyebrow">Gharq</p>
+          <h1 className="login-visual-title">Find trusted help around the corner.</h1>
+          <p className="login-visual-lead">
+            Verified local providers, nearby requests, and quotes — all in one place.
+          </p>
         </div>
-        <div className="field">
-          <label>Password</label>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
+        <div className="login-visual-art" aria-hidden="true">
+          <MarketplaceScene className="login-scene marketplace-scene" idPrefix="login" />
         </div>
-        {error && <p className="error">{error}</p>}
-        <button className="btn" disabled={busy} type="submit">
-          {busy ? "Signing in…" : "Sign in"}
-        </button>
-        <p className="muted" style={{ marginTop: "1rem" }}>
-          No account? <Link to="/register">Register</Link>
-        </p>
-        <p className="muted" style={{ marginTop: "0.65rem" }}>
-          <Link to="/">← Back to landing page</Link>
-        </p>
-        <p className="muted" style={{ fontSize: "0.85rem" }}>
-          Demo: consumer 9000000002 / consumer123 · provider 9000000003 / provider123
-        </p>
-      </form>
+      </aside>
+
+      <main className="login-main">
+        <form className="login-form" onSubmit={onSubmit}>
+          <div className="login-form-head">
+            <Link to="/" className="login-form-brand">
+              Gharq
+            </Link>
+            <h2>Welcome back</h2>
+            <p className="muted">Sign in with your phone to continue.</p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="login-phone">Phone</label>
+            <input
+              id="login-phone"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              required
+              autoComplete="tel"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="login-password">Password</label>
+            <input
+              id="login-password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              autoComplete="current-password"
+            />
+          </div>
+          <div className="login-form-row">
+            <Link className="login-forgot" to="/forgot-password">
+              Forgot password?
+            </Link>
+          </div>
+
+          {error && <p className="error">{error}</p>}
+
+          <button className="btn login-submit" disabled={busy} type="submit">
+            {busy ? "Signing in…" : "Sign in"}
+          </button>
+
+          <p className="login-footer muted">
+            No account? <Link to="/register">Register</Link>
+          </p>
+          <p className="login-demo muted">
+            Demo: consumer 9000000002 / consumer123 · provider 9000000003 / provider123
+          </p>
+        </form>
+      </main>
     </div>
   );
 }

@@ -1,12 +1,6 @@
 import { Navigate, Outlet } from "react-router-dom";
 import { useAuth } from "../store/auth";
-import type { UserRole } from "../types";
-
-function roleHome(role: UserRole) {
-  if (role === "PROVIDER") return "/provider/overview";
-  if (role === "ADMIN") return "/admin/providers";
-  return "/consumer/details";
-}
+import { isStaffRole, roleHome, type UserRole } from "../types";
 
 /** Blocks unauthenticated users; optionally restricts by role. */
 export function ProtectedRoute({ roles }: { roles?: UserRole[] }) {
@@ -21,7 +15,7 @@ export function ProtectedRoute({ roles }: { roles?: UserRole[] }) {
   }
 
   if (!token || !user) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/?login=1" replace />;
   }
 
   if (roles && !roles.includes(user.role)) {
@@ -49,3 +43,5 @@ export function GuestRoute() {
 
   return <Outlet />;
 }
+
+export { isStaffRole, roleHome };

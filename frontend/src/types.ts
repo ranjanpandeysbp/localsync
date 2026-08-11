@@ -1,4 +1,14 @@
-export type UserRole = "CONSUMER" | "PROVIDER" | "ADMIN";
+export type UserRole = "CONSUMER" | "PROVIDER" | "ADMIN" | "CUSTOMER_SERVICE";
+
+export function isStaffRole(role?: UserRole | null): boolean {
+  return role === "ADMIN" || role === "CUSTOMER_SERVICE";
+}
+
+export function roleHome(role: UserRole): string {
+  if (role === "PROVIDER") return "/provider/overview";
+  if (isStaffRole(role)) return "/admin/providers";
+  return "/consumer/details";
+}
 export type OfferKind = "PRODUCT" | "SERVICE" | "BOTH";
 
 export interface User {
@@ -24,6 +34,7 @@ export interface User {
   pincode?: string | null;
   alternate_phone?: string | null;
   profile_complete?: boolean;
+  verification_status?: "PENDING" | "APPROVED" | "REJECTED" | "REVOKED" | null;
 }
 
 export interface Category {
@@ -45,6 +56,11 @@ export interface CategoryTree {
   kind: OfferKind;
   is_active: boolean;
   subcategories: Category[];
+}
+
+export interface NearbyCategoryCounts {
+  radius_km: number;
+  counts: { category_id: number; nearby_count: number }[];
 }
 
 export interface ProviderTrustInfo {
@@ -86,7 +102,7 @@ export interface ProviderProfile {
   aadhaar_number?: string | null;
   max_radius_km: number;
   is_online: boolean;
-  verification_status: "PENDING" | "APPROVED" | "REJECTED";
+  verification_status: "PENDING" | "APPROVED" | "REJECTED" | "REVOKED";
   longitude: number | null;
   latitude: number | null;
   maps_url?: string | null;
@@ -263,7 +279,7 @@ export interface AdminProvider {
   gst_number?: string | null;
   aadhaar_number?: string | null;
   aadhaar_doc_url?: string | null;
-  verification_status: "PENDING" | "APPROVED" | "REJECTED";
+  verification_status: "PENDING" | "APPROVED" | "REJECTED" | "REVOKED";
   is_online: boolean;
   is_active: boolean;
   average_rating: number;
@@ -271,6 +287,7 @@ export interface AdminProvider {
   latitude: number | null;
   longitude: number | null;
   location_label: string | null;
+  pincode?: string | null;
   maps_url: string | null;
   created_at: string;
 }
@@ -291,7 +308,6 @@ export interface AdminProviderDetail extends AdminProvider {
   address_line2?: string | null;
   city?: string | null;
   state?: string | null;
-  pincode?: string | null;
   government_id_url?: string | null;
   business_reg_url?: string | null;
   gst_doc_url?: string | null;
@@ -380,6 +396,17 @@ export interface ChatMessage {
   sender_id: string;
   body: string;
   created_at: string;
+}
+
+export interface AdminCustomerServiceAgent {
+  id: string;
+  phone_number: string;
+  email: string | null;
+  full_name: string;
+  is_active: boolean;
+  is_verified: boolean;
+  created_at: string;
+  status: "PENDING" | "APPROVED" | "REVOKED" | string;
 }
 
 export interface Conversation {

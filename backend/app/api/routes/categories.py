@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_roles
+from app.api.deps import require_roles, require_staff
 from app.db.models import Category, OfferKind, User, UserRole
 from app.db.session import get_db
 from app.schemas import CategoryCreate, CategoryOut, CategoryTreeOut
@@ -65,7 +65,7 @@ def category_tree(db: Session = Depends(get_db)):
 @router.get("/admin/all", response_model=list[CategoryOut])
 def admin_list_all(
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_staff()),
 ):
     parents = db.scalars(
         select(Category).where(Category.parent_id.is_(None)).order_by(Category.name)
@@ -83,7 +83,7 @@ def admin_list_all(
 def create_category(
     payload: CategoryCreate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_staff()),
 ):
     exists = db.scalar(select(Category).where(Category.slug == payload.slug))
     if exists:
@@ -110,7 +110,7 @@ def update_category(
     category_id: int,
     payload: CategoryCreate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_staff()),
 ):
     cat = db.get(Category, category_id)
     if not cat:
@@ -138,7 +138,7 @@ def update_category(
 def deactivate_category(
     category_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_staff()),
 ):
     cat = db.get(Category, category_id)
     if not cat:
@@ -155,7 +155,7 @@ def deactivate_category(
 def activate_category(
     category_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_staff()),
 ):
     cat = db.get(Category, category_id)
     if not cat:

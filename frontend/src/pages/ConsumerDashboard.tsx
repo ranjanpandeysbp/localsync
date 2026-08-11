@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { AttachmentGallery, FilePicker } from "../components/Attachments";
@@ -7,8 +8,8 @@ import { MapsLink } from "../components/MapsLink";
 import { ProfileCard } from "../components/ProfileCard";
 import {
   flattenCategoryOptions,
+  offerKindClass,
   offerKindLabel,
-  ProviderTrustBlock,
 } from "../components/ProviderTrust";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { api } from "../services/api";
@@ -50,8 +51,8 @@ const TITLES: Record<ConsumerSection, string> = {
   post: "Post a request",
   providers: "Providers in category",
   inquiries: "Recent inquiries",
-  quotes: "All quotes received",
-  orders: "Complete Orders",
+  quotes: "Received Quotes",
+  orders: "Orders",
 };
 
 export function ConsumerDashboard() {
@@ -77,10 +78,23 @@ export function ConsumerDashboard() {
   const [busy, setBusy] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [requestSearch, setRequestSearch] = useState("");
-  const [requestStatusFilter, setRequestStatusFilter] = useState<
-    "ALL" | ServiceRequest["status"]
-  >("ALL");
-  const [requestFilterOpen, setRequestFilterOpen] = useState(false);
+  const [closingRequestId, setClosingRequestId] = useState<string | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<{
+    id: string;
+    title: string;
+    quoteCount: number;
+  } | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelNotice, setCancelNotice] = useState<string | null>(null);
+  const [simpleCancelTarget, setSimpleCancelTarget] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
+  const [deleteChatTarget, setDeleteChatTarget] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
+  const [deletingChatId, setDeletingChatId] = useState<string | null>(null);
   const [form, setForm] = useState({
     category_id: "",
     title: "",
@@ -184,49 +198,43 @@ export function ConsumerDashboard() {
     return map;
   }, [tree]);
 
-  const requestStatusCounts = useMemo(() => {
-    const counts = { ALL: requests.length, ACTIVE: 0, FULFILLED: 0, EXPIRED: 0, CANCELLED: 0 };
-    for (const r of requests) {
-      counts[r.status] += 1;
-    }
-    return counts;
-  }, [requests]);
+  const activeRequests = useMemo(
+    () => requests.filter((r) => r.status === "ACTIVE"),
+    [requests],
+  );
 
   const filteredRequests = useMemo(() => {
     const q = requestSearch.trim().toLowerCase();
-    return requests.filter((r) => {
-      if (requestStatusFilter !== "ALL" && r.status !== requestStatusFilter) return false;
+    return activeRequests.filter((r) => {
       if (!q) return true;
       const category = categoryNameById.get(r.category_id) || "";
-      const haystack = [r.title, r.description, r.status, category, r.request_pincode || ""]
+      const haystack = [r.title, r.description, category, r.request_pincode || ""]
         .join(" ")
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [requests, requestSearch, requestStatusFilter, categoryNameById]);
+  }, [activeRequests, requestSearch, categoryNameById]);
 
-  useEffect(() => {
-    if (tab !== "requests") setRequestFilterOpen(false);
-  }, [tab]);
-
-  useEffect(() => {
-    if (!requestFilterOpen) return;
-    function onPointerDown(e: PointerEvent) {
-      const target = e.target as HTMLElement | null;
-      if (target?.closest(".consumer-requests-filter-menu")) return;
-      setRequestFilterOpen(false);
-    }
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [requestFilterOpen]);
-
-  const requestStatusOptions = [
-    ["ALL", "All"],
-    ["ACTIVE", "Active"],
-    ["FULFILLED", "Fulfilled"],
-    ["EXPIRED", "Expired"],
-    ["CANCELLED", "Cancelled"],
-  ] as const;
+  const completeOrdersFeed = useMemo(() => {
+    const orderItems = orders.map((o) => ({
+      kind: "order" as const,
+      id: o.id,
+      sortAt: o.completed_at || o.created_at,
+      order: o,
+    }));
+    const cancelledItems = requests
+      .filter((r) => r.status === "CANCELLED")
+      .map((r) => ({
+        kind: "cancelled_request" as const,
+        id: r.id,
+        sortAt: r.created_at,
+        request: r,
+        quoteCount: receivedQuotes.filter((q) => q.request_id === r.id).length,
+      }));
+    return [...orderItems, ...cancelledItems].sort(
+      (a, b) => new Date(b.sortAt).getTime() - new Date(a.sortAt).getTime(),
+    );
+  }, [orders, requests, receivedQuotes]);
 
   if (invalidSection) {
     return <Navigate to="/consumer/details" replace />;
@@ -317,6 +325,94 @@ export function ConsumerDashboard() {
     }
   }
 
+  async function submitCancelRequest(
+    requestId: string,
+    opts?: { reason?: string; title?: string; notifyProviders?: boolean },
+  ) {
+    setClosingRequestId(requestId);
+    try {
+      const { data } = await api.post<ServiceRequest>(`/requests/${requestId}/close`, {
+        reason: opts?.reason?.trim() || null,
+      });
+      setRequests((prev) => prev.map((r) => (r.id === requestId ? data : r)));
+      setReceivedQuotes((prev) =>
+        prev.map((q) =>
+          q.request_id === requestId && q.status === "PENDING"
+            ? { ...q, status: "WITHDRAWN" }
+            : q,
+        ),
+      );
+      setCancelTarget(null);
+      setCancelReason("");
+      setSimpleCancelTarget(null);
+      if (opts?.notifyProviders) {
+        setToast("Request cancelled — providers were notified");
+      } else {
+        setCancelNotice(
+          opts?.title
+            ? `“${opts.title}” was cancelled and moved to Orders.`
+            : "Request cancelled and moved to Orders.",
+        );
+      }
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        "Could not cancel request";
+      setToast(String(msg));
+    } finally {
+      setClosingRequestId(null);
+    }
+  }
+
+  function beginCancelRequest(requestId: string, title: string, pendingQuoteCount: number) {
+    if (pendingQuoteCount > 0) {
+      setCancelTarget({ id: requestId, title, quoteCount: pendingQuoteCount });
+      setCancelReason("");
+      return;
+    }
+    setSimpleCancelTarget({ id: requestId, title });
+  }
+
+  async function confirmSimpleCancel() {
+    if (!simpleCancelTarget) return;
+    await submitCancelRequest(simpleCancelTarget.id, { title: simpleCancelTarget.title });
+  }
+
+  async function deleteConversation(conversationId: string) {
+    setDeletingChatId(conversationId);
+    try {
+      await api.delete(`/conversations/${conversationId}`);
+      setConversations((prev) => prev.filter((c) => c.id !== conversationId));
+      if (activeChatId === conversationId) {
+        setActiveChatId(null);
+        setActiveChatTitle("");
+      }
+      setDeleteChatTarget(null);
+      setToast("Chat deleted");
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        "Could not delete chat";
+      setToast(String(msg));
+    } finally {
+      setDeletingChatId(null);
+    }
+  }
+
+  async function confirmCancelWithReason() {
+    if (!cancelTarget) return;
+    const reason = cancelReason.trim();
+    if (!reason) {
+      setToast("Please enter a reason for the providers");
+      return;
+    }
+    await submitCancelRequest(cancelTarget.id, {
+      reason,
+      title: cancelTarget.title,
+      notifyProviders: true,
+    });
+  }
+
   return (
     <AppShell title={TITLES[tab]} connected={connected} onRefresh={refresh}>
       {toast && (
@@ -325,128 +421,384 @@ export function ConsumerDashboard() {
         </div>
       )}
 
+      {simpleCancelTarget &&
+        createPortal(
+          <div
+            className="modal-backdrop consumer-cancel-popup-backdrop"
+            onClick={() => {
+              if (closingRequestId) return;
+              setSimpleCancelTarget(null);
+            }}
+            role="presentation"
+          >
+            <div
+              className="modal-dialog card consumer-cancel-popup"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="consumer-simple-cancel-title"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="dash-eyebrow">Cancel request</p>
+              <h3 id="consumer-simple-cancel-title">Cancel this request?</h3>
+              <p className="consumer-cancel-popup-copy">
+                “{simpleCancelTarget.title}” has no quotes yet. You can cancel it now.
+              </p>
+              <div className="consumer-cancel-popup-actions">
+                <button
+                  className="btn secondary"
+                  type="button"
+                  disabled={closingRequestId === simpleCancelTarget.id}
+                  onClick={() => setSimpleCancelTarget(null)}
+                >
+                  Keep request
+                </button>
+                <button
+                  className="btn consumer-request-close"
+                  type="button"
+                  disabled={closingRequestId === simpleCancelTarget.id}
+                  onClick={() => void confirmSimpleCancel()}
+                >
+                  {closingRequestId === simpleCancelTarget.id ? "Cancelling…" : "Cancel request"}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {cancelTarget &&
+        createPortal(
+          <div
+            className="modal-backdrop consumer-cancel-popup-backdrop"
+            onClick={() => {
+              if (closingRequestId) return;
+              setCancelTarget(null);
+              setCancelReason("");
+            }}
+            role="presentation"
+          >
+            <div
+              className="modal-dialog card consumer-cancel-popup"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="consumer-cancel-popup-title"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="dash-eyebrow">Cancel request</p>
+              <h3 id="consumer-cancel-popup-title">There are active quotes</h3>
+              <p className="consumer-cancel-popup-copy">
+                “{cancelTarget.title}” has {cancelTarget.quoteCount} active quote
+                {cancelTarget.quoteCount === 1 ? "" : "s"}. Add a reason and we’ll notify those
+                providers.
+              </p>
+              <div className="field">
+                <label htmlFor="cancel-reason">Reason for providers</label>
+                <textarea
+                  id="cancel-reason"
+                  rows={4}
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                  placeholder="Explain why you’re cancelling…"
+                  disabled={closingRequestId === cancelTarget.id}
+                  maxLength={1000}
+                />
+              </div>
+              <div className="consumer-cancel-popup-actions">
+                <button
+                  className="btn secondary"
+                  type="button"
+                  disabled={closingRequestId === cancelTarget.id}
+                  onClick={() => {
+                    setCancelTarget(null);
+                    setCancelReason("");
+                  }}
+                >
+                  Keep request
+                </button>
+                <button
+                  className="btn consumer-request-close"
+                  type="button"
+                  disabled={closingRequestId === cancelTarget.id || !cancelReason.trim()}
+                  onClick={() => void confirmCancelWithReason()}
+                >
+                  {closingRequestId === cancelTarget.id ? "Cancelling…" : "Cancel request"}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {cancelNotice &&
+        createPortal(
+          <div
+            className="modal-backdrop consumer-cancel-popup-backdrop"
+            onClick={() => setCancelNotice(null)}
+            role="presentation"
+          >
+            <div
+              className="modal-dialog card consumer-cancel-popup consumer-cancel-popup-success"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="consumer-cancel-notice-title"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="dash-eyebrow">Action complete</p>
+              <h3 id="consumer-cancel-notice-title">Request cancelled</h3>
+              <p className="consumer-cancel-popup-copy">{cancelNotice}</p>
+              <div className="consumer-cancel-popup-actions">
+                <button className="btn" type="button" onClick={() => setCancelNotice(null)}>
+                  OK
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {deleteChatTarget &&
+        createPortal(
+          <div
+            className="modal-backdrop consumer-cancel-popup-backdrop"
+            onClick={() => {
+              if (deletingChatId) return;
+              setDeleteChatTarget(null);
+            }}
+            role="presentation"
+          >
+            <div
+              className="modal-dialog card consumer-cancel-popup"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="consumer-delete-chat-title"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="dash-eyebrow">Delete chat</p>
+              <h3 id="consumer-delete-chat-title">Delete this chat?</h3>
+              <p className="consumer-cancel-popup-copy">
+                “{deleteChatTarget.title}” will be removed from Recent inquiries. This cannot be
+                undone.
+              </p>
+              <div className="consumer-cancel-popup-actions">
+                <button
+                  className="btn secondary"
+                  type="button"
+                  disabled={deletingChatId === deleteChatTarget.id}
+                  onClick={() => setDeleteChatTarget(null)}
+                >
+                  Keep chat
+                </button>
+                <button
+                  className="btn consumer-request-close"
+                  type="button"
+                  disabled={deletingChatId === deleteChatTarget.id}
+                  onClick={() => void deleteConversation(deleteChatTarget.id)}
+                >
+                  {deletingChatId === deleteChatTarget.id ? "Deleting…" : "Delete chat"}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
       {tab === "details" && <ProfileCard title="My details" />}
 
       {tab === "providers" && (
-        <div className="card">
-          <h2>Providers in category</h2>
-          <p className="muted">
-            Select a category to browse providers. Chat before requesting, or tick one/more providers
-            for a targeted request.
-          </p>
-          <p className="muted" style={{ fontSize: "0.85rem" }}>
-            {matchHint}
-          </p>
-          {selectedProviders.length > 0 && (
-            <div className="nav-actions" style={{ marginBottom: "0.75rem" }}>
-              <span className="pill online">{selectedProviders.length} selected</span>
-              <button className="btn" type="button" onClick={goPostToSelected}>
-                Send request to selected
-              </button>
-              <button className="btn secondary" type="button" onClick={() => setSelectedProviders([])}>
-                Clear selection
-              </button>
+        <div className="consumer-providers">
+          <section className="page-hero consumer-providers-hero">
+            <div className="consumer-providers-hero-top">
+              <div>
+                <p className="dash-eyebrow">Browse</p>
+                <h2>Providers in category</h2>
+                <p className="page-lead">
+                  Chat before requesting, or select providers for a targeted send.
+                </p>
+                <p className="muted consumer-providers-hint">{matchHint}</p>
+              </div>
+              <span className="consumer-providers-total">
+                <strong>{tabProviders.length}</strong>
+                {providerTab}
+              </span>
             </div>
-          )}
-          <div className="field" style={{ maxWidth: 420 }}>
-            <label>Category / subcategory</label>
-            <select
-              value={form.category_id}
-              onChange={(e) => {
-                setForm({ ...form, category_id: e.target.value });
-                setProviderTab("online");
-                setSelectedProviders([]);
-              }}
-            >
-              {categoryOptions.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          </div>
 
-          <div className="tabs">
-            <button
-              type="button"
-              className={`tab ${providerTab === "online" ? "active" : ""}`}
-              onClick={() => setProviderTab("online")}
-            >
-              Online ({onlineProviders.length})
-            </button>
-            <button
-              type="button"
-              className={`tab ${providerTab === "offline" ? "active" : ""}`}
-              onClick={() => setProviderTab("offline")}
-            >
-              Offline ({offlineProviders.length})
-            </button>
-          </div>
-
-          <div className="list" style={{ marginTop: "0.75rem" }}>
-            {tabProviders.length === 0 && (
-              <p className="muted">No {providerTab} providers in this category yet.</p>
-            )}
-            {tabProviders.map((p) => (
-              <div key={p.user_id} className="list-item">
-                <div className="topbar" style={{ marginBottom: "0.35rem" }}>
-                  <label style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start" }}>
-                    <input
-                      type="checkbox"
-                      checked={selectedProviders.includes(p.user_id)}
-                      onChange={() => toggleProvider(p.user_id)}
-                      style={{ marginTop: "0.25rem" }}
-                    />
-                    <div>
-                      <strong>
-                        <Link to={providerPublicPath(p)}>{p.business_name}</Link>
-                      </strong>
-                      <div className="muted">{p.full_name}</div>
-                    </div>
-                  </label>
-                  <span className={`pill ${p.is_online ? "online" : "offline"}`}>
-                    {p.is_online ? "Online" : "Offline"}
-                  </span>
-                </div>
-                <p className="muted">
-                  {offerKindLabel(p.offer_kind)}
-                  {p.categories?.length ? ` · ${p.categories.join(", ")}` : ""}
-                </p>
-                {(p.offerings_detail || p.description) && (
-                  <p className="muted">{p.offerings_detail || p.description}</p>
-                )}
-                <p className="muted">
-                  Rating {p.average_rating.toFixed(1)} ({p.rating_count}) · radius {p.max_radius_km}{" "}
-                  km
-                  {p.opening_time && p.closing_time
-                    ? ` · ${p.opening_time}–${p.closing_time}`
-                    : ""}
-                  {p.gst_number ? ` · GST ${p.gst_number}` : ""}
-                </p>
-                <MapsLink
-                  latitude={p.latitude}
-                  longitude={p.longitude}
-                  maps_url={p.maps_url}
-                  label={p.location_label || undefined}
-                />
-                <div className="nav-actions" style={{ marginTop: "0.6rem" }}>
-                  <Link className="btn secondary" to={providerPublicPath(p)}>
-                    View profile
-                  </Link>
-                  {p.is_online ? (
-                    <button className="btn" type="button" onClick={() => void chatWith(p)}>
-                      Chat & ask
-                    </button>
-                  ) : (
-                    <span className="muted">Come online later to chat</span>
-                  )}
+            {selectedProviders.length > 0 && (
+              <div className="consumer-providers-selection">
+                <span className="pill online">
+                  {selectedProviders.length} selected
+                </span>
+                <div className="consumer-providers-selection-actions">
+                  <button className="btn" type="button" onClick={goPostToSelected}>
+                    Send request to selected
+                  </button>
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={() => setSelectedProviders([])}
+                  >
+                    Clear
+                  </button>
                 </div>
               </div>
-            ))}
-          </div>
+            )}
+          </section>
+
+          <section className="dash-surface consumer-providers-tools">
+            <div className="field consumer-providers-category">
+              <label htmlFor="provider-category">Category / subcategory</label>
+              <select
+                id="provider-category"
+                value={form.category_id}
+                onChange={(e) => {
+                  setForm({ ...form, category_id: e.target.value });
+                  setProviderTab("online");
+                  setSelectedProviders([]);
+                }}
+              >
+                {categoryOptions.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="dash-segment" role="tablist" aria-label="Provider availability">
+              <button
+                type="button"
+                className={`dash-segment-btn ${providerTab === "online" ? "active" : ""}`}
+                onClick={() => setProviderTab("online")}
+              >
+                Online
+                <span className="consumer-requests-count">{onlineProviders.length}</span>
+              </button>
+              <button
+                type="button"
+                className={`dash-segment-btn ${providerTab === "offline" ? "active" : ""}`}
+                onClick={() => setProviderTab("offline")}
+              >
+                Offline
+                <span className="consumer-requests-count">{offlineProviders.length}</span>
+              </button>
+            </div>
+          </section>
+
+          {tabProviders.length === 0 ? (
+            <div className="dash-surface consumer-requests-empty">
+              <h3>No {providerTab} providers</h3>
+              <p className="muted">
+                Try another category, or check the {providerTab === "online" ? "offline" : "online"}{" "}
+                list.
+              </p>
+            </div>
+          ) : (
+            <div className="consumer-providers-grid">
+              {tabProviders.map((p) => {
+                const kindClass = offerKindClass(p.offer_kind);
+                const initial = (p.business_name || "P").trim().slice(0, 1).toUpperCase();
+                const blurb = p.offerings_detail || p.description || "";
+                const selected = selectedProviders.includes(p.user_id);
+                return (
+                  <article
+                    key={p.user_id}
+                    className={`consumer-provider-card ${kindClass} ${selected ? "selected" : ""}`}
+                  >
+                    <div className="consumer-provider-card-accent" aria-hidden="true" />
+                    <div className="consumer-provider-card-body">
+                      <header className="consumer-provider-card-head">
+                        <span className={`consumer-provider-mark ${kindClass}`} aria-hidden="true">
+                          {initial}
+                        </span>
+                        <div className="consumer-provider-identity">
+                          <div className="consumer-provider-topline">
+                            <span className={`pill ${p.is_online ? "online" : "offline"}`}>
+                              {p.is_online ? "Online" : "Offline"}
+                            </span>
+                            {p.verification_status === "APPROVED" && (
+                              <span className="pill online">Verified</span>
+                            )}
+                          </div>
+                          <h3>
+                            <Link to={providerPublicPath(p)}>{p.business_name}</Link>
+                          </h3>
+                          <p className="muted consumer-provider-owner">
+                            {p.full_name}
+                            {p.average_rating != null
+                              ? ` · ★ ${Number(p.average_rating).toFixed(1)} (${p.rating_count ?? 0})`
+                              : ""}
+                          </p>
+                        </div>
+                        <label className="consumer-provider-select">
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() => toggleProvider(p.user_id)}
+                            aria-label={`Select ${p.business_name}`}
+                          />
+                          <span>Select</span>
+                        </label>
+                      </header>
+
+                      {blurb && (
+                        <p className="consumer-provider-blurb">
+                          {blurb.length > 140 ? `${blurb.slice(0, 140).trim()}…` : blurb}
+                        </p>
+                      )}
+
+                      <div className="consumer-provider-chips">
+                        <span className="consumer-provider-chip">
+                          <strong>{offerKindLabel(p.offer_kind)}</strong>
+                          offers
+                        </span>
+                        <span className="consumer-provider-chip">
+                          <strong>{p.max_radius_km} km</strong>
+                          radius
+                        </span>
+                        {p.opening_time && p.closing_time && (
+                          <span className="consumer-provider-chip">
+                            <strong>
+                              {p.opening_time}–{p.closing_time}
+                            </strong>
+                            hours
+                          </span>
+                        )}
+                        {(p.categories || []).slice(0, 2).map((cat) => (
+                          <span key={cat} className="consumer-provider-chip">
+                            <strong>{cat}</strong>
+                            category
+                          </span>
+                        ))}
+                      </div>
+
+                      <div className="consumer-provider-links">
+                        <MapsLink
+                          latitude={p.latitude}
+                          longitude={p.longitude}
+                          maps_url={p.maps_url}
+                          label={p.location_label || undefined}
+                        />
+                      </div>
+
+                      <footer className="consumer-provider-card-footer">
+                        <Link className="btn secondary" to={providerPublicPath(p)}>
+                          View profile
+                        </Link>
+                        {p.is_online ? (
+                          <button className="btn" type="button" onClick={() => void chatWith(p)}>
+                            Chat & ask
+                          </button>
+                        ) : (
+                          <span className="muted consumer-provider-quiet">Come online later to chat</span>
+                        )}
+                      </footer>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
 
           {activeChatId && (
-            <div style={{ marginTop: "1rem" }}>
+            <div className="consumer-providers-chat">
               <InquiryChatPanel
                 conversationId={activeChatId}
                 title={activeChatTitle}
@@ -458,45 +810,73 @@ export function ConsumerDashboard() {
       )}
 
       {tab === "inquiries" && (
-        <div className="card">
-          <h2>Recent inquiries</h2>
-          {activeChatId ? (
-            <InquiryChatPanel
-              conversationId={activeChatId}
-              title={activeChatTitle}
-              onClose={() => setActiveChatId(null)}
-            />
-          ) : (
-            <div className="list">
-              {conversations.length === 0 && <p className="muted">No inquiries yet.</p>}
-              {conversations.map((c) => (
-                <div key={c.id} className="list-item">
-                  <strong>{c.provider_business_name || c.provider_name}</strong>
-                  <div className="muted">{c.last_message || "No messages yet"}</div>
-                  <button
-                    className="btn secondary"
-                    type="button"
-                    onClick={() => {
-                      setActiveChatId(c.id);
-                      setActiveChatTitle(c.provider_business_name || c.provider_name || "Chat");
-                    }}
-                  >
-                    Open chat
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+        <div className="page-stack">
+          <header className="page-hero">
+            <p className="dash-eyebrow">Messages</p>
+            <h2>Recent inquiries</h2>
+            <p className="page-lead">Chats from the last 30 days.</p>
+          </header>
+          <section className="page-panel">
+            {activeChatId ? (
+              <InquiryChatPanel
+                conversationId={activeChatId}
+                title={activeChatTitle}
+                onClose={() => setActiveChatId(null)}
+              />
+            ) : (
+              <div className="page-list list">
+                {conversations.length === 0 && (
+                  <p className="page-empty">No recent inquiries.</p>
+                )}
+                {conversations.map((c) => (
+                  <div key={c.id} className="list-item">
+                    <strong>{c.provider_business_name || c.provider_name}</strong>
+                    <div className="muted">{c.last_message || "No messages yet"}</div>
+                    <div className="page-actions">
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        onClick={() => {
+                          setActiveChatId(c.id);
+                          setActiveChatTitle(
+                            c.provider_business_name || c.provider_name || "Chat",
+                          );
+                        }}
+                      >
+                        Open chat
+                      </button>
+                      <button
+                        className="btn secondary consumer-request-close"
+                        type="button"
+                        onClick={() =>
+                          setDeleteChatTarget({
+                            id: c.id,
+                            title: c.provider_business_name || c.provider_name || "this chat",
+                          })
+                        }
+                      >
+                        Delete chat
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         </div>
       )}
 
       {tab === "post" && (
-        <form className="card" onSubmit={onSubmit} style={{ maxWidth: 640 }}>
-          <h2>Post a request</h2>
-          <p className="muted">
-            Chat with providers first if you want. Then send to selected providers or broadcast
-            nearby.
-          </p>
+        <div className="page-stack narrow">
+          <header className="page-hero">
+            <p className="dash-eyebrow">Requests</p>
+            <h2>Post a request</h2>
+            <p className="page-lead">
+              Chat with providers first if you want. Then send to selected providers or broadcast
+              nearby.
+            </p>
+          </header>
+          <form className="page-panel page-form" onSubmit={onSubmit}>
           <div className="field">
             <label>Send to</label>
             <select
@@ -555,23 +935,21 @@ export function ConsumerDashboard() {
             />
           </div>
           <FilePicker files={files} onChange={setFiles} disabled={busy} />
-          <div className="grid grid-2">
-            <div className="field">
-              <label>Longitude{hasCoords ? "" : " (optional if pincode set)"}</label>
-              <input
-                value={form.longitude}
-                onChange={(e) => setForm({ ...form, longitude: e.target.value })}
-                required={hasCoords || !user?.pincode}
-              />
-            </div>
-            <div className="field">
-              <label>Latitude{hasCoords ? "" : " (optional if pincode set)"}</label>
-              <input
-                value={form.latitude}
-                onChange={(e) => setForm({ ...form, latitude: e.target.value })}
-                required={hasCoords || !user?.pincode}
-              />
-            </div>
+          <div className="field">
+            <label>Longitude{hasCoords ? "" : " (optional if pincode set)"}</label>
+            <input
+              value={form.longitude}
+              onChange={(e) => setForm({ ...form, longitude: e.target.value })}
+              required={hasCoords || !user?.pincode}
+            />
+          </div>
+          <div className="field">
+            <label>Latitude{hasCoords ? "" : " (optional if pincode set)"}</label>
+            <input
+              value={form.latitude}
+              onChange={(e) => setForm({ ...form, latitude: e.target.value })}
+              required={hasCoords || !user?.pincode}
+            />
           </div>
           {form.latitude && form.longitude ? (
             <MapsLink latitude={Number(form.latitude)} longitude={Number(form.longitude)} />
@@ -600,29 +978,28 @@ export function ConsumerDashboard() {
                 : "No coordinates found: providers are matched by pincode."}
             </p>
           </div>
-          <button className="btn" type="submit" disabled={busy}>
-            {busy
-              ? "Sending…"
-              : form.target_mode === "selected"
-                ? "Send to selected providers"
-                : "Broadcast request"}
-          </button>
-        </form>
+          <div className="page-actions">
+            <button className="btn" type="submit" disabled={busy}>
+              {busy
+                ? "Sending…"
+                : form.target_mode === "selected"
+                  ? "Send to selected providers"
+                  : "Broadcast request"}
+            </button>
+          </div>
+          </form>
+        </div>
       )}
 
       {tab === "requests" && (
         <div className="consumer-requests">
-          <header
-            className={`dash-surface consumer-requests-hero ${
-              requestFilterOpen ? "filter-open" : ""
-            }`}
-          >
+          <header className="page-hero consumer-requests-hero">
             <div className="consumer-requests-hero-top">
               <div>
                 <p className="dash-eyebrow">Consumer</p>
                 <h2>My requests</h2>
-                <p className="muted">
-                  Track open jobs, review quotes, and manage past requests.
+                <p className="page-lead">
+                  Track your open jobs and review quotes from providers.
                 </p>
               </div>
               <Link className="btn btn-with-icon" to="/consumer/post">
@@ -643,58 +1020,6 @@ export function ConsumerDashboard() {
 
             <div className="consumer-requests-tools">
               <div className="consumer-requests-search-row">
-                <div className="consumer-requests-filter-menu">
-                  <button
-                    type="button"
-                    className={`icon-btn consumer-requests-filter-btn ${
-                      requestStatusFilter !== "ALL" ? "has-filter" : ""
-                    } ${requestFilterOpen ? "open" : ""}`}
-                    aria-label="Filter requests"
-                    aria-expanded={requestFilterOpen}
-                    aria-haspopup="listbox"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setRequestFilterOpen((v) => !v);
-                    }}
-                  >
-                    <svg
-                      width="18"
-                      height="18"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      aria-hidden="true"
-                    >
-                      <path d="M4 5h16M7 12h10M10 19h4" strokeLinecap="round" />
-                    </svg>
-                    {requestStatusFilter !== "ALL" && (
-                      <span className="consumer-requests-filter-dot" aria-hidden="true" />
-                    )}
-                  </button>
-                  {requestFilterOpen && (
-                    <ul className="consumer-requests-filter-list" role="listbox">
-                      {requestStatusOptions.map(([value, label]) => (
-                        <li key={value} role="option" aria-selected={requestStatusFilter === value}>
-                          <button
-                            type="button"
-                            className={requestStatusFilter === value ? "active" : ""}
-                            onClick={() => {
-                              setRequestStatusFilter(value);
-                              setRequestFilterOpen(false);
-                            }}
-                          >
-                            <span>{label}</span>
-                            <span className="consumer-requests-count">
-                              {requestStatusCounts[value]}
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-
                 <div className="field consumer-requests-search">
                   <label htmlFor="request-search">Search</label>
                   <input
@@ -707,30 +1032,12 @@ export function ConsumerDashboard() {
                   />
                 </div>
               </div>
-
-              <div
-                className="dash-segment consumer-requests-filters-desktop"
-                role="tablist"
-                aria-label="Request status"
-              >
-                {requestStatusOptions.map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    className={`dash-segment-btn ${requestStatusFilter === value ? "active" : ""}`}
-                    onClick={() => setRequestStatusFilter(value)}
-                  >
-                    {label}
-                    <span className="consumer-requests-count">{requestStatusCounts[value]}</span>
-                  </button>
-                ))}
-              </div>
             </div>
           </header>
 
-          {requests.length === 0 ? (
+          {activeRequests.length === 0 ? (
             <div className="dash-surface consumer-requests-empty">
-              <h3>No requests yet</h3>
+              <h3>No active requests</h3>
               <p className="muted">
                 Post what you need and nearby verified providers can send quotes.
               </p>
@@ -752,13 +1059,14 @@ export function ConsumerDashboard() {
           ) : filteredRequests.length === 0 ? (
             <div className="dash-surface consumer-requests-empty">
               <h3>No matches</h3>
-              <p className="muted">Try another search or status filter.</p>
+              <p className="muted">Try another search.</p>
             </div>
           ) : (
             <div className="consumer-requests-grid">
               {filteredRequests.map((r) => {
                 const category = categoryNameById.get(r.category_id) || "Category";
-                const quotesForRequest = receivedQuotes.filter((q) => q.request_id === r.id).length;
+                const quotesForRequest = receivedQuotes.filter((q) => q.request_id === r.id);
+                const pendingQuotes = quotesForRequest.filter((q) => q.status === "PENDING").length;
                 const statusKey = r.status.toLowerCase();
                 return (
                   <article
@@ -799,7 +1107,7 @@ export function ConsumerDashboard() {
                         mode
                       </span>
                       <span className="consumer-request-chip">
-                        <strong>{quotesForRequest}</strong>
+                        <strong>{quotesForRequest.length}</strong>
                         quotes
                       </span>
                       <span className="consumer-request-chip">
@@ -839,12 +1147,24 @@ export function ConsumerDashboard() {
                     )}
 
                     <footer className="consumer-request-card-actions">
-                      <Link className="btn" to={`/consumer/requests/${r.id}`}>
-                        View quotes
-                      </Link>
-                      {quotesForRequest > 0 ? (
+                      <div className="consumer-request-card-actions-main">
+                        <Link className="btn" to={`/consumer/requests/${r.id}`}>
+                          View quotes
+                        </Link>
+                        {r.status === "ACTIVE" && (
+                          <button
+                            className="btn secondary consumer-request-close"
+                            type="button"
+                            disabled={closingRequestId === r.id}
+                            onClick={() => beginCancelRequest(r.id, r.title, pendingQuotes)}
+                          >
+                            {closingRequestId === r.id ? "Cancelling…" : "Cancel"}
+                          </button>
+                        )}
+                      </div>
+                      {pendingQuotes > 0 ? (
                         <span className="consumer-request-quote-badge">
-                          {quotesForRequest} waiting
+                          {pendingQuotes} waiting
                         </span>
                       ) : (
                         <span className="muted consumer-request-quiet">No quotes yet</span>
@@ -859,48 +1179,202 @@ export function ConsumerDashboard() {
       )}
 
       {tab === "quotes" && (
-        <div className="card">
-          <h2>All quotes received</h2>
-          <div className="list">
-            {receivedQuotes.length === 0 && <p className="muted">No quotes yet.</p>}
-            {receivedQuotes.map((q) => (
-              <div key={q.id} className="list-item">
-                <strong>
-                  ₹{q.price_quote} · ETA {q.estimated_days} day{q.estimated_days === 1 ? "" : "s"}
-                </strong>
-                <div className="muted">
-                  {q.request_title || "Request"} · {q.provider_name} · rating {q.provider_rating ?? 0}{" "}
-                  · {q.status}
-                </div>
-                <ProviderTrustBlock trust={q.provider_trust} compact />
-                {q.message && <p>{q.message}</p>}
-                <AttachmentGallery attachments={q.attachments} />
-                <div className="nav-actions">
-                  <Link to={`/consumer/requests/${q.request_id}`}>Open request →</Link>
-                </div>
-                <div className="muted" style={{ fontSize: "0.8rem" }}>
-                  {new Date(q.created_at).toLocaleString()}
-                </div>
+        <div className="consumer-quotes">
+          <section className="page-hero consumer-quotes-hero">
+            <div className="consumer-quotes-hero-top">
+              <div>
+                <p className="dash-eyebrow">Quotes</p>
+                <h2>Received Quotes</h2>
+                <p className="page-lead">
+                  Compare offers from nearby providers across your requests.
+                </p>
               </div>
-            ))}
-          </div>
+              <span className="consumer-quotes-total">
+                <strong>{receivedQuotes.length}</strong>
+                quote{receivedQuotes.length === 1 ? "" : "s"}
+              </span>
+            </div>
+          </section>
+
+          {receivedQuotes.length === 0 ? (
+            <div className="dash-surface consumer-requests-empty">
+              <h3>No quotes yet</h3>
+              <p className="muted">When providers reply to your requests, their offers show up here.</p>
+              <Link className="btn" to="/consumer/post">
+                Post a request
+              </Link>
+            </div>
+          ) : (
+            <div className="consumer-quotes-grid">
+              {receivedQuotes.map((q) => {
+                const statusKey = q.status.toLowerCase();
+                const providerLabel =
+                  q.provider_trust?.business_name || q.provider_name || "Provider";
+                const initial = providerLabel.trim().slice(0, 1).toUpperCase() || "Q";
+                return (
+                  <article key={q.id} className={`consumer-quote-card status-${statusKey}`}>
+                    <div className="consumer-quote-card-accent" aria-hidden="true" />
+                    <div className="consumer-quote-card-body">
+                      <header className="consumer-quote-card-head">
+                        <span className="consumer-quote-mark" aria-hidden="true">
+                          {initial}
+                        </span>
+                        <div className="consumer-quote-card-title">
+                          <div className="consumer-quote-card-topline">
+                            <span className="consumer-quote-request">
+                              {q.request_title || "Request"}
+                            </span>
+                            <span className={`pill quote-status ${statusKey}`}>{q.status}</span>
+                          </div>
+                          <h3>{providerLabel}</h3>
+                          <p className="muted consumer-quote-meta">
+                            ★ {(q.provider_rating ?? 0).toFixed(1)}
+                            {q.provider_trust?.full_name
+                              ? ` · ${q.provider_trust.full_name}`
+                              : q.provider_name
+                                ? ` · ${q.provider_name}`
+                                : ""}
+                          </p>
+                        </div>
+                        <div className="consumer-quote-price">
+                          <span className="consumer-quote-price-label">Quote</span>
+                          <strong>₹{Number(q.price_quote).toLocaleString("en-IN")}</strong>
+                          <span className="muted">
+                            ETA {q.estimated_days} day{q.estimated_days === 1 ? "" : "s"}
+                          </span>
+                        </div>
+                      </header>
+
+                      {q.message && <p className="consumer-quote-message">{q.message}</p>}
+
+                      {(q.attachments?.length || 0) > 0 && (
+                        <div className="consumer-quote-attachments">
+                          <AttachmentGallery attachments={q.attachments} />
+                        </div>
+                      )}
+
+                      <footer className="consumer-quote-card-footer">
+                        <time className="muted" dateTime={q.created_at}>
+                          {new Date(q.created_at).toLocaleString()}
+                        </time>
+                        <div className="consumer-quote-card-actions">
+                          {q.provider_id && (
+                            <Link className="btn secondary" to={`/p/${q.provider_id}`}>
+                              Provider
+                            </Link>
+                          )}
+                          <Link className="btn" to={`/consumer/requests/${q.request_id}`}>
+                            Open request
+                          </Link>
+                        </div>
+                      </footer>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
       {tab === "orders" && (
-        <div className="card">
-          <h2>Complete Orders</h2>
-          <div className="list">
-            {orders.length === 0 && <p className="muted">No orders yet.</p>}
-            {orders.map((o) => (
-              <div key={o.id} className="list-item">
-                <strong>₹{o.agreed_price}</strong> · {o.status}
-                <div>
-                  <Link to={`/orders/${o.id}`}>Open order →</Link>
-                </div>
+        <div className="consumer-orders">
+          <section className="page-hero consumer-orders-hero">
+            <div className="consumer-orders-hero-top">
+              <div>
+                <p className="dash-eyebrow">Orders</p>
+                <h2>Orders</h2>
+                <p className="page-lead">
+                  Finished jobs and cancelled requests in one place.
+                </p>
               </div>
-            ))}
-          </div>
+              <span className="consumer-orders-total">
+                <strong>{completeOrdersFeed.length}</strong>
+                item{completeOrdersFeed.length === 1 ? "" : "s"}
+              </span>
+            </div>
+          </section>
+
+          {completeOrdersFeed.length === 0 ? (
+            <div className="dash-surface consumer-requests-empty">
+              <h3>No orders yet</h3>
+              <p className="muted">Accepted deals and cancelled requests will show up here.</p>
+              <Link className="btn" to="/consumer/post">
+                Post a request
+              </Link>
+            </div>
+          ) : (
+            <div className="consumer-orders-grid">
+              {completeOrdersFeed.map((item) => {
+                if (item.kind === "cancelled_request") {
+                  const r = item.request;
+                  const category = categoryNameById.get(r.category_id) || "Category";
+                  return (
+                    <article key={`cancelled-${r.id}`} className="consumer-order-card cancelled">
+                      <div className="consumer-order-card-accent" aria-hidden="true" />
+                      <div className="consumer-order-card-body">
+                        <header className="consumer-order-card-head">
+                          <div>
+                            <div className="consumer-order-card-topline">
+                              <span className="pill offline">Cancelled Order</span>
+                              <span className="consumer-order-category">{category}</span>
+                            </div>
+                            <h3>{r.title}</h3>
+                            <p className="muted consumer-order-meta">
+                              Request cancelled
+                              {item.quoteCount > 0
+                                ? ` · ${item.quoteCount} quote${item.quoteCount === 1 ? "" : "s"} withdrawn`
+                                : ""}
+                            </p>
+                          </div>
+                        </header>
+                        <footer className="consumer-order-card-footer">
+                          <time className="muted" dateTime={r.created_at}>
+                            {new Date(r.created_at).toLocaleString()}
+                          </time>
+                          <Link className="btn secondary" to={`/consumer/requests/${r.id}`}>
+                            View request
+                          </Link>
+                        </footer>
+                      </div>
+                    </article>
+                  );
+                }
+
+                const o = item.order;
+                const statusKey = o.status.toLowerCase();
+                return (
+                  <article key={`order-${o.id}`} className={`consumer-order-card status-${statusKey}`}>
+                    <div className="consumer-order-card-accent" aria-hidden="true" />
+                    <div className="consumer-order-card-body">
+                      <header className="consumer-order-card-head">
+                        <div>
+                          <div className="consumer-order-card-topline">
+                            <span className={`pill order-status ${statusKey}`}>
+                              {o.status.replaceAll("_", " ")}
+                            </span>
+                          </div>
+                          <h3>₹{Number(o.agreed_price).toLocaleString("en-IN")}</h3>
+                          <p className="muted consumer-order-meta">
+                            {o.fulfillment_type.replaceAll("_", " ").toLowerCase()}
+                            {o.payment_mode ? ` · ${o.payment_mode.replaceAll("_", " ")}` : ""}
+                          </p>
+                        </div>
+                      </header>
+                      <footer className="consumer-order-card-footer">
+                        <time className="muted" dateTime={o.created_at}>
+                          {new Date(o.created_at).toLocaleString()}
+                        </time>
+                        <Link className="btn" to={`/orders/${o.id}`}>
+                          Open order
+                        </Link>
+                      </footer>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </AppShell>
