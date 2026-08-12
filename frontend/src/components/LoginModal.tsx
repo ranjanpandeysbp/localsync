@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useId, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { apiErrorMessage } from "../services/api";
 import { useAuth } from "../store/auth";
+import { roleHome } from "../types";
 
 type Props = {
   open: boolean;
@@ -53,9 +54,7 @@ export function LoginModal({ open, onClose, onCreateAccount }: Props) {
     try {
       const user = await login(phone, password);
       onClose();
-      if (user.role === "PROVIDER") navigate("/provider/overview");
-      else if (user.role === "ADMIN" || user.role === "CUSTOMER_SERVICE") navigate("/admin/providers");
-      else navigate("/consumer/details");
+      navigate(roleHome(user.role));
     } catch (err) {
       setError(apiErrorMessage(err, "Login failed"));
     } finally {

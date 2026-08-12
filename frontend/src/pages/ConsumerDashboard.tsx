@@ -1,10 +1,12 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { AttachmentGallery, FilePicker } from "../components/Attachments";
+import { CategorySearchBox } from "../components/CategorySearchBox";
 import { InquiryChatPanel, startOrOpenChat } from "../components/InquiryChat";
 import { MapsLink } from "../components/MapsLink";
+import { PostRequestModal } from "../components/PostRequestModal";
 import { ProfileCard } from "../components/ProfileCard";
 import {
   flattenCategoryOptions,
@@ -16,6 +18,13 @@ import { api } from "../services/api";
 import { useAuth } from "../store/auth";
 import { playQuoteBell } from "../services/sounds";
 import { uploadFiles } from "../services/uploads";
+import {
+  clearPostRequestDraft,
+  providersShareTopLevelCategory,
+  readPostRequestDraft,
+  SAME_CATEGORY_REQUEST_MESSAGE,
+  type PostRequestDraft,
+} from "../utils/postRequestDraft";
 import { providerPublicPath } from "../utils/providerUrl";
 import type {
   CategoryTree,
@@ -46,9 +55,9 @@ const SECTIONS: ConsumerSection[] = [
 ];
 
 const TITLES: Record<ConsumerSection, string> = {
-  details: "My details",
+  details: "My Account",
   requests: "My requests",
-  post: "Post a request",
+  post: "Broadcast request",
   providers: "Providers in category",
   inquiries: "Recent inquiries",
   quotes: "Received Quotes",
@@ -58,6 +67,7 @@ const TITLES: Record<ConsumerSection, string> = {
 export function ConsumerDashboard() {
   const { section } = useParams<{ section?: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const tab = (
     section && SECTIONS.includes(section as ConsumerSection) ? section : "details"
   ) as ConsumerSection;
@@ -74,6 +84,12 @@ export function ConsumerDashboard() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [activeChatTitle, setActiveChatTitle] = useState("");
+  const [activeChatMeta, setActiveChatMeta] = useState<{
+    businessName: string;
+    ownerName: string;
+    isOnline: boolean;
+  } | null>(null);
+  const [openingChatId, setOpeningChatId] = useState<string | null>(null);
   const [toast, setToast] = useState("");
   const [busy, setBusy] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
@@ -104,6 +120,9 @@ export function ConsumerDashboard() {
     search_radius_km: "5",
     target_mode: "broadcast" as "broadcast" | "selected",
   });
+  const [postModalOpen, setPostModalOpen] = useState(false);
+  const [postDraft, setPostDraft] = useState<PostRequestDraft | null>(null);
+  const [categoryMismatchPopup, setCategoryMismatchPopup] = useState(false);
   const categoryOptions = useMemo(() => flattenCategoryOptions(tree), [tree]);
 
   const hasCoords = user?.latitude != null && user?.longitude != null;
@@ -161,8 +180,11 @@ export function ConsumerDashboard() {
     setReceivedQuotes(quotes.data);
     const opts = flattenCategoryOptions(cats.data);
     const catId = form.category_id || (opts[0] ? String(opts[0].id) : "");
-    if (!form.category_id && opts[0]) {
-      setForm((f) => ({ ...f, category_id: String(opts[0].id) }));
+    if (opts[0]) {
+      setForm((f) => ({
+        ...f,
+        category_id: f.category_id || String(opts[0].id),
+      }));
     }
     if (catId) await loadProviders(catId);
     await loadConversations();
@@ -171,6 +193,24 @@ export function ConsumerDashboard() {
   useEffect(() => {
     if (!invalidSection) void refresh();
   }, [tab, invalidSection]);
+
+  useEffect(() => {
+    const state = location.state as { toast?: string; providerIds?: string[] } | null;
+    if (state?.toast) {
+      setToast(state.toast);
+      navigate(location.pathname, { replace: true, state: null });
+      return;
+    }
+    const fromState = (location.state as PostRequestDraft | null) || null;
+    const draft = fromState?.providerIds?.length ? fromState : readPostRequestDraft();
+    if (!draft?.providerIds?.length) return;
+    clearPostRequestDraft();
+    setPostDraft(draft);
+    setPostModalOpen(true);
+    if (fromState) {
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location.state, location.pathname, navigate]);
 
   useEffect(() => {
     if (user?.latitude != null && user?.longitude != null) {
@@ -244,8 +284,13 @@ export function ConsumerDashboard() {
     e.preventDefault();
     setBusy(true);
     try {
-      if (form.target_mode === "selected" && selectedProviders.length === 0) {
-        setToast("Select at least one provider, or switch to broadcast");
+      if (!form.category_id) {
+        setToast("Pick a category first");
+        setBusy(false);
+        return;
+      }
+      if (!hasCoords && !user?.pincode && !(form.latitude && form.longitude)) {
+        setToast("Add a location or pincode in My profile before broadcasting");
         setBusy(false);
         return;
       }
@@ -261,21 +306,17 @@ export function ConsumerDashboard() {
         pincode: user?.pincode || null,
         search_radius_km: Number(form.search_radius_km),
         attachment_ids: uploaded.map((a) => a.id),
-        target_provider_ids: form.target_mode === "selected" ? selectedProviders : [],
+        target_provider_ids: [],
       });
-      const targeted = data.target_mode === "TARGETED";
-      const mode = targeted
-        ? `to ${data.matched_provider_count ?? selectedProviders.length} selected provider(s)`
-        : lat != null && lon != null
+      const mode =
+        lat != null && lon != null
           ? "within 5 km"
           : user?.pincode
             ? `by pincode ${user.pincode}`
             : "";
       setToast(
-        targeted
-          ? `Request sent ${mode}` + (uploaded.length ? ` · ${uploaded.length} file(s)` : "")
-          : `Request broadcast to ${data.matched_provider_count ?? 0} nearby providers${mode ? ` (${mode})` : ""}` +
-              (uploaded.length ? ` · ${uploaded.length} file(s)` : ""),
+        `Request broadcast to ${data.matched_provider_count ?? 0} nearby providers${mode ? ` (${mode})` : ""}` +
+          (uploaded.length ? ` · ${uploaded.length} file(s)` : ""),
       );
       setForm((f) => ({ ...f, title: "", description: "" }));
       setFiles([]);
@@ -303,25 +344,46 @@ export function ConsumerDashboard() {
       setToast("Select one or more providers first");
       return;
     }
-    setForm((f) => ({ ...f, target_mode: "selected" }));
-    navigate("/consumer/post");
+    const selected = providers.filter((p) => selectedProviders.includes(p.user_id));
+    if (!providersShareTopLevelCategory(tree, selected)) {
+      setCategoryMismatchPopup(true);
+      return;
+    }
+    setPostDraft({
+      providerIds: selectedProviders,
+      categoryId: form.category_id ? Number(form.category_id) : null,
+      providers: selected.map((p) => ({
+        id: p.user_id,
+        name: p.business_name || p.full_name,
+        categoryId: p.category_id,
+      })),
+    });
+    setPostModalOpen(true);
   }
 
   async function chatWith(provider: ProviderCatalogItem) {
+    if (openingChatId) return;
+    setOpeningChatId(provider.user_id);
     try {
       const conv = await startOrOpenChat(
         provider.user_id,
         Number(form.category_id) || provider.category_id,
-        `Hi ${provider.business_name}, I have a quick question about ${provider.category_name || "your services"}.`,
       );
       setActiveChatId(conv.id);
-      setActiveChatTitle(`${provider.business_name} · ${provider.full_name}`);
+      setActiveChatTitle(provider.business_name || provider.full_name);
+      setActiveChatMeta({
+        businessName: provider.business_name || provider.full_name,
+        ownerName: provider.full_name,
+        isOnline: !!provider.is_online,
+      });
       await loadConversations();
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
         "Cannot start chat";
       setToast(String(msg));
+    } finally {
+      setOpeningChatId(null);
     }
   }
 
@@ -386,6 +448,7 @@ export function ConsumerDashboard() {
       if (activeChatId === conversationId) {
         setActiveChatId(null);
         setActiveChatTitle("");
+        setActiveChatMeta(null);
       }
       setDeleteChatTarget(null);
       setToast("Chat deleted");
@@ -420,6 +483,48 @@ export function ConsumerDashboard() {
           {toast}
         </div>
       )}
+
+      <PostRequestModal
+        open={postModalOpen}
+        draft={postDraft}
+        onClose={() => {
+          setPostModalOpen(false);
+          setPostDraft(null);
+        }}
+        onSuccess={() => {
+          setSelectedProviders([]);
+          setPostDraft(null);
+          void refresh();
+        }}
+      />
+
+      {categoryMismatchPopup &&
+        createPortal(
+          <div
+            className="modal-backdrop"
+            onClick={() => setCategoryMismatchPopup(false)}
+            role="presentation"
+          >
+            <div
+              className="modal-dialog card"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="consumer-category-mismatch-title"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 id="consumer-category-mismatch-title" style={{ margin: "0 0 0.5rem" }}>
+                Same category required
+              </h3>
+              <p className="muted" style={{ margin: "0 0 1rem" }}>
+                {SAME_CATEGORY_REQUEST_MESSAGE}
+              </p>
+              <button className="btn" type="button" onClick={() => setCategoryMismatchPopup(false)}>
+                OK
+              </button>
+            </div>
+          </div>,
+          document.body,
+        )}
 
       {simpleCancelTarget &&
         createPortal(
@@ -602,7 +707,7 @@ export function ConsumerDashboard() {
           document.body,
         )}
 
-      {tab === "details" && <ProfileCard title="My details" />}
+      {tab === "details" && <ProfileCard title="My Account" />}
 
       {tab === "providers" && (
         <div className="consumer-providers">
@@ -645,22 +750,17 @@ export function ConsumerDashboard() {
 
           <section className="dash-surface consumer-providers-tools">
             <div className="field consumer-providers-category">
-              <label htmlFor="provider-category">Category / subcategory</label>
-              <select
-                id="provider-category"
+              <label>Category / subcategory</label>
+              <CategorySearchBox
+                options={categoryOptions}
                 value={form.category_id}
-                onChange={(e) => {
-                  setForm({ ...form, category_id: e.target.value });
+                onChange={(id) => {
+                  setForm({ ...form, category_id: id });
                   setProviderTab("online");
                   setSelectedProviders([]);
                 }}
-              >
-                {categoryOptions.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
+                placeholder="Search categories…"
+              />
             </div>
             <div className="dash-segment" role="tablist" aria-label="Provider availability">
               <button
@@ -782,13 +882,14 @@ export function ConsumerDashboard() {
                         <Link className="btn secondary" to={providerPublicPath(p)}>
                           View profile
                         </Link>
-                        {p.is_online ? (
-                          <button className="btn" type="button" onClick={() => void chatWith(p)}>
-                            Chat & ask
-                          </button>
-                        ) : (
-                          <span className="muted consumer-provider-quiet">Come online later to chat</span>
-                        )}
+                        <button
+                          className="btn"
+                          type="button"
+                          disabled={openingChatId === p.user_id}
+                          onClick={() => void chatWith(p)}
+                        >
+                          {openingChatId === p.user_id ? "Opening…" : "Chat & ask"}
+                        </button>
                       </footer>
                     </div>
                   </article>
@@ -797,14 +898,32 @@ export function ConsumerDashboard() {
             </div>
           )}
 
-          {activeChatId && (
-            <div className="consumer-providers-chat">
-              <InquiryChatPanel
-                conversationId={activeChatId}
-                title={activeChatTitle}
-                onClose={() => setActiveChatId(null)}
-              />
-            </div>
+          {tab === "providers" && activeChatId && (
+            <InquiryChatPanel
+              conversationId={activeChatId}
+              mode="overlay"
+              title={activeChatMeta?.businessName || activeChatTitle}
+              subtitle={
+                activeChatMeta?.ownerName &&
+                activeChatMeta.ownerName !== activeChatMeta.businessName
+                  ? activeChatMeta.ownerName
+                  : "Inquiry chat"
+              }
+              avatarLabel={activeChatMeta?.businessName || activeChatTitle}
+              statusLabel={
+                activeChatMeta ? (activeChatMeta.isOnline ? "Online" : "Offline") : undefined
+              }
+              statusTone={
+                activeChatMeta ? (activeChatMeta.isOnline ? "online" : "offline") : "neutral"
+              }
+              autoFocus
+              emptyHint="Say hello and ask about availability, pricing, or timing. They’ll see your message when they’re next available."
+              placeholder="Write a message…"
+              onClose={() => {
+                setActiveChatId(null);
+                setActiveChatMeta(null);
+              }}
+            />
           )}
         </div>
       )}
@@ -820,7 +939,13 @@ export function ConsumerDashboard() {
             {activeChatId ? (
               <InquiryChatPanel
                 conversationId={activeChatId}
+                mode="inline"
                 title={activeChatTitle}
+                subtitle="Inquiry chat"
+                avatarLabel={activeChatTitle}
+                autoFocus
+                emptyHint="Continue the conversation with this provider."
+                placeholder="Write a message…"
                 onClose={() => setActiveChatId(null)}
               />
             ) : (
@@ -867,126 +992,140 @@ export function ConsumerDashboard() {
       )}
 
       {tab === "post" && (
-        <div className="page-stack narrow">
+        <div className="page-stack narrow post-request">
           <header className="page-hero">
             <p className="dash-eyebrow">Requests</p>
-            <h2>Post a request</h2>
+            <h2>Broadcast request</h2>
             <p className="page-lead">
-              Chat with providers first if you want. Then send to selected providers or broadcast
-              nearby.
+              Choose a category, describe what you need, and notify nearby verified providers in that
+              category.
             </p>
           </header>
-          <form className="page-panel page-form" onSubmit={onSubmit}>
-          <div className="field">
-            <label>Send to</label>
-            <select
-              value={form.target_mode}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  target_mode: e.target.value as "broadcast" | "selected",
-                })
-              }
-            >
-              <option value="broadcast">Broadcast to nearby providers</option>
-              <option value="selected">
-                Selected providers only ({selectedProviders.length})
-              </option>
-            </select>
-          </div>
-          {form.target_mode === "selected" && (
-            <p className="muted" style={{ fontSize: "0.85rem" }}>
-              {selectedProviders.length === 0
-                ? "Pick providers under Providers in category, then return here."
-                : `${selectedProviders.length} provider(s) will receive this request.`}{" "}
-              <Link to="/consumer/providers">Browse providers</Link>
-            </p>
-          )}
-          <div className="field">
-            <label>Category / subcategory</label>
-            <select
-              value={form.category_id}
-              onChange={(e) => setForm({ ...form, category_id: e.target.value })}
-              required
-            >
-              {categoryOptions.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label>Title</label>
-            <input
-              required
-              value={form.title}
-              onChange={(e) => setForm({ ...form, title: e.target.value })}
-              placeholder="Leaking kitchen sink"
-            />
-          </div>
-          <div className="field">
-            <label>Details</label>
-            <textarea
-              required
-              rows={3}
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-            />
-          </div>
-          <FilePicker files={files} onChange={setFiles} disabled={busy} />
-          <div className="field">
-            <label>Longitude{hasCoords ? "" : " (optional if pincode set)"}</label>
-            <input
-              value={form.longitude}
-              onChange={(e) => setForm({ ...form, longitude: e.target.value })}
-              required={hasCoords || !user?.pincode}
-            />
-          </div>
-          <div className="field">
-            <label>Latitude{hasCoords ? "" : " (optional if pincode set)"}</label>
-            <input
-              value={form.latitude}
-              onChange={(e) => setForm({ ...form, latitude: e.target.value })}
-              required={hasCoords || !user?.pincode}
-            />
-          </div>
-          {form.latitude && form.longitude ? (
-            <MapsLink latitude={Number(form.latitude)} longitude={Number(form.longitude)} />
-          ) : user?.pincode ? (
-            <p className="muted" style={{ fontSize: "0.85rem" }}>
-              Matching by pincode {user.pincode} — providers in the same pincode will be notified.
-            </p>
-          ) : (
-            <p className="muted" style={{ fontSize: "0.85rem" }}>
-              Add GPS or a pincode in My profile for nearby matching.
-            </p>
-          )}
-          <div className="field">
-            <label>Search radius (km)</label>
-            <input
-              type="number"
-              min={1}
-              max={50}
-              value={form.search_radius_km}
-              onChange={(e) => setForm({ ...form, search_radius_km: e.target.value })}
-              disabled={hasCoords}
-            />
-            <p className="muted" style={{ fontSize: "0.85rem" }}>
-              {hasCoords
-                ? "Coordinates found: nearby matching uses a fixed 5 km radius."
-                : "No coordinates found: providers are matched by pincode."}
-            </p>
-          </div>
-          <div className="page-actions">
-            <button className="btn" type="submit" disabled={busy}>
-              {busy
-                ? "Sending…"
-                : form.target_mode === "selected"
-                  ? "Send to selected providers"
-                  : "Broadcast request"}
-            </button>
-          </div>
+          <form className="page-panel page-form post-request-form" onSubmit={onSubmit}>
+            <section className="post-request-step">
+              <h3>1. Category</h3>
+              <p className="muted post-request-hint">
+                Search and pick the category your request is about. Nearby providers in this category
+                will see it when you broadcast.
+              </p>
+              <div className="field">
+                <label>Find a category</label>
+                <CategorySearchBox
+                  options={categoryOptions}
+                  value={form.category_id}
+                  onChange={(id) => setForm({ ...form, category_id: id, target_mode: "broadcast" })}
+                  placeholder="e.g. Plumbing, Cleaning, Electrician…"
+                  required
+                />
+              </div>
+              {form.category_id && (
+                <p className="post-request-category-pill">
+                  Broadcasting in{" "}
+                  <strong>
+                    {categoryOptions.find((c) => String(c.id) === form.category_id)?.label ||
+                      "selected category"}
+                  </strong>
+                </p>
+              )}
+            </section>
+
+            <section className="post-request-step">
+              <h3>2. Your request</h3>
+              <div className="field">
+                <label>Title</label>
+                <input
+                  required
+                  value={form.title}
+                  onChange={(e) => setForm({ ...form, title: e.target.value })}
+                  placeholder="e.g. Leaking kitchen sink"
+                />
+              </div>
+              <div className="field">
+                <label>Details</label>
+                <textarea
+                  required
+                  rows={4}
+                  value={form.description}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  placeholder="Describe the work, timing, and anything providers should know…"
+                />
+              </div>
+              <FilePicker files={files} onChange={setFiles} disabled={busy} />
+            </section>
+
+            <section className="post-request-step post-request-location">
+              <h3>3. Location</h3>
+              <div className="post-request-location-card">
+                {hasCoords ? (
+                  <>
+                    <p>
+                      Using your profile location
+                      {user?.location_label ? `: ${user.location_label}` : ""}.
+                    </p>
+                    <p className="muted">
+                      Broadcast matches providers within about 5 km
+                      {user?.pincode ? ` (pincode ${user.pincode} as fallback)` : ""}.
+                    </p>
+                    <MapsLink
+                      latitude={Number(form.latitude || user?.latitude)}
+                      longitude={Number(form.longitude || user?.longitude)}
+                    />
+                  </>
+                ) : user?.pincode ? (
+                  <p>
+                    Matching by pincode <strong>{user.pincode}</strong> — providers in the same
+                    pincode for this category will be notified.
+                  </p>
+                ) : (
+                  <p className="muted">
+                    Add GPS or a pincode in <Link to="/profile">My profile</Link> so we can match
+                    nearby providers.
+                  </p>
+                )}
+              </div>
+              {!hasCoords && (
+                <div className="grid grid-2 post-request-coords">
+                  <div className="field">
+                    <label>Longitude (optional)</label>
+                    <input
+                      value={form.longitude}
+                      onChange={(e) => setForm({ ...form, longitude: e.target.value })}
+                      placeholder="From profile or map"
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Latitude (optional)</label>
+                    <input
+                      value={form.latitude}
+                      onChange={(e) => setForm({ ...form, latitude: e.target.value })}
+                      placeholder="From profile or map"
+                    />
+                  </div>
+                </div>
+              )}
+              {hasCoords && (
+                <div className="field">
+                  <label>Search radius (km)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={form.search_radius_km}
+                    onChange={(e) => setForm({ ...form, search_radius_km: e.target.value })}
+                    disabled
+                  />
+                  <p className="muted" style={{ fontSize: "0.85rem" }}>
+                    Nearby matching uses a fixed 5 km radius when coordinates are available.
+                  </p>
+                </div>
+              )}
+            </section>
+
+            <div className="page-actions post-request-actions">
+              <button className="btn" type="submit" disabled={busy || !form.category_id}>
+                {busy ? "Sending…" : "Broadcast request"}
+              </button>
+            </div>
           </form>
         </div>
       )}
@@ -1014,7 +1153,7 @@ export function ConsumerDashboard() {
                 >
                   <path d="M12 5v14M5 12h14" strokeLinecap="round" />
                 </svg>
-                Create a request
+                Broadcast request
               </Link>
             </div>
 
@@ -1053,7 +1192,7 @@ export function ConsumerDashboard() {
                 >
                   <path d="M12 5v14M5 12h14" strokeLinecap="round" />
                 </svg>
-                Create a request
+                Broadcast request
               </Link>
             </div>
           ) : filteredRequests.length === 0 ? (
@@ -1201,7 +1340,7 @@ export function ConsumerDashboard() {
               <h3>No quotes yet</h3>
               <p className="muted">When providers reply to your requests, their offers show up here.</p>
               <Link className="btn" to="/consumer/post">
-                Post a request
+                Broadcast request
               </Link>
             </div>
           ) : (
@@ -1300,7 +1439,7 @@ export function ConsumerDashboard() {
               <h3>No orders yet</h3>
               <p className="muted">Accepted deals and cancelled requests will show up here.</p>
               <Link className="btn" to="/consumer/post">
-                Post a request
+                Broadcast request
               </Link>
             </div>
           ) : (

@@ -1,0 +1,10 @@
+Hi {{full_name}},
+
+Your Gharq customer service account is ready.
+
+You can sign in and help manage providers, consumers, orders, and support messages:
+{{login_url}}
+
+Keep your login details secure. Contact a Gharq admin if you need access changes.
+
+— Gharq Team

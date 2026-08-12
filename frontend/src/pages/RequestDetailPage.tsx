@@ -396,13 +396,17 @@ export function RequestDetailPage() {
         </section>
 
         {chatId && (
-          <div className="request-detail-chat">
-            <InquiryChatPanel
-              conversationId={chatId}
-              title={chatTitle}
-              onClose={() => setChatId(null)}
-            />
-          </div>
+          <InquiryChatPanel
+            conversationId={chatId}
+            mode="overlay"
+            title={chatTitle}
+            subtitle="Quote inquiry"
+            avatarLabel={chatTitle}
+            autoFocus
+            emptyHint="Ask the provider about their quote or timing."
+            placeholder="Write a message…"
+            onClose={() => setChatId(null)}
+          />
         )}
       </div>
     </AppShell>

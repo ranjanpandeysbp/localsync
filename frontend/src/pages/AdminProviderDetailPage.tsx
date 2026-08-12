@@ -476,7 +476,11 @@ export function AdminProviderDetailPage() {
             {chatOpen && supportId && (
               <InquiryChatPanel
                 conversationId={supportId}
-                title={`Chat with ${provider.business_name}`}
+                mode="overlay"
+                title={provider.business_name}
+                subtitle="Provider support"
+                avatarLabel={provider.business_name}
+                autoFocus
                 messagesPath={`/support-conversations/${supportId}/messages`}
                 emptyHint="No messages yet. Say hello below."
                 placeholder="Type a message to the provider…"

@@ -303,14 +303,13 @@ def public_search(
     pincode: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    """Search products/services by category name or provider offerings (public).
+    """Search verified providers by name, mobile, category, subcategory, or slug (public).
 
     Empty query returns all nearby verified providers (GPS 5 km, or same pincode).
     """
     from app.core.config import settings
     from app.services.geo import (
         match_all_nearby_providers,
-        match_providers,
         normalize_lat_lon,
         normalize_pincode,
     )
@@ -379,6 +378,8 @@ def public_search(
         return PublicSearchOut(query="", categories=[], providers=items)
 
     like = f"%{query.lower()}%"
+    phone_digits = "".join(ch for ch in query if ch.isdigit())
+    phone_like = f"%{phone_digits}%" if len(phone_digits) >= 3 else None
 
     cat_rows = db.scalars(
         select(Category)
@@ -391,7 +392,7 @@ def public_search(
             ),
         )
         .order_by(Category.name)
-        .limit(20)
+        .limit(40)
     ).all()
 
     categories: list[PublicSearchCategory] = []
@@ -411,26 +412,53 @@ def public_search(
             )
         )
 
-    # Providers matching text in business / offerings / categories
-    provider_rows = db.execute(
-        select(ProviderProfile, User)
-        .join(User, User.id == ProviderProfile.user_id)
-        .where(
-            ProviderProfile.verification_status == VerificationStatus.APPROVED,
-            User.is_active.is_(True),
-            or_(
-                sa_func.lower(ProviderProfile.business_name).like(like),
-                sa_func.lower(sa_func.coalesce(ProviderProfile.description, "")).like(like),
-                sa_func.lower(sa_func.coalesce(ProviderProfile.offerings_detail, "")).like(like),
-                sa_func.lower(User.full_name).like(like),
-            ),
-        )
-        .order_by(ProviderProfile.is_online.desc(), User.average_rating.desc())
-        .limit(40)
-    ).all()
+    # Matched category ids, plus parents↔children so top-level and subcategory searches both hit
+    matched_cat_ids: set[int] = {c.id for c in cat_rows}
+    for c in cat_rows:
+        if c.parent_id:
+            matched_cat_ids.add(c.parent_id)
+        else:
+            for child in db.scalars(
+                select(Category).where(
+                    Category.parent_id == c.id,
+                    Category.is_active.is_(True),
+                )
+            ).all():
+                matched_cat_ids.add(child.id)
 
-    # Also include providers linked to matching categories
-    matched_cat_ids = {c.id for c in cat_rows}
+    provider_match = or_(
+        sa_func.lower(ProviderProfile.business_name).like(like),
+        sa_func.lower(sa_func.coalesce(ProviderProfile.description, "")).like(like),
+        sa_func.lower(sa_func.coalesce(ProviderProfile.offerings_detail, "")).like(like),
+        sa_func.lower(sa_func.coalesce(ProviderProfile.public_slug, "")).like(like),
+        sa_func.lower(User.full_name).like(like),
+        sa_func.lower(sa_func.coalesce(User.username, "")).like(like),
+        User.phone_number.like(like),
+        sa_func.coalesce(User.alternate_phone, "").like(like),
+    )
+    if phone_like:
+        provider_match = or_(
+            provider_match,
+            User.phone_number.like(phone_like),
+            sa_func.coalesce(User.alternate_phone, "").like(phone_like),
+        )
+
+    # Providers matching text in name / mobile / slug / offerings
+    provider_rows = list(
+        db.execute(
+            select(ProviderProfile, User)
+            .join(User, User.id == ProviderProfile.user_id)
+            .where(
+                ProviderProfile.verification_status == VerificationStatus.APPROVED,
+                User.is_active.is_(True),
+                provider_match,
+            )
+            .order_by(ProviderProfile.is_online.desc(), User.average_rating.desc())
+            .limit(40)
+        ).all()
+    )
+
+    # Also include providers linked to matching categories / subcategories
     if matched_cat_ids:
         extra = db.execute(
             select(ProviderProfile, User)
@@ -447,6 +475,7 @@ def public_search(
                     ),
                 ),
             )
+            .order_by(ProviderProfile.is_online.desc(), User.average_rating.desc())
             .limit(40)
         ).all()
         seen = {p.id for p, _ in provider_rows}
@@ -455,29 +484,21 @@ def public_search(
                 provider_rows.append(row)
                 seen.add(row[0].id)
 
-    # Optional nearby filter
+    # Optional nearby filter (name / mobile / slug / category hits must still be local)
     nearby_ids = None
     if (lat is not None and lon is not None) or pin:
-        nearby_ids = set()
-        cat_ids_for_geo = matched_cat_ids or {
-            link.category_id
-            for p, _ in provider_rows
-            for link in p.category_links
-        }
-        if not cat_ids_for_geo:
-            cat_ids_for_geo = {p.category_id for p, _ in provider_rows if p.category_id}
-        for cid in cat_ids_for_geo:
-            for profile, _dist in match_providers(
+        nearby_ids = {
+            profile.id
+            for profile, _dist in match_all_nearby_providers(
                 db,
-                category_id=cid,
                 longitude=lon,
                 latitude=lat,
                 radius_km=settings.default_search_radius_km,
                 pincode=pin,
                 online_only=False,
                 verified_only=True,
-            ):
-                nearby_ids.add(profile.id)
+            )
+        }
 
     items = []
     for profile, user in provider_rows:

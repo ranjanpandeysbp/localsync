@@ -18,5 +18,6 @@ export function HomeRedirect() {
   if (user.role === "ADMIN" || user.role === "CUSTOMER_SERVICE") {
     return <Navigate to="/admin/providers" replace />;
   }
-  return <Navigate to="/consumer/details" replace />;
+  // Consumers stay on the public landing while signed in.
+  return <LandingPage />;
 }

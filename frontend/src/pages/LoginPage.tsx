@@ -24,7 +24,7 @@ export function LoginPage() {
           ? "/provider/overview"
           : user.role === "ADMIN" || user.role === "CUSTOMER_SERVICE"
             ? "/admin/providers"
-            : "/consumer/details",
+            : "/",
       );
     } catch (err: unknown) {
       const msg =

@@ -256,6 +256,14 @@ async def register(
             to_email=user.email,
             full_name=user.full_name,
         )
+    elif role == UserRole.CONSUMER:
+        from app.services.email import send_consumer_registration
+
+        send_consumer_registration(
+            db,
+            to_email=user.email,
+            full_name=user.full_name,
+        )
 
     return user_to_out(user, db)
 
@@ -317,6 +325,7 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
         full_name=user.full_name,
         reset_url=reset_url,
         expires_minutes=settings.password_reset_expire_minutes,
+        role=user.role.value,
     )
     return generic
 

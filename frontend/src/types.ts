@@ -7,7 +7,7 @@ export function isStaffRole(role?: UserRole | null): boolean {
 export function roleHome(role: UserRole): string {
   if (role === "PROVIDER") return "/provider/overview";
   if (isStaffRole(role)) return "/admin/providers";
-  return "/consumer/details";
+  return "/";
 }
 export type OfferKind = "PRODUCT" | "SERVICE" | "BOTH";
 

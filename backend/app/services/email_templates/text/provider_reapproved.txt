@@ -1,0 +1,8 @@
+Hi {{full_name}},
+
+Good news — your Gharq provider account has been re-approved.
+
+You can log in again and use marketplace features such as requests, quotes, orders, and consumer inquiries:
+{{login_url}}
+
+— Gharq Team

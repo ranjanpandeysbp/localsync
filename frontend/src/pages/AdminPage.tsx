@@ -1393,7 +1393,11 @@ export function AdminPage() {
           {activeSupportId ? (
             <InquiryChatPanel
               conversationId={activeSupportId}
+              mode="inline"
               title={activeSupportTitle}
+              subtitle="Provider support"
+              avatarLabel={activeSupportTitle}
+              autoFocus
               messagesPath={`/support-conversations/${activeSupportId}/messages`}
               emptyHint="No messages yet."
               placeholder="Type a message…"

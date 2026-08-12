@@ -5,8 +5,8 @@ import { useAuth } from "../store/auth";
 import { useAdminNav } from "../store/adminNav";
 import { useProviderNav } from "../store/providerNav";
 import { unlockNotificationSound } from "../services/sounds";
-import type { UserRole } from "../types";
-import { isStaffRole } from "../types";
+import { isStaffRole, roleHome, type UserRole } from "../types";
+import { CONSUMER_NAV } from "../nav/consumer";
 
 type NavItem = { to: string; label: string; end?: boolean; badge?: number };
 
@@ -63,15 +63,7 @@ function navForRole(
     }
     return items;
   }
-  return [
-    { to: "/consumer/details", label: "My details" },
-    { to: "/consumer/requests", label: "My requests" },
-    { to: "/consumer/post", label: "Post a request" },
-    { to: "/consumer/providers", label: "Providers in category" },
-    { to: "/consumer/inquiries", label: "Recent inquiries" },
-    { to: "/consumer/quotes", label: "Received Quotes" },
-    { to: "/consumer/orders", label: "Orders" },
-  ];
+  return CONSUMER_NAV.map((item) => ({ ...item }));
 }
 
 export function AppShell({
@@ -172,12 +164,7 @@ export function AppShell({
     return location.pathname === item.to || location.pathname.startsWith(`${item.to}/`);
   }
 
-  const home =
-    user?.role === "PROVIDER"
-      ? "/provider/overview"
-      : isStaffRole(user?.role)
-        ? "/admin/providers"
-        : "/consumer/details";
+  const home = user ? roleHome(user.role) : "/";
 
   async function handleRefresh() {
     if (onRefresh) await onRefresh();
@@ -282,11 +269,42 @@ export function AppShell({
               </span>
             )}
             <span className="pill hide-sm">{user?.full_name}</span>
+            <button
+              type="button"
+              className="topbar-logout"
+              aria-label="Log out"
+              title="Log out"
+              onClick={() => {
+                logout();
+                navigate("/?login=1");
+              }}
+            >
+              <LogoutIcon />
+            </button>
           </div>
         </header>
 
         <main className="main-content">{children}</main>
       </div>
     </div>
+  );
+}
+
+function LogoutIcon() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 2v10" />
+      <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+    </svg>
   );
 }

@@ -795,7 +795,13 @@ export function ProviderDashboard() {
             {activeChatId ? (
               <InquiryChatPanel
                 conversationId={activeChatId}
-                title={`Chat with ${activeChatTitle}`}
+                mode="inline"
+                title={activeChatTitle}
+                subtitle="Consumer inquiry"
+                avatarLabel={activeChatTitle}
+                autoFocus
+                emptyHint="Reply to this consumer’s questions."
+                placeholder="Write a reply…"
                 onClose={() => setActiveChatId(null)}
               />
             ) : (
@@ -838,7 +844,11 @@ export function ProviderDashboard() {
             {activeSupportId ? (
               <InquiryChatPanel
                 conversationId={activeSupportId}
-                title="Chat with Gharq admin"
+                mode="inline"
+                title="Gharq admin"
+                subtitle="Support chat"
+                avatarLabel="G"
+                autoFocus
                 messagesPath={`/support-conversations/${activeSupportId}/messages`}
                 emptyHint="No messages yet."
                 placeholder="Type your reply…"
@@ -893,13 +903,17 @@ export function ProviderDashboard() {
           </header>
           <section className="page-panel">
             {activeChatId && (
-              <div style={{ marginBottom: "1rem" }}>
-                <InquiryChatPanel
-                  conversationId={activeChatId}
-                  title={`Chat with ${activeChatTitle}`}
-                  onClose={() => setActiveChatId(null)}
-                />
-              </div>
+              <InquiryChatPanel
+                conversationId={activeChatId}
+                mode="overlay"
+                title={activeChatTitle}
+                subtitle="Request inquiry"
+                avatarLabel={activeChatTitle}
+                autoFocus
+                emptyHint="Ask clarifying questions before sending your quote."
+                placeholder="Write a message…"
+                onClose={() => setActiveChatId(null)}
+              />
             )}
             <div className="page-list list">
               {feed.length === 0 && <p className="page-empty">No matching active requests.</p>}

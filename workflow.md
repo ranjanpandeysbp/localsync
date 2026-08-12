@@ -9,8 +9,8 @@ Gharq is a hyper-local marketplace that connects **consumers** with nearby **ver
 **Core goals:**
 
 - discover local providers by category
-- chat before committing
-- send a request to selected providers **or** broadcast nearby
+- send a request to selected providers (**same top-level category**) **or** broadcast nearby
+- chat anytime with approved providers (online or offline)
 - collect quotes, agree delivery + payment
 - complete orders with OTP
 - build trust with mutual ratings and provider verification
@@ -21,12 +21,12 @@ Gharq is a hyper-local marketplace that connects **consumers** with nearby **ver
 
 | Role | Who | Home after login |
 |------|-----|------------------|
-| **Consumer** | Needs a product/service nearby | `/consumer/details` |
+| **Consumer** | Needs a product/service nearby | `/` (landing, signed-in) |
 | **Provider** | Offers products/services | `/provider/overview` |
 | **Admin** | Full platform ops: providers, consumers, orders, categories, messages, **customer service agents**, Config/SMTP | `/admin/providers` |
 | **Customer service** (`CUSTOMER_SERVICE`) | Same ops as admin **except** Config and managing other CS agents | `/admin/providers` |
 
-Guests land on `/` (public landing). Logged-in users are redirected to their role home.
+Guests and signed-in **consumers** use `/` (public landing). Providers and staff are redirected to their role home. On the landing header, signed-in consumers see their name and logout; **My Account** is in the side / hamburger nav.
 
 Staff self-registration is blocked (`ADMIN` / `CUSTOMER_SERVICE`). Only an **Admin** can create, approve, revoke, re-approve, or delete customer service agents.
 
@@ -41,10 +41,10 @@ Guest search / browse
 Consumer registers / logs in (+ GPS, city, pincode)
         │
         ▼
-Browse providers by category ──► Chat & ask (while provider online)
+Browse providers by category ──► Chat & ask (online or offline)
         │
-        ├─ Targeted: select 1+ providers ──► Post request to them only
-        └─ Broadcast: post request to nearby verified providers
+        ├─ Targeted: select 1+ same top-level category ──► Send a request (modal)
+        └─ Broadcast request: nearby verified providers in a category
                 │
                 ▼
 Provider sees lead ──► Chat & ask ──► Send quote
@@ -65,13 +65,19 @@ Consumer shares OTP → Provider completes → both rate each other
 
 1. Open `/` — landing with full-bleed hero and floating search pad (query + editable pincode + detect-location).
 2. Empty pincode on search shows a modal: **Please enter the pincode**.
-3. After search, category browse hides; results show matching categories/providers.
+3. After search, category browse hides; results show **matching providers only** (select checkboxes + **Send a request**).
 4. Without searching, **Popular categories** appear (hide after a completed search).
-5. Search products/services (`GET /providers/public-search`). Blank keyword still supports nearby / pincode matching.
+5. Search providers (`GET /providers/public-search`) matches:
+   - **Name** — business name, owner name, username
+   - **Mobile** — phone / alternate phone (digit-friendly)
+   - **Category / subcategory** — name or slug (parent↔child links included)
+   - **Slug** — provider public slug and category slug  
+   Blank keyword still supports nearby / pincode matching (GPS ~5 km, else same pincode). Nearby filter applies to keyword hits when location is set.
 6. Browse category catalog (`GET /providers/public-catalog`).
 7. Open a provider’s public page at `/p/:slug` (friendly shop-name URL; legacy `/p/:userId` still works).
 8. To chat or request, guest is prompted to **register / log in** (modals on the landing page, or deep links `/?login=1` / `/?register=1`).
 9. Landing header **Log in** / **Register** open the same auth modals without leaving `/`.
+10. **Send a request** (from search selection) opens a modal for consumers; guests are asked to log in first (draft kept in `sessionStorage`). Selected providers must share the **same top-level category** — otherwise a popup: *Messages can be sent only to the same category.*
 
 Public provider page shows:
 
@@ -131,7 +137,51 @@ Scrollable modal on `/` (wider when role is **Provider**). Same fields as before
 - About + What they offer
 - Aadhaar upload (required) + optional GST
 
-After provider submit: pending-review message stays in the modal; **login blocked** until admin approval. Emails send when Admin SMTP is enabled. Consumer signup signs in immediately and continues to profile / role home.
+After provider submit: pending-review message stays in the modal; **login blocked** until admin approval. Consumer signup signs in immediately and stays on the landing page as logged in.
+
+Transactional emails (when Admin SMTP is enabled) are sent for registration, provider status changes, and password reset — see **Transactional email** below.
+
+---
+
+## Transactional email
+
+Emails use Admin → **Config** SMTP (`AppSmtpConfig`). Sends are best-effort: if SMTP is disabled, incomplete, or delivery fails, the API flow still succeeds and the miss is logged.
+
+Templates live in `backend/app/services/email_templates/` (paired `html/` + `text/` files, wrapped by `html/_layout.html`).
+
+### 1. Registration
+
+| Audience | When | Template key(s) | Subject (approx.) |
+|----------|------|-----------------|-------------------|
+| **Consumer** | Self-register on landing (`POST /auth/register`) if email provided | `registration_consumer` | Welcome to Gharq |
+| **Provider** | Self-register or admin **Add provider** left as Pending | `registration_provider` | Thank you for registering with Gharq |
+| **Customer service** | Admin creates agent (Pending) | `registration_customer_service_pending` | Your Gharq customer service account was created |
+| **Customer service** | Admin creates agent already approved, or later **Approve** / **Re-approve** | `registration_customer_service_approved` | Your Gharq customer service account is ready |
+
+Provider email is required at register. Consumer email is optional (no email → no send). CS agents always have an email.
+
+### 2. Provider approve / revoke / re-approve
+
+Triggered from staff verify actions (`POST /providers/{id}/verify`) and from admin create-provider when **Approve immediately** is checked.
+
+| Event | Template key | Notes |
+|-------|--------------|--------|
+| **Approve** (from Pending) | `provider_approved` | Also posts Admin messages + live toast |
+| **Re-approve** (from Revoked / Rejected) | `provider_reapproved` | Same in-app notify path |
+| **Revoke** (from Approved) | `provider_revoked` | Marketplace locked; profile + Admin messages remain |
+
+### 3. Password reset
+
+`POST /auth/forgot-password` emails a role-specific template when the account is active and has an email:
+
+| Role | Template key |
+|------|--------------|
+| Consumer | `password_reset_consumer` |
+| Provider | `password_reset_provider` |
+| Customer service | `password_reset_customer_service` |
+| Admin | `password_reset_admin` |
+
+Reset link: `{frontend_url}/reset-password?token=…` (default expiry 30 minutes).
 
 ---
 
@@ -141,16 +191,16 @@ After provider submit: pending-review message stays in the modal; **login blocke
 
 | Route | Purpose |
 |-------|---------|
-| `/consumer/details` | Profile summary → Edit profile |
-| `/consumer/providers` | Browse providers by category (Online/Offline); chat; select for targeted request |
+| `/consumer/details` | **My Account** — profile summary → Edit profile |
+| `/consumer/providers` | Browse providers by category (Online/Offline); **Chat & ask**; select for targeted **Send a request** |
 | `/consumer/inquiries` | **Recent inquiries** — chats updated in the last 30 days; delete chat |
-| `/consumer/post` | Create targeted or broadcast request |
-| `/consumer/requests` | **My requests** — ACTIVE requests only (+ cancel; **Create a request** → `/consumer/post`) |
+| `/consumer/post` | **Broadcast request** — notify nearby verified providers in a category |
+| `/consumer/requests` | **My requests** — ACTIVE requests only (+ cancel; **Broadcast request** → `/consumer/post`) |
 | `/consumer/requests/:id` | Quotes for one request; accept deal |
 | `/consumer/quotes` | **Received Quotes** |
 | `/consumer/orders` | **Orders** — completed deals + cancelled requests → `/orders/:id` |
 
-Also: `/profile` for full contact/address edit (vertical accordion sections).
+Also: `/` for signed-in consumer home (landing + search); `/profile` for full contact/address edit (vertical accordion sections).
 
 ### 1. Register and location
 
@@ -177,41 +227,46 @@ Shared contact fields:
 
 ### 3. Browse providers (`/consumer/providers`)
 
-Hero + category select + **Online / Offline** segments. Cards show offer kind, business name, offerings, rating, hours, and map when available.
+Hero + category search + **Online / Offline** segments. Cards show offer kind, business name, offerings, rating, hours, and map when available.
 
 Actions:
 
 - **View profile** → `/p/:slug` (or user id fallback)
-- **Chat & ask** (online providers only) — pre-request inquiry
-- **Checkbox** — select one or more for a targeted request  
-  → **Send request to selected** opens Post with targeted mode
+- **Chat & ask** — opens sleek inquiry chat overlay (works for online or offline approved providers)
+- **Checkbox** — select one or more for a targeted send  
+  → **Send request to selected** opens the **Send a request** modal (same top-level category required; otherwise the same-category popup)
 
 ### 4. Chat before requesting
 
 Inquiry chat is **not** tied to a request/order.
 
 - Consumer can open multiple 1:1 chats
-- New chats require the provider to be **approved + online** (within business hours)
-- Existing threads can continue even if the provider goes offline
+- New chats require the provider to be **approved** (online status does **not** block starting or continuing chat)
+- Messages persist; live delivery via WebSocket when the other party is connected
 - **Recent inquiries** lists chats with activity in the **last 30 days**
 - Consumer can **Delete chat** (in-app confirm popup)
+- UI: shared sleek chat panel (avatar header, timed bubbles, pill compose) — **overlay** for Chat & ask / quote chat; **inline** for inquiry inboxes and order chat
 
-### 5. Post a request (`/consumer/post`)
+### 5. Broadcast request (`/consumer/post`)
 
-Also reachable from **My requests → Create a request**.
+Nav label and page title: **Broadcast request**. Also reachable from **My requests → Broadcast request**.
 
 Fields: category, title, details, optional attachments, location.
 
-**Send modes:**
+Always **broadcasts** to verified nearby providers in that category (geo 5 km or same pincode). There is no “who should receive it” chooser on this page.
 
-| Mode | Behavior |
-|------|----------|
-| **Broadcast** | Notify verified nearby providers in that category (geo 5 km or same pincode) |
-| **Selected** | Notify only the checked provider user IDs |
+**Targeted sends** use **Send a request** from landing search or Providers selection (modal), not this page.
 
-Targeted requests do not use geo matching for who gets notified.
+On successful create, the app navigates to **`/consumer/requests`**.
 
-On successful create (broadcast or targeted), the app navigates to **`/consumer/requests`**.
+### 5b. Send a request (modal)
+
+Opened from landing search selection or Providers **Send request to selected**.
+
+- Requires one or more selected providers that share the **same top-level category**
+- Consumer picks/adjusts category, adds providers by name, describes the need, optional attachments
+- Submits as a **targeted** request (`target_provider_ids`)
+- Guests: draft saved → login → modal reopens after sign-in
 
 ### 6. My requests (`/consumer/requests`)
 
@@ -228,7 +283,7 @@ Per card:
 
 ### 7. Quotes and accept (`/consumer/requests/:id` · **Received Quotes**)
 
-While waiting, consumer can **Chat** with quoting providers (icon beside provider name). Provider name links to `/p/{id}`. **Verified** badge and rating appear beside the name; **Accept** sits next to price.
+While waiting, consumer can **Chat** with quoting providers (sleek overlay; icon beside provider name). Provider name links to `/p/{id}`. **Verified** badge and rating appear beside the name; **Accept** sits next to price.
 
 When accepting a quote, consumer chooses:
 
@@ -305,12 +360,7 @@ After submit, the provider sees:
 
 **Login is blocked** until an admin (or customer service agent) approves the account (`PENDING` / `REJECTED` cannot sign in).
 
-Transactional emails (when Admin SMTP is enabled):
-
-1. **On register:** thank you; account under review; check email within 24 hours  
-2. **On admin/CS approve:** congratulations; account activated; you can log in and create your listing  
-3. **On admin/CS re-approve** (from Revoked / Rejected): account restored; marketplace features available again  
-4. **On admin/CS revoke:** access revoked; profile + Admin messages still available  
+Transactional emails (when Admin SMTP is enabled): see **Transactional email** (registration, approve / re-approve / revoke).
 
 ### 2. Onboarding (`/profile`)
 
@@ -351,7 +401,7 @@ Layout:
 - Going online is blocked outside business hours; profile sync clears `is_online` when outside hours
 - Consumers and matching see the effective online status
 
-Only **APPROVED** providers can go online and receive chat / live leads.
+Only **APPROVED** providers can go online and receive live leads. Inquiry chat is allowed with approved providers even when offline.
 
 **Public link** (approved only):
 
@@ -456,7 +506,7 @@ Sidebar nav link **Customer service agents** appears for **Admin** only (not for
 |------------|--------|
 | **List** | All users with role `CUSTOMER_SERVICE` |
 | **Search** | Name, phone, email, or status (`PENDING` / `APPROVED` / `REVOKED`) |
-| **Create agent** | Form: full name, phone, email, temporary password; optional **Approve immediately** |
+| **Create agent** | Form: full name, phone, email, temporary password; optional **Approve immediately**; sends CS registration email (pending or ready) |
 | **Approve** | From Pending → agent can sign in (`is_active` + `is_verified`) |
 | **Revoke** | From Approved → blocks sign-in; enables Re-approve |
 | **Re-approve** | From Revoked → restores sign-in |
@@ -550,13 +600,17 @@ Local names prefer neighbourhood / suburb / village over generic admin labels (e
 
 ## Chat systems
 
-| Chat | When | Linked to |
-|------|------|-----------|
-| **Inquiry chat** | Before (and alongside) requests | Consumer ↔ Provider only |
-| **Order chat** | After quote accepted | Specific `order_id` |
-| **Admin support chat** | Admin ↔ provider support | `AdminConversation` |
+| Chat | When | Linked to | UI |
+|------|------|-----------|-----|
+| **Inquiry chat** | Before (and alongside) requests | Consumer ↔ Provider | Sleek panel (overlay or inline) |
+| **Order chat** | After quote accepted | Specific `order_id` | Same sleek panel (inline on `/orders/:id`) |
+| **Admin support chat** | Admin ↔ provider support | `AdminConversation` | Same sleek panel |
 
-Real-time: WebSockets (+ Redis pub/sub for multi-instance fan-out).
+Rules:
+
+- Inquiry chat may start with **offline** approved providers (not limited to online)
+- Order chat compose is disabled when the order is completed or cancelled
+- Real-time: WebSockets (+ Redis pub/sub for multi-instance fan-out); panels also poll messages periodically
 
 ---
 
@@ -640,8 +694,8 @@ Seeded provider public page example: `/p/quickfix-plumbing`.
 - Restart backend after schema updates so startup migrations apply (`public_slug`, `target_mode`, `request_targets`, `payment_mode`, social URL columns, SMTP table, admin support conversations, `REVOKED` verification status, `CUSTOMER_SERVICE` user role, etc.).
 - Re-run `python -m scripts.seed` after role/enum changes to ensure demo accounts exist (including CS `9000000004` / `support123`).
 - Existing providers without a slug are backfilled on startup from business name.
-- Provider registration/approval emails need **Admin → Config** SMTP enabled with a valid from-address.
-- Password reset emails also need SMTP enabled; set `frontend_url` so reset links point at the correct app host.
+- Provider / consumer / CS registration emails and provider approve·revoke·re-approve emails need **Admin → Config** SMTP enabled with a valid from-address.
+- Password reset emails also need SMTP enabled; set `frontend_url` so reset links point at the correct app host. Role-specific templates are under `backend/app/services/email_templates/`.
 - Matching quality depends on accurate GPS **and/or** pincode (plus city) on both consumer and provider profiles.
 - Order dashboard location quality depends on filled `state` / `city` / `pincode` / `location_label` on user profiles.
 - Reverse geocoding uses OpenStreetMap Nominatim; allow outbound network from the API host.

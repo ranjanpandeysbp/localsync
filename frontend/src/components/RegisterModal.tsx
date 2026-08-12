@@ -6,7 +6,7 @@ import { api, apiErrorMessage } from "../services/api";
 import { reverseGeocodeDetails } from "../services/geo";
 import { useAuth } from "../store/auth";
 import type { CategoryTree, OfferKind, UserRole } from "../types";
-import { isStaffRole } from "../types";
+import { roleHome } from "../types";
 
 const PROVIDER_PENDING_MSG =
   "Thank you for registration, your account is being currently reviewed. Please keep checking email from us in next 24hrs.";
@@ -214,7 +214,7 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
 
       const user = await login(form.phone_number, form.password);
       onClose();
-      navigate(isStaffRole(user.role) ? "/admin/providers" : "/profile");
+      navigate(roleHome(user.role));
     } catch (err: unknown) {
       setError(apiErrorMessage(err, "Registration failed"));
     } finally {

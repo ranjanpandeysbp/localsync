@@ -1,4 +1,4 @@
-"""Transactional email using admin-configured SMTP settings."""
+"""Transactional email using admin-configured SMTP settings + file templates."""
 
 from __future__ import annotations
 
@@ -9,9 +9,15 @@ from email.message import EmailMessage
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.models import AppSmtpConfig
+from app.services import email_templates as templates
 
 logger = logging.getLogger(__name__)
+
+
+def _login_url() -> str:
+    return f"{settings.frontend_url.rstrip('/')}/?login=1"
 
 
 def get_or_create_smtp_config(db: Session) -> AppSmtpConfig:
@@ -98,105 +104,81 @@ def try_send_email(
         return False
 
 
-def send_provider_registration_pending(db: Session, *, to_email: str | None, full_name: str) -> bool:
-    subject = "Thank you for registering with Gharq"
-    body_text = (
-        f"Hi {full_name},\n\n"
-        "Thank you for registration. Your account is being currently reviewed.\n"
-        "Please keep checking email from us in next 24hrs.\n\n"
-        "You will be able to log in after your account is approved.\n\n"
-        "— Gharq Team"
-    )
-    body_html = (
-        f"<p>Hi {full_name},</p>"
-        "<p>Thank you for registration. Your account is being currently reviewed.</p>"
-        "<p>Please keep checking email from us in next 24hrs.</p>"
-        "<p>You will be able to log in after your account is approved.</p>"
-        "<p>— Gharq Team</p>"
-    )
+def _send_content(db: Session, *, to_email: str | None, content: templates.EmailContent) -> bool:
     return try_send_email(
         db,
         to_email=to_email,
-        subject=subject,
-        body_text=body_text,
-        body_html=body_html,
+        subject=content.subject,
+        body_text=content.body_text,
+        body_html=content.body_html,
     )
 
+
+# --- Registration -----------------------------------------------------------
+
+def send_consumer_registration(db: Session, *, to_email: str | None, full_name: str) -> bool:
+    return _send_content(
+        db,
+        to_email=to_email,
+        content=templates.registration_consumer(full_name=full_name, login_url=_login_url()),
+    )
+
+
+def send_provider_registration_pending(
+    db: Session, *, to_email: str | None, full_name: str
+) -> bool:
+    return _send_content(
+        db,
+        to_email=to_email,
+        content=templates.registration_provider(full_name=full_name, login_url=_login_url()),
+    )
+
+
+def send_customer_service_registration(
+    db: Session,
+    *,
+    to_email: str | None,
+    full_name: str,
+    approved: bool,
+) -> bool:
+    return _send_content(
+        db,
+        to_email=to_email,
+        content=templates.registration_customer_service(
+            full_name=full_name,
+            login_url=_login_url(),
+            approved=approved,
+        ),
+    )
+
+
+# --- Provider status --------------------------------------------------------
 
 def send_provider_approved(db: Session, *, to_email: str | None, full_name: str) -> bool:
-    subject = "Congratulations — your Gharq account is approved"
-    body_text = (
-        f"Hi {full_name},\n\n"
-        "Congratulations! Your account is approved and activated.\n\n"
-        "You can log in and create your listing.\n\n"
-        "— Gharq Team"
-    )
-    body_html = (
-        f"<p>Hi {full_name},</p>"
-        "<p><strong>Congratulations!</strong> Your account is approved and activated.</p>"
-        "<p>You can log in and create your listing.</p>"
-        "<p>— Gharq Team</p>"
-    )
-    return try_send_email(
+    return _send_content(
         db,
         to_email=to_email,
-        subject=subject,
-        body_text=body_text,
-        body_html=body_html,
+        content=templates.provider_approved(full_name=full_name, login_url=_login_url()),
     )
 
 
 def send_provider_reapproved(db: Session, *, to_email: str | None, full_name: str) -> bool:
-    subject = "Your Gharq provider account has been re-approved"
-    body_text = (
-        f"Hi {full_name},\n\n"
-        "Good news — your provider account has been re-approved.\n\n"
-        "You can log in again and use marketplace features such as requests, quotes, "
-        "orders, and consumer inquiries.\n\n"
-        "— Gharq Team"
-    )
-    body_html = (
-        f"<p>Hi {full_name},</p>"
-        "<p><strong>Good news</strong> — your provider account has been re-approved.</p>"
-        "<p>You can log in again and use marketplace features such as requests, quotes, "
-        "orders, and consumer inquiries.</p>"
-        "<p>— Gharq Team</p>"
-    )
-    return try_send_email(
+    return _send_content(
         db,
         to_email=to_email,
-        subject=subject,
-        body_text=body_text,
-        body_html=body_html,
+        content=templates.provider_reapproved(full_name=full_name, login_url=_login_url()),
     )
 
 
 def send_provider_revoked(db: Session, *, to_email: str | None, full_name: str) -> bool:
-    subject = "Your Gharq provider account has been revoked"
-    body_text = (
-        f"Hi {full_name},\n\n"
-        "Your provider account access has been revoked by the Gharq admin team.\n\n"
-        "You can still log in to update your profile and message admin support. "
-        "Marketplace features (requests, quotes, orders, and inquiries) are unavailable "
-        "until your account is re-approved.\n\n"
-        "— Gharq Team"
-    )
-    body_html = (
-        f"<p>Hi {full_name},</p>"
-        "<p>Your provider account access has been <strong>revoked</strong> by the Gharq admin team.</p>"
-        "<p>You can still log in to update your profile and message admin support. "
-        "Marketplace features (requests, quotes, orders, and inquiries) are unavailable "
-        "until your account is re-approved.</p>"
-        "<p>— Gharq Team</p>"
-    )
-    return try_send_email(
+    return _send_content(
         db,
         to_email=to_email,
-        subject=subject,
-        body_text=body_text,
-        body_html=body_html,
+        content=templates.provider_revoked(full_name=full_name, login_url=_login_url()),
     )
 
+
+# --- Password reset ---------------------------------------------------------
 
 def send_password_reset(
     db: Session,
@@ -205,28 +187,15 @@ def send_password_reset(
     full_name: str,
     reset_url: str,
     expires_minutes: int,
+    role: str = "CONSUMER",
 ) -> bool:
-    subject = "Reset your Gharq password"
-    body_text = (
-        f"Hi {full_name},\n\n"
-        "We received a request to reset your Gharq password.\n\n"
-        f"Open this link to choose a new password (expires in {expires_minutes} minutes):\n"
-        f"{reset_url}\n\n"
-        "If you did not request this, you can ignore this email.\n\n"
-        "— Gharq Team"
-    )
-    body_html = (
-        f"<p>Hi {full_name},</p>"
-        "<p>We received a request to reset your Gharq password.</p>"
-        f'<p><a href="{reset_url}">Reset your password</a> '
-        f"(link expires in {expires_minutes} minutes).</p>"
-        "<p>If you did not request this, you can ignore this email.</p>"
-        "<p>— Gharq Team</p>"
-    )
-    return try_send_email(
+    return _send_content(
         db,
         to_email=to_email,
-        subject=subject,
-        body_text=body_text,
-        body_html=body_html,
+        content=templates.password_reset(
+            role=role,
+            full_name=full_name,
+            reset_url=reset_url,
+            expires_minutes=expires_minutes,
+        ),
     )

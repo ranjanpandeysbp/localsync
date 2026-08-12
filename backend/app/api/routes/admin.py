@@ -291,6 +291,15 @@ def create_customer_service_agent(
     db.add(user)
     db.commit()
     db.refresh(user)
+
+    from app.services.email import send_customer_service_registration
+
+    send_customer_service_registration(
+        db,
+        to_email=user.email,
+        full_name=user.full_name,
+        approved=approved,
+    )
     return _cs_agent_out(user)
 
 
@@ -307,6 +316,16 @@ def approve_customer_service_agent(
     user.is_verified = True
     db.commit()
     db.refresh(user)
+
+    from app.services.email import send_customer_service_registration
+
+    # Pending agents were told they'd get another email when sign-in is allowed.
+    send_customer_service_registration(
+        db,
+        to_email=user.email,
+        full_name=user.full_name,
+        approved=True,
+    )
     return _cs_agent_out(user)
 
 
@@ -323,6 +342,15 @@ def reapprove_customer_service_agent(
     user.is_verified = True
     db.commit()
     db.refresh(user)
+
+    from app.services.email import send_customer_service_registration
+
+    send_customer_service_registration(
+        db,
+        to_email=user.email,
+        full_name=user.full_name,
+        approved=True,
+    )
     return _cs_agent_out(user)
 
 
@@ -451,6 +479,14 @@ def create_provider(
 
     if payload.approve:
         send_provider_approved(db, to_email=user.email, full_name=user.full_name)
+    else:
+        from app.services.email import send_provider_registration_pending
+
+        send_provider_registration_pending(
+            db,
+            to_email=user.email,
+            full_name=user.full_name,
+        )
 
     category = db.get(Category, profile.category_id) if profile.category_id else None
     return _admin_provider_detail_out(db, profile, user, category)

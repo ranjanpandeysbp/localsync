@@ -91,11 +91,6 @@ async def start_conversation(
     )
     if not profile or profile.verification_status != VerificationStatus.APPROVED:
         raise HTTPException(status_code=400, detail="Provider not available")
-    if not effective_is_online(profile):
-        raise HTTPException(
-            status_code=400,
-            detail="Provider is offline. You can only start chats with online providers.",
-        )
 
     existing = db.scalar(
         select(Conversation).where(
@@ -252,17 +247,6 @@ async def send_inquiry_message(
     conv = db.get(Conversation, conversation_id)
     if not conv or current_user.id not in (conv.consumer_id, conv.provider_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
-
-    # New chats from consumer require provider online; continuing existing thread is allowed offline
-    if current_user.id == conv.consumer_id:
-        profile = (
-            db.query(ProviderProfile).filter(ProviderProfile.user_id == conv.provider_id).first()
-        )
-        has_history = db.scalar(
-            select(InquiryMessage).where(InquiryMessage.conversation_id == conversation_id).limit(1)
-        )
-        if not has_history and profile and not effective_is_online(profile):
-            raise HTTPException(status_code=400, detail="Provider is offline")
 
     msg = InquiryMessage(
         conversation_id=conversation_id,

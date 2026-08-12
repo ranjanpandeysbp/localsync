@@ -1,17 +1,16 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
+import { InquiryChatPanel } from "../components/InquiryChat";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { api } from "../services/api";
 import { useAuth } from "../store/auth";
-import type { ChatMessage, Order } from "../types";
+import type { Order } from "../types";
 
 export function OrderPage() {
   const { id } = useParams();
   const user = useAuth((s) => s.user);
   const [order, setOrder] = useState<Order | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [body, setBody] = useState("");
   const [otp, setOtp] = useState("");
   const [score, setScore] = useState("5");
   const [comment, setComment] = useState("");
@@ -19,33 +18,18 @@ export function OrderPage() {
 
   async function load() {
     if (!id) return;
-    const [o, m] = await Promise.all([
-      api.get<Order>(`/orders/${id}`),
-      api.get<ChatMessage[]>(`/orders/${id}/messages`),
-    ]);
-    setOrder(o.data);
-    setMessages(m.data);
+    const { data } = await api.get<Order>(`/orders/${id}`);
+    setOrder(data);
   }
 
   useWebSocket((msg) => {
-    const m = msg as { type?: string; payload?: ChatMessage & { order_id?: string; status?: string } };
-    if (m.type === "chat_message" && m.payload?.order_id === id) {
-      setMessages((prev) => [...prev, m.payload as ChatMessage]);
-    }
+    const m = msg as { type?: string };
     if (m.type === "order_completed" || m.type === "order_status") void load();
   });
 
   useEffect(() => {
     void load();
   }, [id]);
-
-  async function sendChat(e: FormEvent) {
-    e.preventDefault();
-    if (!id || !body.trim()) return;
-    const { data } = await api.post<ChatMessage>(`/orders/${id}/messages`, { body });
-    setMessages((prev) => [...prev, data]);
-    setBody("");
-  }
 
   async function setStatus(status: Order["status"]) {
     if (!id) return;
@@ -87,9 +71,8 @@ export function OrderPage() {
   const isConsumer = user?.id === order?.consumer_id;
   const isProvider = user?.id === order?.provider_id;
   const open =
-    order &&
-    order.status !== "COMPLETED" &&
-    order.status !== "CANCELLED";
+    order && order.status !== "COMPLETED" && order.status !== "CANCELLED";
+  const chatPeer = isProvider ? "Consumer" : "Provider";
 
   return (
     <AppShell title="Order">
@@ -162,29 +145,26 @@ export function OrderPage() {
           </section>
         )}
 
-        <section className="page-panel">
-          <h2>Chat</h2>
-          <div className="chat-box">
-            {messages.map((m) => (
-              <div key={m.id} className={`bubble ${m.sender_id === user?.id ? "mine" : ""}`}>
-                {m.body}
-              </div>
-            ))}
-          </div>
-          {open && (
-            <form onSubmit={sendChat} className="page-actions" style={{ marginTop: "0.75rem" }}>
-              <input
-                style={{ flex: 1, minWidth: "12rem" }}
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                placeholder="Message…"
-              />
-              <button className="btn" type="submit">
-                Send
-              </button>
-            </form>
-          )}
-        </section>
+        {id && (
+          <InquiryChatPanel
+            conversationId={id}
+            mode="inline"
+            title={chatPeer}
+            subtitle="Order chat"
+            avatarLabel={chatPeer}
+            statusLabel={open ? "Open" : order?.status || "Closed"}
+            statusTone={open ? "online" : "offline"}
+            messagesPath={`/orders/${id}/messages`}
+            emptyHint={
+              open
+                ? "Coordinate delivery, payment, and timing here."
+                : "This order chat is closed."
+            }
+            placeholder="Write a message…"
+            composeDisabled={!open}
+            autoFocus={!!open}
+          />
+        )}
 
         {isProvider && open && (
           <form className="page-panel page-form" onSubmit={complete}>

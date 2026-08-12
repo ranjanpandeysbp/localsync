@@ -1,13 +1,25 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, NavLink, useNavigate, useSearchParams } from "react-router-dom";
 import { LoginModal } from "../components/LoginModal";
+import { PostRequestModal } from "../components/PostRequestModal";
 import { RegisterModal } from "../components/RegisterModal";
 import { MapsLink } from "../components/MapsLink";
 import { MarketplaceScene } from "../components/MarketplaceScene";
 import { offerKindClass, offerKindLabel } from "../components/ProviderTrust";
+import { CONSUMER_NAV } from "../nav/consumer";
 import { api } from "../services/api";
 import { reverseGeocodeDetails, isMeaningfulLocationLabel } from "../services/geo";
+import { useAuth } from "../store/auth";
 import { providerPublicPath } from "../utils/providerUrl";
+import {
+  clearPostRequestDraft,
+  majorityCategoryId,
+  providersShareTopLevelCategory,
+  readPostRequestDraft,
+  SAME_CATEGORY_REQUEST_MESSAGE,
+  savePostRequestDraft,
+  type PostRequestDraft,
+} from "../utils/postRequestDraft";
 import type {
   Category,
   CategoryTree,
@@ -26,6 +38,9 @@ type LocState = {
 };
 
 export function LandingPage() {
+  const navigate = useNavigate();
+  const { user, token, logout } = useAuth();
+  const signedIn = Boolean(token && user);
   const [searchParams, setSearchParams] = useSearchParams();
   const searchRef = useRef<HTMLElement | null>(null);
   const browseRef = useRef<HTMLElement | null>(null);
@@ -39,14 +54,25 @@ export function LandingPage() {
   const [error, setError] = useState("");
   const [searchQ, setSearchQ] = useState("");
   const [searchBusy, setSearchBusy] = useState(false);
-  const [searchCats, setSearchCats] = useState<PublicSearchCategory[]>([]);
   const [searchProviders, setSearchProviders] = useState<ProviderCatalogItem[]>([]);
   const [searchDone, setSearchDone] = useState(false);
+  const [selectedSearchIds, setSelectedSearchIds] = useState<string[]>([]);
+  const [searchActionError, setSearchActionError] = useState("");
+  const [postDraft, setPostDraft] = useState<PostRequestDraft | null>(null);
+  const [postModalOpen, setPostModalOpen] = useState(false);
+  const [categoryMismatchPopup, setCategoryMismatchPopup] = useState(false);
   const [editingPin, setEditingPin] = useState(false);
   const [pinDraft, setPinDraft] = useState("");
   const [pinPopup, setPinPopup] = useState(false);
-  const [loginOpen, setLoginOpen] = useState(() => searchParams.get("login") === "1");
-  const [registerOpen, setRegisterOpen] = useState(() => searchParams.get("register") === "1");
+  const [loginOpen, setLoginOpen] = useState(
+    () => !signedIn && searchParams.get("login") === "1",
+  );
+  const [registerOpen, setRegisterOpen] = useState(
+    () => !signedIn && searchParams.get("register") === "1",
+  );
+  const [navOpen, setNavOpen] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(min-width: 961px)").matches : true,
+  );
   const [loc, setLoc] = useState<LocState>({
     latitude: null,
     longitude: null,
@@ -247,8 +273,9 @@ export function LandingPage() {
     const full = resolveCategory(cat, parent);
     setSelected(full);
     setSearchDone(false);
-    setSearchCats([]);
     setSearchProviders([]);
+    setSelectedSearchIds([]);
+    setSearchActionError("");
     setFilterOpen(false);
     setError("");
     window.setTimeout(() => {
@@ -279,6 +306,8 @@ export function LandingPage() {
     setSearchDone(false);
     setSelected(null);
     setCategoryProviders([]);
+    setSelectedSearchIds([]);
+    setSearchActionError("");
     setFilterOpen(false);
     try {
       const params: Record<string, string | number> = { q, pincode: pin };
@@ -287,7 +316,6 @@ export function LandingPage() {
         params.longitude = loc.longitude;
       }
       const { data } = await api.get<PublicSearchResult>("/providers/public-search", { params });
-      setSearchCats(data.categories);
       setSearchProviders(data.providers);
       setSearchDone(true);
       window.setTimeout(() => {
@@ -342,6 +370,17 @@ export function LandingPage() {
   const nearbyForSelected = selected ? nearbyCounts[selected.id] : undefined;
 
   useEffect(() => {
+    if (signedIn) {
+      setLoginOpen(false);
+      setRegisterOpen(false);
+      if (searchParams.get("login") === "1" || searchParams.get("register") === "1") {
+        const next = new URLSearchParams(searchParams);
+        next.delete("login");
+        next.delete("register");
+        setSearchParams(next, { replace: true });
+      }
+      return;
+    }
     if (searchParams.get("login") === "1") {
       setLoginOpen(true);
       setRegisterOpen(false);
@@ -352,7 +391,7 @@ export function LandingPage() {
       setLoginOpen(false);
       setRegisterOpen(false);
     }
-  }, [searchParams]);
+  }, [searchParams, signedIn, setSearchParams]);
 
   function setAuthParam(kind: "login" | "register" | null) {
     const next = new URLSearchParams(searchParams);
@@ -364,12 +403,14 @@ export function LandingPage() {
   }
 
   function openLogin() {
+    if (signedIn) return;
     setLoginOpen(true);
     setRegisterOpen(false);
     setAuthParam("login");
   }
 
   function openRegister() {
+    if (signedIn) return;
     setRegisterOpen(true);
     setLoginOpen(false);
     setAuthParam("register");
@@ -381,25 +422,248 @@ export function LandingPage() {
     setAuthParam(null);
   }
 
+  function toggleSearchProvider(userId: string) {
+    setSearchActionError("");
+    setSelectedSearchIds((prev) =>
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId],
+    );
+  }
+
+  function buildPostDraft(): PostRequestDraft | null {
+    if (selectedSearchIds.length === 0) return null;
+    const selected = searchProviders.filter((p) => selectedSearchIds.includes(p.user_id));
+    return {
+      providerIds: selected.map((p) => p.user_id),
+      categoryId: majorityCategoryId(searchProviders, selectedSearchIds),
+      providers: selected.map((p) => ({
+        id: p.user_id,
+        name: p.business_name || p.full_name,
+        categoryId: p.category_id,
+      })),
+    };
+  }
+
+  function selectedShareTopLevelCategory(): boolean {
+    const selected = searchProviders.filter((p) => selectedSearchIds.includes(p.user_id));
+    return providersShareTopLevelCategory(tree, selected);
+  }
+
+  function goSendRequest() {
+    const draft = buildPostDraft();
+    if (!draft) {
+      setSearchActionError("Select one or more providers first");
+      return;
+    }
+    setSearchActionError("");
+
+    if (!selectedShareTopLevelCategory()) {
+      setCategoryMismatchPopup(true);
+      return;
+    }
+
+    if (!signedIn || !user) {
+      savePostRequestDraft(draft);
+      openLogin();
+      return;
+    }
+    if (user.role !== "CONSUMER") {
+      setSearchActionError("Only consumers can send requests. Sign in with a consumer account.");
+      return;
+    }
+    setPostDraft(draft);
+    setPostModalOpen(true);
+  }
+
+  useEffect(() => {
+    if (!signedIn || user?.role !== "CONSUMER") return;
+    if (tree.length === 0) return;
+    const draft = readPostRequestDraft();
+    if (!draft) return;
+    clearPostRequestDraft();
+    const providers = draft.providers?.length
+      ? draft.providers
+      : draft.providerIds.map((id) => ({ id, name: id, categoryId: draft.categoryId }));
+    if (!providersShareTopLevelCategory(tree, providers)) {
+      setCategoryMismatchPopup(true);
+      return;
+    }
+    setPostDraft(draft);
+    setPostModalOpen(true);
+  }, [signedIn, user?.role, tree]);
+
+  function onLogout() {
+    logout();
+    setNavOpen(false);
+    navigate("/");
+  }
+
+  useEffect(() => {
+    if (!signedIn) {
+      setNavOpen(false);
+      return;
+    }
+    setNavOpen(window.matchMedia("(min-width: 961px)").matches);
+  }, [signedIn]);
+
+  useEffect(() => {
+    document.body.style.overflow = navOpen ? "hidden" : "";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [navOpen]);
+
   return (
-    <div className="landing landing-booking">
-      <LoginModal open={loginOpen} onClose={closeAuth} onCreateAccount={openRegister} />
-      <RegisterModal open={registerOpen} onClose={closeAuth} onSignIn={openLogin} />
-      <header className="landing-top landing-top-over">
-        <div className="landing-top-inner">
-          <Link to="/" className="brand landing-brand">
-            Gharq
-          </Link>
-          <nav className="landing-auth">
-            <button type="button" className="btn secondary landing-btn-ghost" onClick={openLogin}>
-              Log in
-            </button>
-            <button type="button" className="btn" onClick={openRegister}>
-              Register
-            </button>
-          </nav>
-        </div>
-      </header>
+    <div
+      className={`landing landing-booking${signedIn ? " landing-with-nav" : ""}${
+        navOpen ? " landing-nav-open" : " landing-nav-collapsed"
+      }`}
+    >
+      {!signedIn && (
+        <>
+          <LoginModal open={loginOpen} onClose={closeAuth} onCreateAccount={openRegister} />
+          <RegisterModal open={registerOpen} onClose={closeAuth} onSignIn={openLogin} />
+        </>
+      )}
+      {signedIn && user?.role === "CONSUMER" && (
+        <PostRequestModal
+          open={postModalOpen}
+          draft={postDraft}
+          onClose={() => {
+            setPostModalOpen(false);
+            setPostDraft(null);
+          }}
+          onSuccess={() => {
+            setSelectedSearchIds([]);
+            setPostDraft(null);
+          }}
+        />
+      )}
+
+      {signedIn && user && (
+        <>
+          <button
+            type="button"
+            className="landing-nav-backdrop"
+            aria-label="Close menu"
+            onClick={() => setNavOpen(false)}
+          />
+          <aside className="landing-sidebar" aria-label="Consumer navigation">
+            <div className="landing-sidebar-brand">
+              <div className="landing-sidebar-brand-row">
+                <Link to="/" className="brand" onClick={() => setNavOpen(false)}>
+                  Gharq
+                </Link>
+                <button
+                  type="button"
+                  className="landing-sidebar-close"
+                  aria-label="Hide menu"
+                  title="Hide menu"
+                  onClick={() => setNavOpen(false)}
+                >
+                  <LandingCloseIcon />
+                </button>
+              </div>
+              <p className="muted sidebar-tagline">Hyper-local marketplace</p>
+            </div>
+            <nav className="landing-sidebar-nav">
+              {CONSUMER_NAV.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  className={({ isActive }) =>
+                    `landing-sidebar-link${isActive ? " active" : ""}`
+                  }
+                  onClick={() => setNavOpen(false)}
+                >
+                  {item.label}
+                </NavLink>
+              ))}
+            </nav>
+            <div className="landing-sidebar-footer">
+              <div className="sidebar-user">
+                <strong>{user.full_name}</strong>
+                <span className="muted">
+                  {user.role}
+                  {user.phone_number ? ` · ${user.phone_number}` : ""}
+                </span>
+              </div>
+              <button
+                className="btn secondary sidebar-logout"
+                type="button"
+                onClick={onLogout}
+              >
+                Log out
+              </button>
+            </div>
+          </aside>
+        </>
+      )}
+
+      <div
+        className="landing-main"
+        onClick={() => {
+          if (navOpen) setNavOpen(false);
+        }}
+      >
+        <header className="landing-top landing-top-over">
+          <div className="landing-top-inner">
+            <div className="landing-top-start">
+              {signedIn && (
+                <button
+                  type="button"
+                  className="menu-toggle landing-menu-toggle"
+                  aria-label="Open menu"
+                  aria-expanded={navOpen}
+                  aria-hidden={navOpen ? true : undefined}
+                  tabIndex={navOpen ? -1 : undefined}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setNavOpen(true);
+                  }}
+                >
+                  <span />
+                  <span />
+                  <span />
+                </button>
+              )}
+              <Link to="/" className="brand landing-brand">
+                Gharq
+              </Link>
+            </div>
+            <nav className="landing-auth">
+              {signedIn && user ? (
+                <>
+                  <span className="landing-user-chip" title={user.phone_number || undefined}>
+                    {user.full_name}
+                  </span>
+                  <button
+                    type="button"
+                    className="topbar-logout landing-logout"
+                    aria-label="Log out"
+                    title="Log out"
+                    onClick={onLogout}
+                  >
+                    <LandingLogoutIcon />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="btn secondary landing-btn-ghost"
+                    onClick={openLogin}
+                  >
+                    Log in
+                  </button>
+                  <button type="button" className="btn" onClick={openRegister}>
+                    Register
+                  </button>
+                </>
+              )}
+            </nav>
+          </div>
+        </header>
 
       <section className="landing-hero-bleed">
         <div className="landing-hero-media" aria-hidden="true">
@@ -419,8 +683,8 @@ export function LandingPage() {
                 id="landing-search-q"
                 value={searchQ}
                 onChange={(e) => setSearchQ(e.target.value)}
-                placeholder="Plumbing, cleaning, or leave blank…"
-                aria-label="Search products or services"
+                placeholder="Name, mobile, category, or slug…"
+                aria-label="Search by name, mobile, category, or slug"
               />
             </div>
             <div className="landing-pad-divider" aria-hidden="true" />
@@ -511,51 +775,56 @@ export function LandingPage() {
 
       <div className="landing-sheet">
         {searchDone && (
-          <section className="landing-section" ref={searchRef} id="search-results">
-            <div className="landing-section-head">
-              <h2>
-                {searchQ.trim()
-                  ? `Results for “${searchQ.trim()}”`
-                  : loc.pincode.length === 6 && !hasCoords
-                    ? `Providers in pincode ${loc.pincode}`
-                    : "Providers near you"}
-              </h2>
-              <p className="muted">{matchHint}</p>
-            </div>
-            {searchCats.length > 0 && (
-              <div className="landing-cat-grid" style={{ marginBottom: "1rem" }}>
-                {searchCats.map((cat) => (
-                  <button
-                    key={cat.id}
-                    type="button"
-                    className="landing-cat"
-                    onClick={() => onSelectCategory(cat)}
-                  >
-                    <span className="landing-cat-mark" aria-hidden="true">
-                      {cat.name.slice(0, 1)}
-                    </span>
-                    <strong>{cat.name}</strong>
-                    <span className="muted">
-                      {offerKindLabel(cat.kind)}
-                      {cat.parent_name ? ` · under ${cat.parent_name}` : ""}
-                    </span>
-                  </button>
-                ))}
+          <section className="landing-section landing-section-pad" ref={searchRef} id="search-results">
+            <div className="landing-section-head landing-search-head">
+              <div>
+                <h2>
+                  {searchQ.trim()
+                    ? `Results for “${searchQ.trim()}”`
+                    : loc.pincode.length === 6 && !hasCoords
+                      ? `Providers in pincode ${loc.pincode}`
+                      : "Providers near you"}
+                </h2>
+                <p className="muted">{matchHint}</p>
               </div>
-            )}
+              {searchProviders.length > 0 && (
+                <div className="landing-search-actions">
+                  <p className="muted landing-search-selected">
+                    {selectedSearchIds.length === 0
+                      ? "Select providers to request"
+                      : `${selectedSearchIds.length} selected`}
+                  </p>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={goSendRequest}
+                    disabled={selectedSearchIds.length === 0}
+                  >
+                    Send a request
+                  </button>
+                </div>
+              )}
+            </div>
+            {searchActionError && <p className="error">{searchActionError}</p>}
             <div className="landing-provider-list">
-              {searchCats.length === 0 && searchProviders.length === 0 && (
-                <p className="muted">No matches found. Try another keyword or pick a category.</p>
+              {searchProviders.length === 0 && (
+                <p className="muted">No providers found. Try another keyword or browse a category below.</p>
               )}
               {searchProviders.map((p) => (
-                <ProviderCard key={p.user_id} provider={p} />
+                <ProviderCard
+                  key={p.user_id}
+                  provider={p}
+                  selectable
+                  selected={selectedSearchIds.includes(p.user_id)}
+                  onToggleSelect={() => toggleSearchProvider(p.user_id)}
+                />
               ))}
             </div>
           </section>
         )}
 
         {!searchDone && !browsing && (
-          <section className="landing-section" id="categories">
+          <section className="landing-section landing-section-pad" id="categories">
             <div className="landing-section-head">
               <h2>Popular categories</h2>
               <p className="muted">
@@ -745,11 +1014,48 @@ export function LandingPage() {
           </div>
         </div>
       )}
+
+      {categoryMismatchPopup && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={() => setCategoryMismatchPopup(false)}
+        >
+          <div
+            className="modal-dialog card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="landing-category-mismatch-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="landing-category-mismatch-title" style={{ margin: "0 0 0.5rem" }}>
+              Same category required
+            </h3>
+            <p className="muted" style={{ margin: "0 0 1rem" }}>
+              {SAME_CATEGORY_REQUEST_MESSAGE}
+            </p>
+            <button className="btn" type="button" onClick={() => setCategoryMismatchPopup(false)}>
+              OK
+            </button>
+          </div>
+        </div>
+      )}
+      </div>
     </div>
   );
 }
 
-function ProviderCard({ provider: p }: { provider: ProviderCatalogItem }) {
+function ProviderCard({
+  provider: p,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
+}: {
+  provider: ProviderCatalogItem;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
+}) {
   const kind = p.offer_kind || "BOTH";
   const kindClass = offerKindClass(kind);
   const blurb = p.offerings_detail || p.description;
@@ -758,10 +1064,22 @@ function ProviderCard({ provider: p }: { provider: ProviderCatalogItem }) {
     p.opening_time && p.closing_time ? `${p.opening_time}–${p.closing_time}` : null;
 
   return (
-    <article className={`landing-provider ${kindClass}`}>
+    <article
+      className={`landing-provider ${kindClass}${selected ? " is-selected" : ""}`}
+    >
       <div className="landing-provider-accent" aria-hidden="true" />
       <div className="landing-provider-body">
         <div className="landing-provider-top">
+          {selectable && (
+            <label className="landing-provider-select">
+              <input
+                type="checkbox"
+                checked={selected}
+                onChange={() => onToggleSelect?.()}
+                aria-label={`Select ${p.business_name}`}
+              />
+            </label>
+          )}
           <span className={`landing-provider-mark ${kindClass}`} aria-hidden="true">
             {initial}
           </span>
@@ -812,5 +1130,42 @@ function ProviderCard({ provider: p }: { provider: ProviderCatalogItem }) {
         </div>
       </div>
     </article>
+  );
+}
+
+function LandingCloseIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.25"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+
+function LandingLogoutIcon() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 2v10" />
+      <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+    </svg>
   );
 }

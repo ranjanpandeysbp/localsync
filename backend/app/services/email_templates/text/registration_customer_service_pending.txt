@@ -1,0 +1,10 @@
+Hi {{full_name}},
+
+An admin created your Gharq customer service account.
+
+Your account is pending approval. You will receive another email when you can sign in.
+
+Sign-in page (after approval):
+{{login_url}}
+
+— Gharq Team

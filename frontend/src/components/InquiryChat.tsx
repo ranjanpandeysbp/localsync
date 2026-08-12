@@ -1,31 +1,68 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../services/api";
 import { useAuth } from "../store/auth";
-import type { AdminSupportConversation, Conversation, InquiryMessage } from "../types";
+import type { AdminSupportConversation, Conversation } from "../types";
+
+type ChatRow = {
+  id: string;
+  sender_id: string;
+  body: string;
+  created_at: string;
+};
+
+function formatChatTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
 
 export function InquiryChatPanel({
   conversationId,
   title,
+  subtitle,
+  avatarLabel,
+  statusLabel,
+  statusTone,
   onClose,
   messagesPath,
   emptyHint = "Ask anything before placing a request.",
-  placeholder = "Type a question…",
+  placeholder = "Type a message…",
+  className,
+  autoFocus = false,
+  mode = "inline",
+  composeDisabled = false,
 }: {
   conversationId: string;
   title: string;
+  subtitle?: string;
+  avatarLabel?: string;
+  statusLabel?: string;
+  statusTone?: "online" | "offline" | "neutral";
   onClose?: () => void;
   messagesPath?: string;
   emptyHint?: string;
   placeholder?: string;
+  className?: string;
+  autoFocus?: boolean;
+  /** overlay = modal portal; inline = embedded panel */
+  mode?: "overlay" | "inline";
+  composeDisabled?: boolean;
 }) {
   const user = useAuth((s) => s.user);
-  const [messages, setMessages] = useState<InquiryMessage[]>([]);
+  const [messages, setMessages] = useState<ChatRow[]>([]);
   const [body, setBody] = useState("");
   const [error, setError] = useState("");
+  const [sending, setSending] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const chatBoxRef = useRef<HTMLDivElement>(null);
   const path = messagesPath || `/conversations/${conversationId}/messages`;
+  const initial = (avatarLabel || title).trim().slice(0, 1).toUpperCase() || "C";
 
   async function load() {
-    const { data } = await api.get<InquiryMessage[]>(path);
+    const { data } = await api.get<ChatRow[]>(path);
     setMessages(data);
   }
 
@@ -35,56 +72,171 @@ export function InquiryChatPanel({
     return () => window.clearInterval(t);
   }, [conversationId, path]);
 
+  useEffect(() => {
+    if (autoFocus && !composeDisabled) {
+      inputRef.current?.focus();
+    }
+  }, [autoFocus, conversationId, composeDisabled]);
+
+  useEffect(() => {
+    const box = chatBoxRef.current;
+    if (box) {
+      box.scrollTop = box.scrollHeight;
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    if (mode !== "overlay") return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose?.();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [mode, onClose]);
+
   async function send(e: FormEvent) {
     e.preventDefault();
-    if (!body.trim()) return;
+    if (!body.trim() || sending || composeDisabled) return;
+    setSending(true);
     try {
-      const { data } = await api.post<InquiryMessage>(path, {
-        body,
+      const { data } = await api.post<ChatRow>(path, {
+        body: body.trim(),
       });
       setMessages((prev) => [...prev, data]);
       setBody("");
       setError("");
+      inputRef.current?.focus();
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
         "Failed to send";
       setError(String(msg));
+    } finally {
+      setSending(false);
     }
   }
 
-  return (
-    <div className="inquiry-panel">
-      <div className="topbar" style={{ marginBottom: "0.75rem" }}>
-        <h3 style={{ margin: 0 }}>{title}</h3>
+  const panel = (
+    <div
+      className={`inquiry-sleek${mode === "inline" ? " inquiry-sleek-inline" : ""}${
+        className ? ` ${className}` : ""
+      }`}
+    >
+      <header className="inquiry-sleek-header">
+        <div className="inquiry-sleek-identity">
+          <span className="inquiry-sleek-avatar" aria-hidden="true">
+            {initial}
+          </span>
+          <div className="inquiry-sleek-titles">
+            <h3>{title}</h3>
+            <div className="inquiry-sleek-meta">
+              {subtitle && <span className="inquiry-sleek-subtitle">{subtitle}</span>}
+              {statusLabel && (
+                <span
+                  className={`inquiry-sleek-status inquiry-sleek-status-${statusTone || "neutral"}`}
+                >
+                  {statusLabel}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
         {onClose && (
-          <button className="btn secondary" type="button" onClick={onClose}>
-            Close
+          <button
+            className="inquiry-sleek-close"
+            type="button"
+            onClick={onClose}
+            aria-label="Close chat"
+          >
+            ×
           </button>
         )}
-      </div>
-      <div className="chat-box">
-        {messages.length === 0 && <p className="muted">{emptyHint}</p>}
-        {messages.map((m) => (
-          <div key={m.id} className={`bubble ${m.sender_id === user?.id ? "mine" : ""}`}>
-            {m.body}
+      </header>
+
+      <div className="inquiry-sleek-thread" ref={chatBoxRef}>
+        {messages.length === 0 ? (
+          <div className="inquiry-sleek-empty">
+            <p>{emptyHint}</p>
           </div>
-        ))}
+        ) : (
+          messages.map((m) => {
+            const mine = m.sender_id === user?.id;
+            return (
+              <div key={m.id} className={`inquiry-sleek-row${mine ? " is-mine" : ""}`}>
+                <div className={`inquiry-sleek-bubble${mine ? " is-mine" : ""}`}>
+                  <p>{m.body}</p>
+                  {m.created_at && (
+                    <time dateTime={m.created_at}>{formatChatTime(m.created_at)}</time>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
-      <form onSubmit={send} style={{ display: "flex", gap: "0.5rem" }}>
-        <input
-          style={{ flex: 1 }}
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder={placeholder}
-        />
-        <button className="btn" type="submit">
-          Send
-        </button>
-      </form>
-      {error && <p className="error">{error}</p>}
+
+      {!composeDisabled ? (
+        <form className="inquiry-sleek-compose" onSubmit={send}>
+          <input
+            ref={inputRef}
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            placeholder={placeholder}
+            autoComplete="off"
+            disabled={sending}
+            aria-label="Message"
+          />
+          <button
+            className="inquiry-sleek-send"
+            type="submit"
+            disabled={sending || !body.trim()}
+            aria-label={sending ? "Sending" : "Send message"}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M5 12h12M13 6l6 6-6 6"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </form>
+      ) : (
+        <p className="inquiry-sleek-locked">Messaging is closed for this conversation.</p>
+      )}
+      {error && <p className="inquiry-sleek-error">{error}</p>}
     </div>
   );
+
+  if (mode === "overlay") {
+    return createPortal(
+      <div
+        className="inquiry-sleek-backdrop"
+        onClick={() => onClose?.()}
+        role="presentation"
+      >
+        <div
+          className="inquiry-sleek-shell"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Chat with ${title}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {panel}
+        </div>
+      </div>,
+      document.body,
+    );
+  }
+
+  return panel;
 }
 
 export async function startOrOpenChat(
