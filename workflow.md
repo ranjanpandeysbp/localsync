@@ -63,16 +63,21 @@ Consumer shares OTP → Provider completes → both rate each other
 
 ## Public / guest flow
 
-1. Open `/` — landing with full-bleed hero and floating search pad (query + editable pincode + detect-location).
-2. Empty pincode on search shows a modal: **Please enter the pincode**.
-3. After search, category browse hides; results show **matching providers only** (select checkboxes + **Send a request**).
-4. Without searching, **Popular categories** appear (hide after a completed search).
-5. Search providers (`GET /providers/public-search`) matches:
+1. Open `/` — landing with full-bleed hero and floating search pad (**city** + query + detect-location).
+2. After search, category browse hides; results show **matching providers only** (select checkboxes + **Send a request**).
+3. Without searching, **Popular categories** appear (hide after a completed search).
+4. Search providers (`GET /providers/public-search`) matches:
    - **Name** — business name, owner name, username
    - **Mobile** — phone / alternate phone (digit-friendly)
    - **Category / subcategory** — name or slug (parent↔child links included)
    - **Slug** — provider public slug and category slug  
-   Blank keyword still supports nearby / pincode matching (GPS ~5 km, else same pincode). Nearby filter applies to keyword hits when location is set.
+   Blank keyword still supports nearby matching via selected city coords (and city default pincode sent to the API when available). Nearby filter applies when location/city is set.
+5. **City selection** — served cities for now: **Bhubaneswar**, **Sambalpur**, **Jharsuguda**.
+   - If a city is **already saved**, the city popup does **not** auto-show on landing open
+   - On landing open with **no** saved city: if GPS is unavailable/denied → city popup with searchable dropdown
+   - If GPS resolves and the city is **not** in the list → popup to pick a supported city (skipped when a saved city already applies)
+   - If GPS city matches the list → that city is applied automatically
+   - City searchable dropdown appears first on the landing search pad (sets default coords for the city)
 6. Browse category catalog (`GET /providers/public-catalog`).
 7. Open a provider’s public page at `/p/:slug` (friendly shop-name URL; legacy `/p/:userId` still works).
 8. To chat or request, guest is prompted to **register / log in** (modals on the landing page, or deep links `/?login=1` / `/?register=1`).
@@ -99,7 +104,8 @@ Sign-in and registration are **modals on the public landing page** (`/`), not se
 
 - Modals are mutually exclusive; **Create account** / **Sign in** switches between them without leaving the landing page.
 - Backdrop click, Escape, or × closes the modal and clears the query param.
-- Unauthenticated access to protected routes and logout send the user to `/?login=1`.
+- Unauthenticated access to protected routes sends the user to `/?login=1`.
+- **Log out** returns to the public landing `/` **without** auto-opening Sign in or Select city modals (logout nav flag). Intentional **Sign in** afterward still opens the login modal as usual.
 - Forgot / reset password remain standalone pages (`/forgot-password`, `/reset-password`).
 
 ### Sign in (landing modal)
@@ -270,7 +276,7 @@ Opened from landing search selection or Providers **Send request to selected**.
 
 ### 6. My requests (`/consumer/requests`)
 
-Shows **ACTIVE** requests only (no status filter chips).
+Shows **ACTIVE** open requests only (fulfilled / locked deals are hidden here and live under **Orders**).
 
 Per card:
 
@@ -294,7 +300,7 @@ When accepting a quote, consumer chooses:
 - **Payment mode**
   - `CASH` · `UPI` · `CARD` · `BANK_TRANSFER` · `OTHER`
 
-Accepting locks the deal → creates an **Order**, marks request `FULFILLED`, rejects sibling quotes, shows **OTP** to the consumer.
+Accepting locks the deal → creates an **Order**, marks request `FULFILLED`, rejects sibling quotes, and shows the **completion OTP** on the request quotes screen (accepted quote + deal-locked banner) until handover.
 
 ### 8. Orders (`/consumer/orders`)
 
@@ -328,15 +334,13 @@ Statuses:
 
 | Route | Purpose |
 |-------|---------|
-| `/provider/overview` | Hero, KPIs, go online/offline, location & storefront |
-| `/provider/inquiries` | Consumer pre-request chats |
+| `/provider/overview` | Hero, KPIs, hours-derived Online/Offline, location & storefront |
 | `/provider/support` | **Admin messages** (support threads; unread badge) |
-| `/provider/requests` | Leads (targeted + nearby broadcast) |
-| `/provider/quote` | Submit a quote |
-| `/provider/quotes` | Quotes sent |
+| `/provider/requests` | **Incoming requests** (targeted + nearby broadcast); excludes already-quoted; 15s poll on this tab; **Send quote** opens modal |
+| `/provider/quotes` | **My sent quotes** — card UI; filter All / Pending / Accepted / Upcoming; search; **Chat**, edit pending, **Complete** with OTP; completed deals leave this list |
 | `/provider/orders` | Orders → `/orders/:id` |
 
-Also: `/profile` for business onboarding (vertical accordion sections).
+Also: `/profile` for business onboarding (vertical accordion sections). There is **no** Consumer inquiries nav item; `/provider/inquiries` redirects to overview. Legacy `/provider/quote` redirects to Incoming requests. Chat still opens from requests/quotes.
 
 **Limited / revoked access:** if verification is `REVOKED` (or rejected after login allowance), sidebar is limited to **Overview**, **Admin messages**, and **My profile**. Marketplace routes redirect to overview.
 
@@ -370,14 +374,14 @@ Same vertical accordion layout as consumer profile. Providers see three sections
 2. **Business / shop details**
 3. **Upload documents**
 
-Required for verification / going online:
+Required for verification / marketplace readiness:
 
 - Business / shop name (changing it regenerates the public slug if needed)
 - Offer kind: Product / Service / Both
 - Categories & subcategories
 - **About** (short description)
 - **What you offer** (detailed offerings)
-- Opening / closing hours (**IST**)
+- Opening / closing hours (**IST**) — drive Online/Offline status after approval
 - GST, Aadhaar (and document uploads)
 - Max travel radius
 - Optional: **Website**, **Instagram**, **YouTube**
@@ -388,20 +392,20 @@ Account stays `PENDING` until admin approves.
 
 Layout:
 
-1. **Hero** — business mark, name, Verified + rating, owner/offer line, Online/Offline status pill with hours chip + categories; **Go online/offline** and **Edit profile** (icon on ≤960px)
-2. **Verification banners** when pending / rejected / revoked
-3. **KPI strip** — Nearby requests, Open orders, Quotes sent (links to those routes when not limited; accent on nearby requests)
+1. **Hero** — business mark, name, Verified + rating, owner/offer line, Online/Offline status pill with hours chip + categories; **Edit profile** (icon on ≤960px). No manual Go online/offline toggle.
+2. **Verification banners** when pending / rejected / revoked (prompt to set Opens–Closes when approved but hours missing)
+3. **KPI strip** — Incoming requests, Open orders, Quotes sent (links to those routes when not limited; accent on incoming requests)
 4. **Vertical accordions** (one open at a time; **Storefront** first and open by default):
    - **Storefront** — public URL tray (copy + open) + shortcuts grid (marketplace shortcuts hidden when limited; My profile + Admin messages remain)
    - **Location & reach** — Map / Area / Radius chips + Quick update form (Detect + Save; single-column fields)
 
-**Online presence is hours-aware:**
+**Online presence is hours-derived (IST):**
 
-- Effective online = provider toggled online **and** current time is within Opens–Closes (IST)
-- Going online is blocked outside business hours; profile sync clears `is_online` when outside hours
-- Consumers and matching see the effective online status
+- Online when the provider is **APPROVED** and current time is within Opens–Closes; Offline otherwise (missing/invalid hours → Offline)
+- Stored `is_online` is synced from those hours; there is no manual online toggle in the UI
+- Consumers and matching see this effective online status
 
-Only **APPROVED** providers can go online and receive live leads. Inquiry chat is allowed with approved providers even when offline.
+Only **APPROVED** providers appear Online during open hours and receive live leads. Inquiry chat is allowed with approved providers even when Offline.
 
 **Public link** (approved only):
 
@@ -426,23 +430,34 @@ Providers can reply to admin-initiated support threads.
   - **Revokes** an approved provider (`reason: provider_revoked`)
 - Matching transactional emails also send when Admin SMTP is enabled
 
-### 5. Handle leads (`/provider/requests`)
+### 5. Incoming requests (`/provider/requests`)
+
+Nav label: **Incoming requests** (not a separate Submit quote page). While this tab is open, the feed polls every **15s**.
 
 Feed includes:
 
 - **Broadcast** requests that geo/pincode-match the provider
 - **Targeted** requests that explicitly include this provider
+- Excludes requests this provider has **already quoted** (those appear under **My sent quotes**)
 
 Per lead:
 
 1. **Chat & ask** — clarify with the consumer  
-2. **Send quote** — price, ETA (days), message, optional catalog URL / attachments  
+2. **Send quote** — opens a **modal** for price, ETA (days), message, optional attachments; after submit the lead leaves this list  
 
-### 6. Fulfill order
+### 6. My sent quotes (`/provider/quotes`)
+
+Card list of quotes the provider has sent (completed deals with a `COMPLETED` order leave this list and live under **Orders**).
+
+- Filters: **All / Pending / Accepted / Upcoming** (with counts)
+- Search by request title, consumer, message, status, or price
+- Per card: **Chat** (overlay), **Edit** (pending), **Complete** with OTP when an open order exists, link to order when accepted
+
+### 7. Fulfill order
 
 After consumer accepts:
 
-- Chat on the order
+- Chat on the order (or Complete with OTP from **My sent quotes**)
 - Mark **In progress** / Disputed / Cancel as needed
 - Collect consumer OTP → **Mark completed**
 - Rate the consumer
@@ -581,7 +596,7 @@ Kind color coding: **Services** (blue), **Products** (amber), **Products & servi
 
 Providers must be **verified (APPROVED)** to receive broadcast notifications and to quote.
 
-Consumers browsing “online” providers see **effective online** status (toggled on + within business hours IST).
+Consumers browsing “online” providers see **effective online** status (APPROVED + within Opens–Closes business hours IST).
 
 ---
 
@@ -651,10 +666,10 @@ Delete removes the user entirely.
 ## Trust & safety (current MVP)
 
 - Admin KYC review (docs, Aadhaar/GST fields) before providers go live
-- Pending provider accounts cannot go online or quote
+- Pending provider accounts cannot appear Online or quote
 - Admin can **revoke** approved providers (limited nav + Admin messages notice)
 - Admin **approve** and **re-approve** also notify the provider (Admin messages + email when SMTP enabled)
-- Online presence respects business hours (IST Opens–Closes)
+- Online/Offline is derived from Opens–Closes business hours (IST), not a manual toggle
 - Completion OTP reduces false “delivered” claims
 - Mutual ratings after completed orders
 - Public profiles for transparency (no sensitive docs exposed)
@@ -670,7 +685,7 @@ Delete removes the user entirely.
 |----------|--------|
 | Guest | `/` (landing + login/register modals via `?login=1` / `?register=1`), `/login` → `/?login=1`, `/register` → `/?register=1`, `/forgot-password`, `/reset-password`, `/p/:slug` (or `/p/:userId`) |
 | Consumer | `/consumer/*` (details, providers, inquiries, post, requests, quotes, orders), `/profile`, `/orders/:id` |
-| Provider | `/provider/*` (overview, inquiries, support, requests, quote, quotes, orders), `/profile`, `/orders/:id` |
+| Provider | `/provider/*` (overview, support, requests, quotes, orders), `/profile`, `/orders/:id` |
 | Admin | `/admin/providers`, `/admin/providers/:userId`, `/admin/consumers`, `/admin/orders`, `/admin/categories`, `/admin/messages`, `/admin/customer-service`, `/admin/config` |
 | Customer service | Same as admin **except** `/admin/customer-service` and `/admin/config` |
 
@@ -699,5 +714,5 @@ Seeded provider public page example: `/p/quickfix-plumbing`.
 - Matching quality depends on accurate GPS **and/or** pincode (plus city) on both consumer and provider profiles.
 - Order dashboard location quality depends on filled `state` / `city` / `pincode` / `location_label` on user profiles.
 - Reverse geocoding uses OpenStreetMap Nominatim; allow outbound network from the API host.
-- Provider **Go online** requires APPROVED status and current time within Opens–Closes (IST).
+- Provider Online status requires APPROVED status and current time within Opens–Closes (IST); set hours in My profile.
 - Staff ops (providers, consumers, orders, categories, messages) use shared `STAFF_ROLES` (`ADMIN` + `CUSTOMER_SERVICE`); Config and CS-agent management stay **Admin-only**.

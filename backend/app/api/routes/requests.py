@@ -220,8 +220,16 @@ def provider_feed(
         select(ServiceRequest).where(ServiceRequest.status == RequestStatus.ACTIVE)
     ).all()
 
+    already_quoted_ids = set(
+        db.scalars(
+            select(Quote.request_id).where(Quote.provider_id == current_user.id)
+        ).all()
+    )
+
     results: list[ServiceRequestOut] = []
     for req in candidates:
+        if req.id in already_quoted_ids:
+            continue
         if not provider_matches_category(db, profile, req.category_id):
             continue
 

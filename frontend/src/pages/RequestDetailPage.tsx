@@ -14,6 +14,7 @@ export function RequestDetailPage() {
   const { id } = useParams();
   const [request, setRequest] = useState<ServiceRequest | null>(null);
   const [quotes, setQuotes] = useState<Quote[]>([]);
+  const [lockedOrder, setLockedOrder] = useState<Order | null>(null);
   const [fulfillment, setFulfillment] = useState("PROVIDER_DELIVERY");
   const [paymentMode, setPaymentMode] = useState("CASH");
   const [message, setMessage] = useState("");
@@ -39,9 +40,10 @@ export function RequestDetailPage() {
 
   async function load(opts?: { silent?: boolean }) {
     if (!id) return;
-    const [req, qs] = await Promise.all([
+    const [req, qs, orders] = await Promise.all([
       api.get<ServiceRequest>(`/requests/${id}`),
       api.get<Quote[]>(`/requests/${id}/quotes`),
+      api.get<Order[]>("/orders/mine"),
     ]);
     setRequest(req.data);
 
@@ -55,12 +57,26 @@ export function RequestDetailPage() {
     knownIds.current = new Set(next.map((q) => q.id));
     primed.current = true;
     setQuotes(next);
+
+    const orderForRequest =
+      orders.data.find((o) => o.request_id === id) ||
+      null;
+    setLockedOrder(orderForRequest);
   }
 
   const { connected } = useWebSocket((msg) => {
-    const m = msg as { type?: string; payload?: Quote };
-    if (m.type === "new_quote" && m.payload?.request_id === id) {
-      void playQuoteBell();
+    const m = msg as { type?: string; payload?: Quote & { request_id?: string } };
+    if (
+      (m.type === "new_quote" || m.type === "quote_updated") &&
+      m.payload?.request_id === id
+    ) {
+      if (m.type === "new_quote") void playQuoteBell();
+      void load({ silent: true });
+    }
+    if (m.type === "order_confirmed" && m.payload?.request_id === id) {
+      void load({ silent: true });
+    }
+    if (m.type === "order_completed") {
       void load({ silent: true });
     }
   });
@@ -80,7 +96,13 @@ export function RequestDetailPage() {
         fulfillment_type: fulfillment,
         payment_mode: paymentMode,
       });
-      showMessage(`Deal locked. OTP: ${data.completion_otp}`, "success");
+      setLockedOrder(data);
+      showMessage(
+        data.completion_otp
+          ? `Deal locked. Your completion OTP is ${data.completion_otp}. Share it only at handover.`
+          : "Deal locked.",
+        "success",
+      );
       await load({ silent: true });
     } catch (err: unknown) {
       const msg =
@@ -109,6 +131,11 @@ export function RequestDetailPage() {
 
   const statusKey = request?.status.toLowerCase() || "active";
   const canAccept = request?.status === "ACTIVE";
+  const orderOpen =
+    !!lockedOrder &&
+    lockedOrder.status !== "COMPLETED" &&
+    lockedOrder.status !== "CANCELLED";
+  const showOtp = orderOpen && !!lockedOrder?.completion_otp;
 
   return (
     <AppShell title="Request quotes" connected={connected}>
@@ -228,41 +255,61 @@ export function RequestDetailPage() {
           </div>
         )}
 
-        <section className="dash-surface request-detail-deal">
-          <div className="dash-section-head">
-            <p className="dash-eyebrow">When you accept</p>
-            <h3>Deal preferences</h3>
-            <p className="muted">Applied to the quote you accept for this request.</p>
-          </div>
-          <div className="request-detail-deal-grid">
-            <div className="field">
-              <label htmlFor="fulfillment">Delivery / fulfillment</label>
-              <select
-                id="fulfillment"
-                value={fulfillment}
-                onChange={(e) => setFulfillment(e.target.value)}
-              >
-                <option value="PROVIDER_DELIVERY">Provider delivery</option>
-                <option value="CONSUMER_PICKUP">Consumer pickup</option>
-                <option value="HOME_SERVICE">Home service</option>
-              </select>
+        {showOtp && lockedOrder && (
+          <section className="dash-surface request-detail-otp" aria-live="polite">
+            <div className="request-detail-otp-copy">
+              <p className="dash-eyebrow">Deal locked</p>
+              <h3>Completion OTP</h3>
+              <p className="muted">
+                Share this code with the provider only at handover or delivery.
+              </p>
             </div>
-            <div className="field">
-              <label htmlFor="paymentMode">Payment mode</label>
-              <select
-                id="paymentMode"
-                value={paymentMode}
-                onChange={(e) => setPaymentMode(e.target.value)}
-              >
-                <option value="CASH">Cash</option>
-                <option value="UPI">UPI</option>
-                <option value="CARD">Card</option>
-                <option value="BANK_TRANSFER">Bank transfer</option>
-                <option value="OTHER">Other</option>
-              </select>
+            <div className="request-detail-otp-code" title="Completion OTP">
+              {lockedOrder.completion_otp}
             </div>
-          </div>
-        </section>
+            <Link className="btn secondary" to={`/orders/${lockedOrder.id}`}>
+              Open order
+            </Link>
+          </section>
+        )}
+
+        {canAccept ? (
+          <section className="dash-surface request-detail-deal">
+            <div className="dash-section-head">
+              <p className="dash-eyebrow">When you accept</p>
+              <h3>Deal preferences</h3>
+              <p className="muted">Applied to the quote you accept for this request.</p>
+            </div>
+            <div className="request-detail-deal-grid">
+              <div className="field">
+                <label htmlFor="fulfillment">Delivery / fulfillment</label>
+                <select
+                  id="fulfillment"
+                  value={fulfillment}
+                  onChange={(e) => setFulfillment(e.target.value)}
+                >
+                  <option value="PROVIDER_DELIVERY">Provider delivery</option>
+                  <option value="CONSUMER_PICKUP">Consumer pickup</option>
+                  <option value="HOME_SERVICE">Home service</option>
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="paymentMode">Payment mode</label>
+                <select
+                  id="paymentMode"
+                  value={paymentMode}
+                  onChange={(e) => setPaymentMode(e.target.value)}
+                >
+                  <option value="CASH">Cash</option>
+                  <option value="UPI">UPI</option>
+                  <option value="CARD">Card</option>
+                  <option value="BANK_TRANSFER">Bank transfer</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </div>
+            </div>
+          </section>
+        ) : null}
 
         <section className="request-detail-quotes">
           <div className="request-detail-quotes-head">
@@ -362,8 +409,30 @@ export function RequestDetailPage() {
                               Accept quote
                             </button>
                           )}
+                          {q.status === "ACCEPTED" &&
+                            lockedOrder?.quote_id === q.id &&
+                            showOtp && (
+                              <div className="request-detail-quote-otp">
+                                <span className="request-detail-quote-otp-label">OTP</span>
+                                <strong>{lockedOrder.completion_otp}</strong>
+                              </div>
+                            )}
                         </div>
                       </header>
+
+                      {q.status === "ACCEPTED" &&
+                        lockedOrder?.quote_id === q.id &&
+                        showOtp && (
+                          <p className="request-detail-quote-otp-hint muted">
+                            Deal locked — share this OTP only at handover.
+                            {lockedOrder.id && (
+                              <>
+                                {" "}
+                                <Link to={`/orders/${lockedOrder.id}`}>View order</Link>
+                              </>
+                            )}
+                          </p>
+                        )}
 
                       {q.message && <p className="consumer-quote-message">{q.message}</p>}
 

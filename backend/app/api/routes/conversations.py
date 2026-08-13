@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_roles
@@ -21,7 +21,36 @@ def _recent_cutoff() -> datetime:
     return datetime.now(timezone.utc) - timedelta(days=RECENT_INQUIRY_DAYS)
 
 
-def _conversation_out(db: Session, conv: Conversation) -> ConversationOut:
+def _unread_for_viewer(db: Session, conv: Conversation, viewer: User) -> int:
+    """Count messages from the other party that the viewer has not read yet."""
+    other_id = conv.provider_id if viewer.id == conv.consumer_id else conv.consumer_id
+    last_read = (
+        conv.consumer_last_read_at
+        if viewer.id == conv.consumer_id
+        else conv.provider_last_read_at
+    )
+    filters = [
+        InquiryMessage.conversation_id == conv.id,
+        InquiryMessage.sender_id == other_id,
+    ]
+    if last_read is not None:
+        filters.append(InquiryMessage.created_at > last_read)
+    return int(
+        db.scalar(select(func.count()).select_from(InquiryMessage).where(and_(*filters))) or 0
+    )
+
+
+def _mark_read(db: Session, conv: Conversation, viewer: User) -> None:
+    now = datetime.now(timezone.utc)
+    if viewer.id == conv.consumer_id:
+        conv.consumer_last_read_at = now
+    elif viewer.id == conv.provider_id:
+        conv.provider_last_read_at = now
+    db.add(conv)
+    db.commit()
+
+
+def _conversation_out(db: Session, conv: Conversation, viewer: User | None = None) -> ConversationOut:
     consumer = db.get(User, conv.consumer_id)
     provider = db.get(User, conv.provider_id)
     profile = db.query(ProviderProfile).filter(ProviderProfile.user_id == conv.provider_id).first()
@@ -43,6 +72,7 @@ def _conversation_out(db: Session, conv: Conversation) -> ConversationOut:
         provider_business_name=profile.business_name if profile else None,
         provider_is_online=effective_is_online(profile) if profile else None,
         last_message=last.body if last else None,
+        unread_count=_unread_for_viewer(db, conv, viewer) if viewer else 0,
     )
 
 
@@ -63,7 +93,7 @@ def list_conversations(
         )
         .order_by(Conversation.updated_at.desc())
     ).all()
-    return [_conversation_out(db, c) for c in rows]
+    return [_conversation_out(db, c, viewer=current_user) for c in rows]
 
 
 @router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -98,9 +128,11 @@ async def start_conversation(
             Conversation.provider_id == payload.provider_id,
         )
     )
+    created_new = False
     if existing:
         conv = existing
     else:
+        created_new = True
         conv = Conversation(
             consumer_id=current_user.id,
             provider_id=payload.provider_id,
@@ -109,7 +141,7 @@ async def start_conversation(
         db.add(conv)
         db.flush()
 
-    if payload.initial_message:
+    if payload.initial_message and created_new:
         msg = InquiryMessage(
             conversation_id=conv.id,
             sender_id=current_user.id,
@@ -136,7 +168,7 @@ async def start_conversation(
         db.commit()
         db.refresh(conv)
 
-    return _conversation_out(db, conv)
+    return _conversation_out(db, conv, viewer=current_user)
 
 
 @router.post("/with-consumer", response_model=ConversationOut, status_code=status.HTTP_201_CREATED)
@@ -162,9 +194,11 @@ async def start_conversation_as_provider(
             Conversation.provider_id == current_user.id,
         )
     )
+    created_new = False
     if existing:
         conv = existing
     else:
+        created_new = True
         conv = Conversation(
             consumer_id=payload.consumer_id,
             provider_id=current_user.id,
@@ -173,7 +207,7 @@ async def start_conversation_as_provider(
         db.add(conv)
         db.flush()
 
-    if payload.initial_message:
+    if payload.initial_message and created_new:
         msg = InquiryMessage(
             conversation_id=conv.id,
             sender_id=current_user.id,
@@ -200,7 +234,7 @@ async def start_conversation_as_provider(
         db.commit()
         db.refresh(conv)
 
-    return _conversation_out(db, conv)
+    return _conversation_out(db, conv, viewer=current_user)
 
 
 @router.get("/{conversation_id}", response_model=ConversationOut)
@@ -212,7 +246,7 @@ def get_conversation(
     conv = db.get(Conversation, conversation_id)
     if not conv or current_user.id not in (conv.consumer_id, conv.provider_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
-    return _conversation_out(db, conv)
+    return _conversation_out(db, conv, viewer=current_user)
 
 
 @router.get("/{conversation_id}/messages", response_model=list[InquiryMessageOut])
@@ -224,13 +258,15 @@ def list_inquiry_messages(
     conv = db.get(Conversation, conversation_id)
     if not conv or current_user.id not in (conv.consumer_id, conv.provider_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
-    return list(
+    rows = list(
         db.scalars(
             select(InquiryMessage)
             .where(InquiryMessage.conversation_id == conversation_id)
             .order_by(InquiryMessage.created_at.asc())
         ).all()
     )
+    _mark_read(db, conv, current_user)
+    return rows
 
 
 @router.post(

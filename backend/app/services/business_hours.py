@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, time, timedelta, timezone
 
-from app.db.models import ProviderProfile
+from app.db.models import ProviderProfile, VerificationStatus
 
 # Marketplace operates in India; open/close times are local wall-clock HH:MM.
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -34,13 +34,13 @@ def is_within_business_hours(
 ) -> bool:
     """
     True when current IST time is inside [opens, closes).
-    If either time is missing/invalid, hours do not restrict (returns True).
+    If either time is missing/invalid, returns False (not open).
     Supports overnight windows (e.g. 22:00–06:00).
     """
     opens = parse_hhmm(opening_time)
     closes = parse_hhmm(closing_time)
     if opens is None or closes is None:
-        return True
+        return False
 
     current = now.astimezone(IST) if now else datetime.now(IST)
     now_t = current.time().replace(second=0, microsecond=0)
@@ -57,20 +57,17 @@ def is_within_business_hours(
 
 
 def effective_is_online(profile: ProviderProfile, *, now: datetime | None = None) -> bool:
-    """Provider counts as online only if flagged online and currently within hours."""
-    if not profile.is_online:
+    """Online when approved and current IST time is within Opens–Closes."""
+    if profile.verification_status != VerificationStatus.APPROVED:
         return False
     return is_within_business_hours(profile.opening_time, profile.closing_time, now=now)
 
 
 def sync_online_flag_with_hours(profile: ProviderProfile, *, now: datetime | None = None) -> bool:
     """
-    If outside Opens–Closes, clear is_online so the stored flag matches reality.
+    Keep stored is_online aligned with Opens–Closes (and approval).
     Returns the effective online status after sync.
     """
-    if not profile.is_online:
-        return False
-    if is_within_business_hours(profile.opening_time, profile.closing_time, now=now):
-        return True
-    profile.is_online = False
-    return False
+    online = effective_is_online(profile, now=now)
+    profile.is_online = online
+    return online

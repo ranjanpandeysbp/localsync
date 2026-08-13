@@ -247,6 +247,7 @@ class ConversationOut(BaseModel):
     provider_business_name: str | None = None
     provider_is_online: bool | None = None
     last_message: str | None = None
+    unread_count: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -409,6 +410,12 @@ class QuoteCreate(BaseModel):
     attachment_ids: list[UUID] = Field(default_factory=list)
 
 
+class QuoteUpdate(BaseModel):
+    price_quote: float | None = Field(default=None, gt=0)
+    estimated_days: int | None = Field(default=None, gt=0, le=365)
+    message: str | None = None
+
+
 class QuoteOut(BaseModel):
     id: UUID
     request_id: UUID
@@ -423,7 +430,9 @@ class QuoteOut(BaseModel):
     provider_name: str | None = None
     provider_rating: float | None = None
     request_title: str | None = None
+    consumer_id: UUID | None = None
     consumer_name: str | None = None
+    category_id: int | None = None
     provider_trust: ProviderTrustInfo | None = None
     attachments: list[AttachmentOut] = Field(default_factory=list)
 

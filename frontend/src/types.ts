@@ -245,7 +245,9 @@ export interface Quote {
   provider_name?: string | null;
   provider_rating?: number | null;
   request_title?: string | null;
+  consumer_id?: string | null;
   consumer_name?: string | null;
+  category_id?: number | null;
   provider_trust?: ProviderTrustInfo | null;
   attachments?: Attachment[];
 }
@@ -421,6 +423,7 @@ export interface Conversation {
   provider_business_name?: string | null;
   provider_is_online?: boolean | null;
   last_message?: string | null;
+  unread_count?: number;
 }
 
 export interface InquiryMessage {

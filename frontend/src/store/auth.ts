@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api } from "../services/api";
 import type { User } from "../types";
+import { markLogoutNavigation, consumeLogoutNavigation } from "../utils/logoutNav";
 
 interface AuthState {
   token: string | null;
@@ -21,11 +22,13 @@ export const useAuth = create<AuthState>((set, get) => ({
   loading: true,
 
   setSession: (token, user) => {
+    consumeLogoutNavigation();
     localStorage.setItem("ls_token", token);
     set({ token, user, loading: false });
   },
 
   logout: () => {
+    markLogoutNavigation();
     localStorage.removeItem("ls_token");
     set({ token: null, user: null, loading: false });
   },
@@ -57,6 +60,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       phone_number: phone,
       password,
     });
+    consumeLogoutNavigation();
     localStorage.setItem("ls_token", tokenData.access_token);
     const { data: user } = await api.get<User>("/auth/me");
     set({ token: tokenData.access_token, user, loading: false });

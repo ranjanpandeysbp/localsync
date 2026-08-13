@@ -20,7 +20,7 @@ from app.db.models import (
     VerificationStatus,
 )
 from app.db.session import get_db
-from app.schemas import OrderAccept, OrderComplete, OrderOut, OrderStatusUpdate, QuoteCreate, QuoteOut
+from app.schemas import OrderAccept, OrderComplete, OrderOut, OrderStatusUpdate, QuoteCreate, QuoteOut, QuoteUpdate
 from app.services.redis_pubsub import redis_pubsub
 from app.services.ws_manager import ws_manager
 
@@ -48,7 +48,9 @@ def _quote_out(db: Session, quote: Quote) -> QuoteOut:
         provider_name=provider.full_name if provider else None,
         provider_rating=provider.average_rating if provider else None,
         request_title=req.title if req else None,
+        consumer_id=req.consumer_id if req else None,
         consumer_name=consumer.full_name if consumer else None,
+        category_id=req.category_id if req else None,
         provider_trust=build_provider_trust(db, quote.provider_id),
         attachments=list_attachments_for_quote(db, quote.id),
     )
@@ -136,6 +138,43 @@ async def create_quote(
     event = {"type": "new_quote", "payload": out.model_dump(mode="json")}
     await ws_manager.send_to_user(req.consumer_id, event)
     redis_pubsub.publish("new_quote", event["payload"], target_user_ids=[req.consumer_id])
+    return out
+
+
+@router.patch("/quotes/{quote_id}", response_model=QuoteOut)
+async def update_quote(
+    quote_id: UUID,
+    payload: QuoteUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROVIDER)),
+):
+    quote = db.get(Quote, quote_id)
+    if not quote or quote.provider_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Quote not found")
+    if quote.status != QuoteStatus.PENDING:
+        raise HTTPException(status_code=400, detail="Only pending quotes can be edited")
+
+    req = db.get(ServiceRequest, quote.request_id)
+    if not req or req.status != RequestStatus.ACTIVE:
+        raise HTTPException(status_code=400, detail="Request is no longer open for quote updates")
+
+    if payload.price_quote is None and payload.estimated_days is None and payload.message is None:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+
+    if payload.price_quote is not None:
+        quote.price_quote = payload.price_quote
+    if payload.estimated_days is not None:
+        quote.estimated_days = payload.estimated_days
+    if payload.message is not None:
+        quote.message = payload.message.strip() or None
+
+    db.commit()
+    db.refresh(quote)
+
+    out = _quote_out(db, quote)
+    event = {"type": "quote_updated", "payload": out.model_dump(mode="json")}
+    await ws_manager.send_to_user(req.consumer_id, event)
+    redis_pubsub.publish("quote_updated", event["payload"], target_user_ids=[req.consumer_id])
     return out
 
 

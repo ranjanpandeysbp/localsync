@@ -66,9 +66,7 @@ def find_providers_in_radius(
             ),
         ),
     ]
-    if online_only:
-        filters.append(ProviderProfile.is_online.is_(True))
-    if verified_only:
+    if online_only or verified_only:
         filters.append(ProviderProfile.verification_status == VerificationStatus.APPROVED)
 
     stmt = (
@@ -127,9 +125,7 @@ def find_providers_by_pincode(
             ),
         ),
     ]
-    if online_only:
-        filters.append(ProviderProfile.is_online.is_(True))
-    if verified_only:
+    if online_only or verified_only:
         filters.append(ProviderProfile.verification_status == VerificationStatus.APPROVED)
 
     stmt = (
@@ -162,9 +158,7 @@ def find_all_providers_in_radius(
         ProviderProfile.base_location.is_not(None),
         ST_DWithin(ProviderProfile.base_location, request_point, radius_m),
     ]
-    if online_only:
-        filters.append(ProviderProfile.is_online.is_(True))
-    if verified_only:
+    if online_only or verified_only:
         filters.append(ProviderProfile.verification_status == VerificationStatus.APPROVED)
 
     stmt = (
@@ -193,9 +187,7 @@ def find_all_providers_by_pincode(
         return []
 
     filters = [User.pincode == pin]
-    if online_only:
-        filters.append(ProviderProfile.is_online.is_(True))
-    if verified_only:
+    if online_only or verified_only:
         filters.append(ProviderProfile.verification_status == VerificationStatus.APPROVED)
 
     stmt = (

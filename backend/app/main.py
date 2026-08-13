@@ -81,11 +81,27 @@ def _run_startup_migrations() -> None:
             "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS public_slug VARCHAR(100)",
             "ALTER TABLE admin_conversations ADD COLUMN IF NOT EXISTS provider_last_read_at TIMESTAMPTZ",
             "ALTER TABLE admin_conversations ADD COLUMN IF NOT EXISTS admin_last_read_at TIMESTAMPTZ",
+            "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS consumer_last_read_at TIMESTAMPTZ",
+            "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS provider_last_read_at TIMESTAMPTZ",
         ):
             try:
                 conn.execute(text(stmt))
             except Exception as exc:
                 print(f"[startup] skip: {stmt[:60]}… ({exc})")
+
+        try:
+            conn.execute(
+                text(
+                    """
+                    UPDATE conversations
+                    SET consumer_last_read_at = COALESCE(consumer_last_read_at, updated_at, NOW()),
+                        provider_last_read_at = COALESCE(provider_last_read_at, updated_at, NOW())
+                    WHERE consumer_last_read_at IS NULL OR provider_last_read_at IS NULL
+                    """
+                )
+            )
+        except Exception as exc:
+            print(f"[startup] conversation last_read backfill: {exc}")
 
         try:
             conn.execute(

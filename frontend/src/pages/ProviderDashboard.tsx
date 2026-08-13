@@ -1,28 +1,30 @@
-import { FormEvent, useEffect, useState } from "react";
-import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
-import { AttachmentGallery, FilePicker } from "../components/Attachments";
+import { AttachmentGallery } from "../components/Attachments";
+import { EditQuoteModal } from "../components/EditQuoteModal";
+import { CompleteOrderModal } from "../components/CompleteOrderModal";
 import { InquiryChatPanel, startProviderChatWithConsumer } from "../components/InquiryChat";
 import { MapsLink } from "../components/MapsLink";
 import { offerKindClass, offerKindLabel } from "../components/ProviderTrust";
+import { SubmitQuoteModal } from "../components/SubmitQuoteModal";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { api } from "../services/api";
 import { isMeaningfulLocationLabel } from "../services/geo";
-import { uploadFiles } from "../services/uploads";
 import { useProviderNav } from "../store/providerNav";
 import { useAuth } from "../store/auth";
+import { isProviderOnlineNow } from "../utils/businessHours";
 import type { AdminSupportConversation, Conversation, Order, ProviderProfile, Quote, ServiceRequest } from "../types";
 
 type ProviderSection =
   | "overview"
-  | "inquiries"
   | "support"
   | "requests"
-  | "quote"
   | "quotes"
   | "orders";
 
 type OverviewAccordion = "storefront" | "location";
+type SentQuoteFilter = "all" | "pending" | "accepted" | "upcoming";
 
 function AccordionChevron() {
   return (
@@ -43,10 +45,8 @@ function AccordionChevron() {
 
 const SECTIONS: ProviderSection[] = [
   "overview",
-  "inquiries",
   "support",
   "requests",
-  "quote",
   "quotes",
   "orders",
 ];
@@ -55,24 +55,22 @@ const REVOKED_SECTIONS: ProviderSection[] = ["overview", "support"];
 
 const TITLES: Record<ProviderSection, string> = {
   overview: "Overview",
-  inquiries: "Consumer inquiries",
   support: "Admin messages",
-  requests: "Nearby requests",
-  quote: "Submit quote",
+  requests: "Incoming requests",
   quotes: "My sent quotes",
   orders: "Orders",
 };
 
-type QuoteNavState = { request_id?: string; message?: string };
-
 export function ProviderDashboard() {
   const { section } = useParams<{ section?: string }>();
+  const isLegacyQuoteRoute = section === "quote";
   const tab = (
-    section && SECTIONS.includes(section as ProviderSection) ? section : "overview"
+    !isLegacyQuoteRoute && section && SECTIONS.includes(section as ProviderSection)
+      ? section
+      : "overview"
   ) as ProviderSection;
-  const invalidSection = !!section && !SECTIONS.includes(section as ProviderSection);
-  const navigate = useNavigate();
-  const location = useLocation();
+  const invalidSection =
+    !!section && !isLegacyQuoteRoute && !SECTIONS.includes(section as ProviderSection);
 
   const [profile, setProfile] = useState<ProviderProfile | null>(null);
   const [feed, setFeed] = useState<ServiceRequest[]>([]);
@@ -88,19 +86,35 @@ export function ProviderDashboard() {
   const refreshAdminUnread = useProviderNav((s) => s.refreshAdminUnread);
   const refreshUser = useAuth((s) => s.refreshUser);
   const [toast, setToast] = useState("");
-  const [busy, setBusy] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [overviewAccordion, setOverviewAccordion] = useState<OverviewAccordion | null>(
     "storefront",
   );
-  const [files, setFiles] = useState<File[]>([]);
+  const [quoteTarget, setQuoteTarget] = useState<ServiceRequest | null>(null);
+  const [editingQuote, setEditingQuote] = useState<Quote | null>(null);
+  const [completingQuote, setCompletingQuote] = useState<Quote | null>(null);
+  const [sentQuoteFilter, setSentQuoteFilter] = useState<SentQuoteFilter>("all");
+  const [sentQuoteSearchDraft, setSentQuoteSearchDraft] = useState("");
+  const [sentQuoteSearch, setSentQuoteSearch] = useState("");
   const [loc, setLoc] = useState({ longitude: "77.5946", latitude: "12.9716", max_radius_km: "10" });
-  const [quoteForm, setQuoteForm] = useState({
-    request_id: "",
-    price_quote: "",
-    estimated_days: "1",
-    message: "",
-  });
+  const [hoursTick, setHoursTick] = useState(0);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setHoursTick((n) => n + 1), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const openNow = useMemo(
+    () =>
+      isProviderOnlineNow({
+        opening_time: profile?.opening_time,
+        closing_time: profile?.closing_time,
+        verification_status: profile?.verification_status,
+      }),
+    // Recompute when profile hours change or the clock ticks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [profile?.opening_time, profile?.closing_time, profile?.verification_status, hoursTick],
+  );
 
   const { connected } = useWebSocket((msg) => {
     const m = msg as {
@@ -120,6 +134,9 @@ export function ProviderDashboard() {
     if (m.type === "inquiry_message") {
       setToast("New inquiry from a consumer");
       void loadConversations();
+    }
+    if (m.type === "order_confirmed" || m.type === "order_completed" || m.type === "order_status") {
+      void refresh();
     }
     if (m.type === "admin_message") {
       if (m.payload?.reason === "provider_revoked") {
@@ -199,20 +216,85 @@ export function ProviderDashboard() {
   }
 
   useEffect(() => {
-    if (!invalidSection) void refresh();
-  }, [tab, invalidSection]);
+    if (!invalidSection && !isLegacyQuoteRoute) void refresh();
+  }, [tab, invalidSection, isLegacyQuoteRoute]);
 
   useEffect(() => {
-    const state = location.state as QuoteNavState | null;
-    if (state?.request_id) {
-      setQuoteForm((f) => ({
-        ...f,
-        request_id: state.request_id || "",
-        message: state.message || f.message,
-      }));
-      navigate(location.pathname, { replace: true, state: null });
+    if (tab !== "requests" || invalidSection || isLegacyQuoteRoute) return;
+    const timer = window.setInterval(() => {
+      void api
+        .get<ServiceRequest[]>("/requests/feed")
+        .then(({ data }) => setFeed(data))
+        .catch(() => {
+          /* keep current list on poll failure */
+        });
+    }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [tab, invalidSection, isLegacyQuoteRoute]);
+
+  const activeSentQuotes = useMemo(() => {
+    const completedQuoteIds = new Set(
+      orders.filter((o) => o.status === "COMPLETED").map((o) => o.quote_id),
+    );
+    return sentQuotes.filter((q) => !completedQuoteIds.has(q.id));
+  }, [sentQuotes, orders]);
+
+  const sentQuoteFilterCounts = useMemo(() => {
+    let pending = 0;
+    let accepted = 0;
+    let upcoming = 0;
+    for (const q of activeSentQuotes) {
+      if (q.status === "PENDING") pending += 1;
+      if (q.status === "ACCEPTED") {
+        accepted += 1;
+        const order = orders.find((o) => o.quote_id === q.id);
+        if (
+          order &&
+          (order.status === "CONFIRMED" || order.status === "IN_PROGRESS")
+        ) {
+          upcoming += 1;
+        }
+      }
     }
-  }, [location.state, location.pathname, navigate]);
+    return {
+      all: activeSentQuotes.length,
+      pending,
+      accepted,
+      upcoming,
+    };
+  }, [activeSentQuotes, orders]);
+
+  const filteredSentQuotes = useMemo(() => {
+    const query = sentQuoteSearch.trim().toLowerCase();
+    return activeSentQuotes.filter((q) => {
+      if (sentQuoteFilter === "pending" && q.status !== "PENDING") return false;
+      if (sentQuoteFilter === "accepted" && q.status !== "ACCEPTED") return false;
+      if (sentQuoteFilter === "upcoming") {
+        const order = orders.find((o) => o.quote_id === q.id);
+        const isUpcoming =
+          q.status === "ACCEPTED" &&
+          !!order &&
+          (order.status === "CONFIRMED" || order.status === "IN_PROGRESS");
+        if (!isUpcoming) return false;
+      }
+      if (!query) return true;
+      const haystack = [
+        q.request_title,
+        q.consumer_name,
+        q.message,
+        q.status,
+        String(q.price_quote),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [activeSentQuotes, orders, sentQuoteFilter, sentQuoteSearch]);
+
+  if (isLegacyQuoteRoute) {
+    return <Navigate to="/provider/requests" replace />;
+  }
 
   if (invalidSection) {
     return <Navigate to="/provider/overview" replace />;
@@ -249,70 +331,6 @@ export function ProviderDashboard() {
     );
   }
 
-  async function toggleOnline() {
-    if (!profile) {
-      setToast("Provider profile not loaded yet");
-      return;
-    }
-
-    const goingOnline = !profile.is_online;
-    try {
-      if (goingOnline) {
-        if (!loc.latitude || !loc.longitude) {
-          setToast("Set latitude and longitude, then save location before going online");
-          return;
-        }
-        await api.patch<ProviderProfile>("/providers/me", {
-          longitude: Number(loc.longitude),
-          latitude: Number(loc.latitude),
-          max_radius_km: Number(loc.max_radius_km || 10),
-        });
-      }
-
-      const { data } = await api.post<ProviderProfile>(
-        `/providers/me/online?online=${goingOnline}`,
-      );
-      setProfile(data);
-      setToast(data.is_online ? "You are now online" : "You are now offline");
-    } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data
-        ?.detail;
-      setToast(String(detail || "Could not update online status"));
-    }
-  }
-
-  async function submitQuote(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    try {
-      const uploaded = await uploadFiles(files);
-      await api.post("/quotes", {
-        request_id: quoteForm.request_id,
-        price_quote: Number(quoteForm.price_quote),
-        estimated_days: Number(quoteForm.estimated_days),
-        message: quoteForm.message || null,
-        attachment_ids: uploaded.map((a) => a.id),
-      });
-      setToast(`Quote submitted${uploaded.length ? ` with ${uploaded.length} file(s)` : ""}`);
-      setQuoteForm({ request_id: "", price_quote: "", estimated_days: "1", message: "" });
-      setFiles([]);
-      await refresh();
-    } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-        "Failed to submit quote";
-      setToast(String(msg));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function quoteThis(r: ServiceRequest) {
-    navigate("/provider/quote", {
-      state: { request_id: r.id, message: `Re: ${r.title}` } satisfies QuoteNavState,
-    });
-  }
-
   async function chatAboutRequest(r: ServiceRequest) {
     try {
       const conv = await startProviderChatWithConsumer(
@@ -324,6 +342,31 @@ export function ProviderDashboard() {
       setActiveChatTitle("Consumer");
       await loadConversations();
       setToast("Chat opened — ask questions before sending your quote");
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        "Cannot start chat";
+      setToast(String(msg));
+    }
+  }
+
+  async function chatAboutQuote(q: Quote) {
+    if (!q.consumer_id) {
+      setToast("Consumer details unavailable for chat");
+      return;
+    }
+    try {
+      const conv = await startProviderChatWithConsumer(
+        q.consumer_id,
+        q.category_id,
+        q.request_title
+          ? `Hi, following up on my quote for "${q.request_title}".`
+          : "Hi, following up on my quote.",
+      );
+      setActiveChatId(conv.id);
+      setActiveChatTitle(q.consumer_name || "Consumer");
+      await loadConversations();
+      setToast("Chat opened with consumer");
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
@@ -346,6 +389,43 @@ export function ProviderDashboard() {
           {toast}
         </div>
       )}
+
+      <SubmitQuoteModal
+        open={!!quoteTarget}
+        request={quoteTarget}
+        onClose={() => setQuoteTarget(null)}
+        onSuccess={(message) => {
+          setToast(message);
+          void refresh();
+        }}
+      />
+
+      <EditQuoteModal
+        open={!!editingQuote}
+        quote={editingQuote}
+        onClose={() => setEditingQuote(null)}
+        onSuccess={(updated, message) => {
+          setToast(message);
+          setSentQuotes((prev) => prev.map((q) => (q.id === updated.id ? updated : q)));
+          void refresh();
+        }}
+      />
+
+      <CompleteOrderModal
+        open={!!completingQuote}
+        quote={completingQuote}
+        order={
+          completingQuote
+            ? orders.find((o) => o.quote_id === completingQuote.id) || null
+            : null
+        }
+        onClose={() => setCompletingQuote(null)}
+        onSuccess={(completed, message) => {
+          setToast(message);
+          setOrders((prev) => prev.map((o) => (o.id === completed.id ? completed : o)));
+          void refresh();
+        }}
+      />
 
       {tab === "overview" && (
         <div className="provider-overview">
@@ -391,11 +471,11 @@ export function ProviderDashboard() {
                 <div className="provider-overview-status">
                   <span
                     className={`provider-overview-status-pill ${
-                      profile?.is_online ? "is-online" : "is-offline"
+                      openNow ? "is-online" : "is-offline"
                     }`}
                   >
                     <span className="provider-overview-status-dot" aria-hidden="true" />
-                    {profile?.is_online ? "Online now" : "Offline"}
+                    {openNow ? "Online now" : "Offline"}
                   </span>
                   {profile?.opening_time && profile?.closing_time && (
                     <span className="provider-overview-chip" title="Business hours (IST)">
@@ -412,18 +492,6 @@ export function ProviderDashboard() {
             </div>
 
             <div className="provider-overview-actions">
-              <button
-                className={`btn ${profile?.is_online ? "secondary" : ""}`}
-                type="button"
-                disabled={
-                  !profile ||
-                  isLimited ||
-                  (!profile.is_online && profile.verification_status !== "APPROVED")
-                }
-                onClick={() => void toggleOnline()}
-              >
-                Go {profile?.is_online ? "offline" : "online"}
-              </button>
               <Link
                 className="btn secondary provider-overview-edit"
                 to="/profile"
@@ -452,9 +520,17 @@ export function ProviderDashboard() {
 
           {profile?.verification_status === "PENDING" && (
             <p className="provider-overview-banner pending">
-              Finish My profile, then wait for admin verification before going online.
+              Finish My profile, then wait for admin verification. Online status follows your
+              Opens–Closes hours after approval.
             </p>
           )}
+          {profile?.verification_status === "APPROVED" &&
+            !(profile.opening_time && profile.closing_time) && (
+              <p className="provider-overview-banner pending">
+                Set Opens and Closes in My profile so your Online/Offline status can update
+                automatically.
+              </p>
+            )}
           {profile?.verification_status === "REJECTED" && (
             <p className="provider-overview-banner error">
               Your verification was rejected. You can update My profile and message admin.
@@ -475,7 +551,7 @@ export function ProviderDashboard() {
               const kpiItems = [
                 {
                   key: "requests",
-                  label: "Nearby requests",
+                  label: "Incoming requests",
                   value: feed.length,
                   to: "/provider/requests",
                   accent: true,
@@ -648,16 +724,12 @@ export function ProviderDashboard() {
                       {!isLimited && (
                         <>
                           <Link className="provider-overview-shortcut" to="/provider/requests">
-                            <strong>Nearby requests</strong>
+                            <strong>Incoming requests</strong>
                             <span className="muted">Review leads in your radius</span>
                           </Link>
                           <Link className="provider-overview-shortcut" to="/provider/orders">
                             <strong>Orders</strong>
                             <span className="muted">Track active work</span>
-                          </Link>
-                          <Link className="provider-overview-shortcut" to="/provider/inquiries">
-                            <strong>Inquiries</strong>
-                            <span className="muted">Chat with interested buyers</span>
                           </Link>
                         </>
                       )}
@@ -784,53 +856,6 @@ export function ProviderDashboard() {
         </div>
       )}
 
-      {tab === "inquiries" && (
-        <div className="page-stack">
-          <header className="page-hero">
-            <p className="dash-eyebrow">Messages</p>
-            <h2>Consumer inquiries</h2>
-            <p className="page-lead">Pre-request questions from consumers while you are online.</p>
-          </header>
-          <section className="page-panel">
-            {activeChatId ? (
-              <InquiryChatPanel
-                conversationId={activeChatId}
-                mode="inline"
-                title={activeChatTitle}
-                subtitle="Consumer inquiry"
-                avatarLabel={activeChatTitle}
-                autoFocus
-                emptyHint="Reply to this consumer’s questions."
-                placeholder="Write a reply…"
-                onClose={() => setActiveChatId(null)}
-              />
-            ) : (
-              <div className="page-list list">
-                {conversations.length === 0 && <p className="page-empty">No inquiries yet.</p>}
-                {conversations.map((c) => (
-                  <div key={c.id} className="list-item">
-                    <strong>{c.consumer_name}</strong>
-                    <div className="muted">{c.last_message || "Opened a chat"}</div>
-                    <div className="page-actions">
-                      <button
-                        className="btn secondary"
-                        type="button"
-                        onClick={() => {
-                          setActiveChatId(c.id);
-                          setActiveChatTitle(c.consumer_name || "Consumer");
-                        }}
-                      >
-                        Reply
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-        </div>
-      )}
-
       {tab === "support" && (
         <div className="page-stack">
           <header className="page-hero">
@@ -895,7 +920,7 @@ export function ProviderDashboard() {
         <div className="page-stack">
           <header className="page-hero">
             <p className="dash-eyebrow">Leads</p>
-            <h2>Nearby requests</h2>
+            <h2>Incoming requests</h2>
             <p className="page-lead">
               Chat to clarify details, then send a quote. After the consumer accepts, agree delivery
               and payment on the order and complete with OTP.
@@ -934,7 +959,7 @@ export function ProviderDashboard() {
                     >
                       Chat & ask
                     </button>
-                    <button className="btn" type="button" onClick={() => quoteThis(r)}>
+                    <button className="btn" type="button" onClick={() => setQuoteTarget(r)}>
                       Send quote
                     </button>
                   </div>
@@ -945,91 +970,213 @@ export function ProviderDashboard() {
         </div>
       )}
 
-      {tab === "quote" && (
-        <div className="page-stack narrow">
-          <header className="page-hero">
-            <p className="dash-eyebrow">Quotes</p>
-            <h2>Submit quote</h2>
-            <p className="page-lead">
-              Pick a request from Nearby requests, or paste a request ID.
-            </p>
-          </header>
-          <form className="page-panel page-form" onSubmit={submitQuote}>
-            <div className="field">
-              <label>Request ID</label>
-              <input
-                required
-                value={quoteForm.request_id}
-                onChange={(e) => setQuoteForm({ ...quoteForm, request_id: e.target.value })}
-              />
-            </div>
-            <div className="field">
-              <label>Price (₹)</label>
-              <input
-                required
-                type="number"
-                min={1}
-                value={quoteForm.price_quote}
-                onChange={(e) => setQuoteForm({ ...quoteForm, price_quote: e.target.value })}
-              />
-            </div>
-            <div className="field">
-              <label>ETA (days)</label>
-              <input
-                required
-                type="number"
-                min={1}
-                max={365}
-                value={quoteForm.estimated_days}
-                onChange={(e) => setQuoteForm({ ...quoteForm, estimated_days: e.target.value })}
-              />
-            </div>
-            <div className="field">
-              <label>Message</label>
-              <textarea
-                rows={2}
-                value={quoteForm.message}
-                onChange={(e) => setQuoteForm({ ...quoteForm, message: e.target.value })}
-              />
-            </div>
-            <FilePicker files={files} onChange={setFiles} disabled={busy} />
-            <div className="page-actions">
-              <button className="btn" type="submit" disabled={busy}>
-                {busy ? "Uploading & sending…" : "Send quote"}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
       {tab === "quotes" && (
         <div className="page-stack">
           <header className="page-hero">
             <p className="dash-eyebrow">Quotes</p>
             <h2>My sent quotes</h2>
             <p className="page-lead">Quotes you have sent to consumers.</p>
-          </header>
-          <section className="page-panel">
-            <div className="page-list list">
-              {sentQuotes.length === 0 && <p className="page-empty">No quotes sent yet.</p>}
-              {sentQuotes.map((q) => (
-                <div key={q.id} className="list-item">
-                  <strong>
-                    ₹{q.price_quote} · ETA {q.estimated_days} day
-                    {q.estimated_days === 1 ? "" : "s"}
-                  </strong>
-                  <div className="muted">
-                    {q.request_title || "Request"} · for {q.consumer_name || "consumer"} ·{" "}
-                    {q.status}
-                  </div>
-                  {q.message && <p>{q.message}</p>}
-                  <AttachmentGallery attachments={q.attachments} />
-                  <div className="muted" style={{ fontSize: "0.8rem" }}>
-                    {new Date(q.created_at).toLocaleString()}
-                  </div>
+            <div className="provider-sent-quotes-tools">
+              <div className="dash-segment" role="tablist" aria-label="Filter sent quotes">
+                {(
+                  [
+                    { id: "all", label: "All" },
+                    { id: "pending", label: "Pending" },
+                    { id: "accepted", label: "Accepted" },
+                    { id: "upcoming", label: "Upcoming" },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={sentQuoteFilter === opt.id}
+                    className={`dash-segment-btn ${sentQuoteFilter === opt.id ? "active" : ""}`}
+                    onClick={() => setSentQuoteFilter(opt.id)}
+                  >
+                    {opt.label}
+                    <span className="consumer-requests-count">
+                      {sentQuoteFilterCounts[opt.id]}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <form
+                className="provider-sent-quotes-search-row"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  setSentQuoteSearch(sentQuoteSearchDraft.trim());
+                }}
+              >
+                <div className="field provider-sent-quotes-search">
+                  <label htmlFor="sent-quote-search">Search requests</label>
+                  <input
+                    id="sent-quote-search"
+                    type="search"
+                    value={sentQuoteSearchDraft}
+                    placeholder="Request title, consumer, message…"
+                    onChange={(e) => setSentQuoteSearchDraft(e.target.value)}
+                    autoComplete="off"
+                  />
                 </div>
-              ))}
+                <button className="btn" type="submit">
+                  Search
+                </button>
+                {sentQuoteSearch && (
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={() => {
+                      setSentQuoteSearchDraft("");
+                      setSentQuoteSearch("");
+                    }}
+                  >
+                    Clear
+                  </button>
+                )}
+              </form>
             </div>
+          </header>
+          <section className="provider-sent-quotes-panel">
+            {activeChatId && (
+              <InquiryChatPanel
+                conversationId={activeChatId}
+                mode="overlay"
+                title={activeChatTitle}
+                subtitle="Quote follow-up"
+                avatarLabel={activeChatTitle}
+                autoFocus
+                emptyHint="Follow up on your quote with the consumer."
+                placeholder="Write a message…"
+                onClose={() => setActiveChatId(null)}
+                onMessagesLoaded={() => void loadConversations()}
+              />
+            )}
+            {activeSentQuotes.length === 0 ? (
+              <div className="dash-surface provider-sent-quotes-empty">
+                <h3>No open quotes</h3>
+                <p className="muted">Completed deals move to Orders after you finish them.</p>
+              </div>
+            ) : filteredSentQuotes.length === 0 ? (
+              <div className="dash-surface provider-sent-quotes-empty">
+                <h3>No matches</h3>
+                <p className="muted">
+                  {sentQuoteSearch
+                    ? `Nothing matched “${sentQuoteSearch}”. Try another search or filter.`
+                    : "No quotes in this filter."}
+                </p>
+              </div>
+            ) : (
+              <div className="provider-sent-quotes-grid">
+                {filteredSentQuotes.map((q) => {
+                  const statusKey = q.status.toLowerCase();
+                  const canEdit = q.status === "PENDING";
+                  const linkedOrder = orders.find((o) => o.quote_id === q.id) || null;
+                  const canComplete =
+                    !!linkedOrder &&
+                    linkedOrder.status !== "COMPLETED" &&
+                    linkedOrder.status !== "CANCELLED";
+                  const unread =
+                    conversations.find((c) => c.consumer_id === q.consumer_id)?.unread_count || 0;
+                  const consumerLabel = q.consumer_name || "Consumer";
+                  const initial = (q.request_title || consumerLabel).trim().slice(0, 1).toUpperCase() || "Q";
+                  return (
+                    <article
+                      key={q.id}
+                      className={`provider-sent-quote-card status-${statusKey}`}
+                    >
+                      <div className="provider-sent-quote-accent" aria-hidden="true" />
+                      <div className="provider-sent-quote-body">
+                        <header className="provider-sent-quote-top">
+                          <span className="provider-sent-quote-mark" aria-hidden="true">
+                            {initial}
+                          </span>
+                          <div className="provider-sent-quote-identity">
+                            <div className="provider-sent-quote-topline">
+                              <span className={`pill quote-status ${statusKey}`}>{q.status}</span>
+                              {linkedOrder && (
+                                <span className={`pill order-status ${linkedOrder.status.toLowerCase()}`}>
+                                  {linkedOrder.status.replaceAll("_", " ")}
+                                </span>
+                              )}
+                            </div>
+                            <h3>{q.request_title || "Request"}</h3>
+                            <p className="muted provider-sent-quote-meta">
+                              For {consumerLabel}
+                              <span aria-hidden="true"> · </span>
+                              {new Date(q.created_at).toLocaleString()}
+                            </p>
+                          </div>
+                          <div className="provider-sent-quote-price">
+                            <span className="provider-sent-quote-price-label">Quote</span>
+                            <strong>₹{Number(q.price_quote).toLocaleString("en-IN")}</strong>
+                            <span className="muted">
+                              ETA {q.estimated_days} day{q.estimated_days === 1 ? "" : "s"}
+                            </span>
+                          </div>
+                        </header>
+
+                        {q.message && <p className="provider-sent-quote-message">{q.message}</p>}
+
+                        {(q.attachments?.length || 0) > 0 && (
+                          <div className="provider-sent-quote-attachments">
+                            <AttachmentGallery attachments={q.attachments} />
+                          </div>
+                        )}
+
+                        <footer className="provider-sent-quote-footer">
+                          {linkedOrder ? (
+                            <Link className="provider-sent-quote-order-link" to={`/orders/${linkedOrder.id}`}>
+                              Open order
+                            </Link>
+                          ) : (
+                            <span className="muted">Awaiting consumer response</span>
+                          )}
+                          <div className="provider-sent-quote-actions">
+                            {canEdit && (
+                              <button
+                                className="btn secondary btn-sm"
+                                type="button"
+                                onClick={() => setEditingQuote(q)}
+                              >
+                                Edit
+                              </button>
+                            )}
+                            {canComplete && (
+                              <button
+                                className="btn btn-sm"
+                                type="button"
+                                onClick={() => setCompletingQuote(q)}
+                              >
+                                Complete
+                              </button>
+                            )}
+                            <button
+                              className="btn secondary btn-sm provider-quote-chat-btn"
+                              type="button"
+                              disabled={!q.consumer_id}
+                              aria-label={
+                                unread > 0
+                                  ? `Chat with ${consumerLabel}, ${unread} unread`
+                                  : `Chat with ${consumerLabel}`
+                              }
+                              onClick={() => void chatAboutQuote(q)}
+                            >
+                              Chat
+                              {unread > 0 && (
+                                <span className="nav-badge provider-quote-chat-badge">
+                                  {unread > 99 ? "99+" : unread}
+                                </span>
+                              )}
+                            </button>
+                          </div>
+                        </footer>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
           </section>
         </div>
       )}
@@ -1044,16 +1191,35 @@ export function ProviderDashboard() {
           <section className="page-panel">
             <div className="page-list list">
               {orders.length === 0 && <p className="page-empty">No orders yet.</p>}
-              {orders.map((o) => (
-                <div key={o.id} className="list-item">
-                  <strong>
-                    ₹{o.agreed_price} · {o.status}
-                  </strong>
-                  <div>
-                    <Link to={`/orders/${o.id}`}>Open →</Link>
+              {orders.map((o) => {
+                const statusKey = o.status.toLowerCase();
+                return (
+                  <div key={o.id} className="list-item provider-order-row">
+                    <div className="provider-sent-quote-head">
+                      <div className="provider-sent-quote-main">
+                        <strong>₹{Number(o.agreed_price).toLocaleString("en-IN")}</strong>
+                        <span className={`pill order-status ${statusKey}`}>
+                          {o.status === "COMPLETED"
+                            ? "Completed"
+                            : o.status.replaceAll("_", " ")}
+                        </span>
+                      </div>
+                      <Link className="btn secondary btn-sm" to={`/orders/${o.id}`}>
+                        Open
+                      </Link>
+                    </div>
+                    <div className="muted" style={{ fontSize: "0.85rem" }}>
+                      {o.fulfillment_type.replaceAll("_", " ")}
+                      {o.payment_mode ? ` · ${o.payment_mode.replaceAll("_", " ")}` : ""}
+                      {" · "}
+                      {new Date(o.created_at).toLocaleString()}
+                      {o.completed_at
+                        ? ` · Completed ${new Date(o.completed_at).toLocaleString()}`
+                        : ""}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         </div>

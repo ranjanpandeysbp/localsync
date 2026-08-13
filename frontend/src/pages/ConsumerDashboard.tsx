@@ -26,6 +26,7 @@ import {
   type PostRequestDraft,
 } from "../utils/postRequestDraft";
 import { providerPublicPath } from "../utils/providerUrl";
+import { isProviderOnlineNow } from "../utils/businessHours";
 import type {
   CategoryTree,
   Conversation,
@@ -135,15 +136,31 @@ export function ConsumerDashboard() {
       : "Add GPS or a pincode in My profile to get nearby provider suggestions.";
 
   const { connected } = useWebSocket((msg) => {
-    const m = msg as { type?: string; payload?: Quote & { conversation_id?: string } };
+    const m = msg as {
+      type?: string;
+      payload?: Quote & { conversation_id?: string; request_id?: string };
+    };
     if (m.type === "new_quote") {
       void playQuoteBell();
       setToast(`New quote: ₹${m.payload?.price_quote}`);
       void refresh();
     }
+    if (m.type === "quote_updated") {
+      setToast(`Quote updated: ₹${m.payload?.price_quote}`);
+      void refresh();
+    }
     if (m.type === "inquiry_message") {
       setToast("New reply from a provider");
       void loadConversations();
+    }
+    if (m.type === "order_confirmed") {
+      const requestId = m.payload?.request_id;
+      if (requestId) {
+        setRequests((prev) =>
+          prev.map((r) => (r.id === requestId ? { ...r, status: "FULFILLED" } : r)),
+        );
+      }
+      void refresh();
     }
     if (m.type === "order_completed") {
       setToast("Order completed");
@@ -226,8 +243,29 @@ export function ConsumerDashboard() {
     if (form.category_id) void loadProviders(form.category_id);
   }, [form.category_id]);
 
-  const onlineProviders = useMemo(() => providers.filter((p) => p.is_online), [providers]);
-  const offlineProviders = useMemo(() => providers.filter((p) => !p.is_online), [providers]);
+  const onlineProviders = useMemo(
+    () =>
+      providers.filter((p) =>
+        isProviderOnlineNow({
+          opening_time: p.opening_time,
+          closing_time: p.closing_time,
+          verification_status: p.verification_status,
+        }),
+      ),
+    [providers],
+  );
+  const offlineProviders = useMemo(
+    () =>
+      providers.filter(
+        (p) =>
+          !isProviderOnlineNow({
+            opening_time: p.opening_time,
+            closing_time: p.closing_time,
+            verification_status: p.verification_status,
+          }),
+      ),
+    [providers],
+  );
   const tabProviders = providerTab === "online" ? onlineProviders : offlineProviders;
 
   const categoryNameById = useMemo(() => {
@@ -238,10 +276,16 @@ export function ConsumerDashboard() {
     return map;
   }, [tree]);
 
-  const activeRequests = useMemo(
-    () => requests.filter((r) => r.status === "ACTIVE"),
-    [requests],
-  );
+  const activeRequests = useMemo(() => {
+    // My requests = open work only. Fulfilled deals live under Orders / request quotes.
+    const lockedRequestIds = new Set<string>([
+      ...orders.map((o) => o.request_id),
+      ...receivedQuotes.filter((q) => q.status === "ACCEPTED").map((q) => q.request_id),
+    ]);
+    return requests.filter(
+      (r) => r.status === "ACTIVE" && !lockedRequestIds.has(r.id),
+    );
+  }, [requests, orders, receivedQuotes]);
 
   const filteredRequests = useMemo(() => {
     const q = requestSearch.trim().toLowerCase();
@@ -374,7 +418,11 @@ export function ConsumerDashboard() {
       setActiveChatMeta({
         businessName: provider.business_name || provider.full_name,
         ownerName: provider.full_name,
-        isOnline: !!provider.is_online,
+        isOnline: isProviderOnlineNow({
+          opening_time: provider.opening_time,
+          closing_time: provider.closing_time,
+          verification_status: provider.verification_status,
+        }),
       });
       await loadConversations();
     } catch (err: unknown) {
@@ -797,6 +845,11 @@ export function ConsumerDashboard() {
                 const initial = (p.business_name || "P").trim().slice(0, 1).toUpperCase();
                 const blurb = p.offerings_detail || p.description || "";
                 const selected = selectedProviders.includes(p.user_id);
+                const online = isProviderOnlineNow({
+                  opening_time: p.opening_time,
+                  closing_time: p.closing_time,
+                  verification_status: p.verification_status,
+                });
                 return (
                   <article
                     key={p.user_id}
@@ -810,8 +863,8 @@ export function ConsumerDashboard() {
                         </span>
                         <div className="consumer-provider-identity">
                           <div className="consumer-provider-topline">
-                            <span className={`pill ${p.is_online ? "online" : "offline"}`}>
-                              {p.is_online ? "Online" : "Offline"}
+                            <span className={`pill ${online ? "online" : "offline"}`}>
+                              {online ? "Online" : "Offline"}
                             </span>
                             {p.verification_status === "APPROVED" && (
                               <span className="pill online">Verified</span>

@@ -3,6 +3,7 @@ import { Link, NavLink, useNavigate, useSearchParams } from "react-router-dom";
 import { LoginModal } from "../components/LoginModal";
 import { PostRequestModal } from "../components/PostRequestModal";
 import { RegisterModal } from "../components/RegisterModal";
+import { CitySearchBox } from "../components/CitySearchBox";
 import { MapsLink } from "../components/MapsLink";
 import { MarketplaceScene } from "../components/MarketplaceScene";
 import { offerKindClass, offerKindLabel } from "../components/ProviderTrust";
@@ -10,7 +11,9 @@ import { CONSUMER_NAV } from "../nav/consumer";
 import { api } from "../services/api";
 import { reverseGeocodeDetails, isMeaningfulLocationLabel } from "../services/geo";
 import { useAuth } from "../store/auth";
+import { consumeLogoutNavigation } from "../utils/logoutNav";
 import { providerPublicPath } from "../utils/providerUrl";
+import { isProviderOnlineNow } from "../utils/businessHours";
 import {
   clearPostRequestDraft,
   majorityCategoryId,
@@ -20,6 +23,13 @@ import {
   savePostRequestDraft,
   type PostRequestDraft,
 } from "../utils/postRequestDraft";
+import {
+  findServiceCityByName,
+  matchServiceCity,
+  readSavedServiceCity,
+  saveServiceCity,
+  type ServiceCity,
+} from "../utils/serviceCities";
 import type {
   Category,
   CategoryTree,
@@ -36,6 +46,8 @@ type LocState = {
   label: string;
   status: "idle" | "locating" | "ready" | "denied";
 };
+
+type CityPopupReason = "no_location" | "out_of_area" | null;
 
 export function LandingPage() {
   const navigate = useNavigate();
@@ -61,33 +73,47 @@ export function LandingPage() {
   const [postDraft, setPostDraft] = useState<PostRequestDraft | null>(null);
   const [postModalOpen, setPostModalOpen] = useState(false);
   const [categoryMismatchPopup, setCategoryMismatchPopup] = useState(false);
-  const [editingPin, setEditingPin] = useState(false);
-  const [pinDraft, setPinDraft] = useState("");
-  const [pinPopup, setPinPopup] = useState(false);
-  const [loginOpen, setLoginOpen] = useState(
-    () => !signedIn && searchParams.get("login") === "1",
-  );
-  const [registerOpen, setRegisterOpen] = useState(
-    () => !signedIn && searchParams.get("register") === "1",
-  );
+  const [selectedCity, setSelectedCity] = useState<ServiceCity | null>(() => readSavedServiceCity());
+  const [cityDraft, setCityDraft] = useState(() => readSavedServiceCity()?.name || "");
+  const [cityPopupReason, setCityPopupReason] = useState<CityPopupReason>(null);
+  const selectedCityRef = useRef(selectedCity);
+  selectedCityRef.current = selectedCity;
+  /** After logout, skip auto city popup once (does not block Sign in). */
+  const skipAutoCityAfterLogoutRef = useRef(false);
+  // Auth modals are URL-driven so logout cleanup cannot fight intentional Sign in.
+  const loginOpen = !signedIn && searchParams.get("login") === "1";
+  const registerOpen = !signedIn && searchParams.get("register") === "1";
   const [navOpen, setNavOpen] = useState(() =>
     typeof window !== "undefined" ? window.matchMedia("(min-width: 961px)").matches : true,
   );
-  const [loc, setLoc] = useState<LocState>({
-    latitude: null,
-    longitude: null,
-    pincode: "",
-    label: "",
-    status: "idle",
+  const [loc, setLoc] = useState<LocState>(() => {
+    const saved = readSavedServiceCity();
+    if (saved) {
+      return {
+        latitude: saved.latitude,
+        longitude: saved.longitude,
+        pincode: saved.pincode,
+        label: saved.name,
+        status: "ready",
+      };
+    }
+    return {
+      latitude: null,
+      longitude: null,
+      pincode: "",
+      label: "",
+      status: "idle",
+    };
   });
 
   const hasCoords = loc.latitude != null && loc.longitude != null;
-  const hasLocation = hasCoords || loc.pincode.length === 6;
+  const hasLocation = hasCoords || Boolean(selectedCity);
   const matchHint = useMemo(() => {
+    if (selectedCity && hasCoords) return `Near ${selectedCity.name} · within 5 km`;
     if (hasCoords) return `Near ${loc.label || "you"} · within 5 km`;
-    if (loc.pincode.length === 6) return `In pincode ${loc.pincode}`;
-    return "Allow location or enter a pincode to see nearby providers";
-  }, [hasCoords, loc.label, loc.pincode]);
+    if (selectedCity) return `In ${selectedCity.name}`;
+    return "Choose a city or allow location to see nearby providers";
+  }, [hasCoords, loc.label, selectedCity]);
 
   const popularTree = useMemo(() => {
     if (!countsReady || !hasLocation) return tree;
@@ -97,13 +123,64 @@ export function LandingPage() {
   }, [tree, nearbyCounts, countsReady, hasLocation]);
 
   const browsing = Boolean(selected) && !searchDone;
+  const cityPopupOpen = cityPopupReason != null;
+
+  function applyCity(city: ServiceCity) {
+    saveServiceCity(city);
+    setSelectedCity(city);
+    setCityDraft(city.name);
+    setCityPopupReason(null);
+    setLoc((s) => ({
+      ...s,
+      label: city.name,
+      pincode: city.pincode,
+      latitude: city.latitude,
+      longitude: city.longitude,
+      status: "ready",
+    }));
+    setError("");
+  }
+
+  function openCityPopup(reason: Exclude<CityPopupReason, null>) {
+    if (skipAutoCityAfterLogoutRef.current) return;
+    const existing = selectedCityRef.current || readSavedServiceCity();
+    if (existing) {
+      // City already chosen — don't interrupt browsing.
+      setSelectedCity(existing);
+      setCityDraft(existing.name);
+      setCityPopupReason(null);
+      return;
+    }
+    setCityDraft("");
+    setCityPopupReason(reason);
+  }
+
+  function applySavedCityToLoc(city: ServiceCity) {
+    setLoc({
+      latitude: city.latitude,
+      longitude: city.longitude,
+      pincode: city.pincode,
+      label: city.name,
+      status: "ready",
+    });
+  }
 
   useEffect(() => {
+    // Logout landing: suppress auto city popup only. Do not touch auth URL params here —
+    // Sign in is URL-driven (?login=1) and must stay open when the user asks for it.
+    if (consumeLogoutNavigation()) {
+      skipAutoCityAfterLogoutRef.current = true;
+      setCityPopupReason(null);
+    }
+
     void api
       .get<CategoryTree[]>("/categories/tree")
       .then((res) => setTree(res.data))
       .catch(() => setError("Could not load categories"));
-    detectLocation();
+    // Only auto-prompt for location when no city is saved yet.
+    if (!readSavedServiceCity() && !skipAutoCityAfterLogoutRef.current) {
+      detectLocation();
+    }
   }, []);
 
   useEffect(() => {
@@ -204,7 +281,13 @@ export function LandingPage() {
 
   function detectLocation() {
     if (!navigator.geolocation) {
+      const saved = selectedCityRef.current || readSavedServiceCity();
+      if (saved) {
+        applySavedCityToLoc(saved);
+        return;
+      }
       setLoc((s) => ({ ...s, status: "denied", label: "Location unavailable" }));
+      openCityPopup("no_location");
       return;
     }
     setLoc((s) => ({ ...s, status: "locating" }));
@@ -224,25 +307,78 @@ export function LandingPage() {
             details?.city?.trim() ||
             details?.location_label?.split("·")[0]?.trim() ||
             "Current location";
+          const matched =
+            matchServiceCity(details?.city) ||
+            matchServiceCity(details?.location_label) ||
+            matchServiceCity(place);
+          const pin = details?.pincode?.trim() || "";
+          if (matched) {
+            saveServiceCity(matched);
+            setSelectedCity(matched);
+            setCityDraft(matched.name);
+            setCityPopupReason(null);
+            setLoc({
+              latitude,
+              longitude,
+              label: matched.name,
+              pincode: pin || matched.pincode,
+              status: "ready",
+            });
+            return;
+          }
+          const saved = selectedCityRef.current || readSavedServiceCity();
+          if (saved) {
+            // GPS is outside service cities, but user already picked one — keep it.
+            applySavedCityToLoc(saved);
+            setCityPopupReason(null);
+            return;
+          }
           setLoc((s) => ({
             ...s,
             latitude,
             longitude,
             label: place,
-            pincode: details?.pincode?.trim() || s.pincode,
+            pincode: pin || s.pincode,
             status: "ready",
           }));
+          openCityPopup("out_of_area");
         });
       },
       () => {
+        const saved = selectedCityRef.current || readSavedServiceCity();
+        if (saved) {
+          applySavedCityToLoc(saved);
+          setCityPopupReason(null);
+          return;
+        }
         setLoc((s) => ({
           ...s,
           status: "denied",
-          label: "Location denied — enter pincode",
+          label: "Location denied — choose a city",
         }));
+        openCityPopup("no_location");
       },
       { enableHighAccuracy: true, timeout: 10000 },
     );
+  }
+
+  function onCitySelectChange(name: string) {
+    setCityDraft(name);
+    if (!name) {
+      setSelectedCity(null);
+      return;
+    }
+    const city = findServiceCityByName(name);
+    if (city) applyCity(city);
+  }
+
+  function confirmCityPopup() {
+    const city = findServiceCityByName(cityDraft);
+    if (!city) {
+      setError("Select a city to continue");
+      return;
+    }
+    applyCity(city);
   }
 
   function resolveCategory(
@@ -292,14 +428,9 @@ export function LandingPage() {
   async function onSearch(e: FormEvent) {
     e.preventDefault();
     const q = searchQ.trim();
-    const pin = (editingPin ? pinDraft : loc.pincode).replace(/\D/g, "").slice(0, 6);
-    if (pin.length !== 6) {
-      setPinPopup(true);
+    if (!hasCoords && !selectedCity) {
+      openCityPopup("no_location");
       return;
-    }
-    const appliedFreshPin = editingPin && pin !== loc.pincode;
-    if (appliedFreshPin) {
-      await applyPincode(pin);
     }
     setSearchBusy(true);
     setError("");
@@ -310,11 +441,13 @@ export function LandingPage() {
     setSearchActionError("");
     setFilterOpen(false);
     try {
-      const params: Record<string, string | number> = { q, pincode: pin };
-      if (!appliedFreshPin && loc.latitude != null && loc.longitude != null) {
+      const params: Record<string, string | number> = { q };
+      if (loc.latitude != null && loc.longitude != null) {
         params.latitude = loc.latitude;
         params.longitude = loc.longitude;
       }
+      const pin = (loc.pincode || selectedCity?.pincode || "").replace(/\D/g, "").slice(0, 6);
+      if (pin.length === 6) params.pincode = pin;
       const { data } = await api.get<PublicSearchResult>("/providers/public-search", { params });
       setSearchProviders(data.providers);
       setSearchDone(true);
@@ -331,31 +464,6 @@ export function LandingPage() {
     }
   }
 
-  async function applyPincode(rawPin?: string) {
-    const pin = (rawPin ?? pinDraft).replace(/\D/g, "").slice(0, 6);
-    if (pin.length !== 6) {
-      setError("Enter a valid 6-digit pincode");
-      return;
-    }
-    const next = {
-      ...loc,
-      pincode: pin,
-      latitude: null as number | null,
-      longitude: null as number | null,
-      label: `Pincode ${pin}`,
-      status: "ready" as const,
-    };
-    setLoc(next);
-    setEditingPin(false);
-    setError("");
-  }
-
-  function startEditPin() {
-    setPinDraft(loc.pincode || "");
-    setEditingPin(true);
-    setError("");
-  }
-
   function categoryMeta(cat: CategoryTree | Category): string {
     const nearby = nearbyCounts[cat.id];
     if (hasLocation && countsReady) {
@@ -370,28 +478,14 @@ export function LandingPage() {
   const nearbyForSelected = selected ? nearbyCounts[selected.id] : undefined;
 
   useEffect(() => {
-    if (signedIn) {
-      setLoginOpen(false);
-      setRegisterOpen(false);
-      if (searchParams.get("login") === "1" || searchParams.get("register") === "1") {
-        const next = new URLSearchParams(searchParams);
-        next.delete("login");
-        next.delete("register");
-        setSearchParams(next, { replace: true });
-      }
-      return;
+    if (!signedIn) return;
+    if (searchParams.get("login") === "1" || searchParams.get("register") === "1") {
+      const next = new URLSearchParams(searchParams);
+      next.delete("login");
+      next.delete("register");
+      setSearchParams(next, { replace: true });
     }
-    if (searchParams.get("login") === "1") {
-      setLoginOpen(true);
-      setRegisterOpen(false);
-    } else if (searchParams.get("register") === "1") {
-      setRegisterOpen(true);
-      setLoginOpen(false);
-    } else {
-      setLoginOpen(false);
-      setRegisterOpen(false);
-    }
-  }, [searchParams, signedIn, setSearchParams]);
+  }, [signedIn, searchParams, setSearchParams]);
 
   function setAuthParam(kind: "login" | "register" | null) {
     const next = new URLSearchParams(searchParams);
@@ -404,21 +498,18 @@ export function LandingPage() {
 
   function openLogin() {
     if (signedIn) return;
-    setLoginOpen(true);
-    setRegisterOpen(false);
+    // Clear stale logout flag so Sign in is never treated as a logout redirect.
+    consumeLogoutNavigation();
     setAuthParam("login");
   }
 
   function openRegister() {
     if (signedIn) return;
-    setRegisterOpen(true);
-    setLoginOpen(false);
+    consumeLogoutNavigation();
     setAuthParam("register");
   }
 
   function closeAuth() {
-    setLoginOpen(false);
-    setRegisterOpen(false);
     setAuthParam(null);
   }
 
@@ -493,8 +584,17 @@ export function LandingPage() {
 
   function onLogout() {
     logout();
+    skipAutoCityAfterLogoutRef.current = true;
     setNavOpen(false);
-    navigate("/");
+    setCityPopupReason(null);
+    navigate("/", { replace: true });
+    // Ensure auth query params are cleared without blocking later Sign in.
+    const next = new URLSearchParams(searchParams);
+    if (next.has("login") || next.has("register")) {
+      next.delete("login");
+      next.delete("register");
+      setSearchParams(next, { replace: true });
+    }
   }
 
   useEffect(() => {
@@ -671,125 +771,90 @@ export function LandingPage() {
         </div>
         <div className="landing-hero-veil" aria-hidden="true" />
         <div className="landing-hero-inner">
-          <h1 className="landing-title">Gharq</h1>
           <p className="landing-lead">
             Book trusted local help — verified providers within 5 km of you.
           </p>
 
-          <form className="landing-booking-pad" onSubmit={onSearch}>
-            <div className="landing-pad-field landing-pad-grow">
-              <label htmlFor="landing-search-q">What do you need?</label>
-              <input
-                id="landing-search-q"
-                value={searchQ}
-                onChange={(e) => setSearchQ(e.target.value)}
-                placeholder="Name, mobile, category, or slug…"
-                aria-label="Search by name, mobile, category, or slug"
-              />
-            </div>
-            <div className="landing-pad-divider" aria-hidden="true" />
-            <div className="landing-pad-field landing-pad-pin">
-              <label htmlFor="landing-pin-field">Pincode</label>
-              <div className="landing-pad-pin-row">
-                {editingPin ? (
-                  <input
-                    id="landing-pin-field"
-                    inputMode="numeric"
-                    maxLength={6}
-                    autoFocus
-                    value={pinDraft}
-                    onChange={(e) => setPinDraft(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                    onKeyDown={(e) => {
-                      if (e.key === "Escape") setEditingPin(false);
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        void applyPincode();
-                      }
-                    }}
-                    placeholder="6 digits"
-                    aria-label="Pincode"
-                  />
-                ) : (
-                  <button
-                    id="landing-pin-field"
-                    type="button"
-                    className="landing-pad-pin-value"
-                    onClick={startEditPin}
-                  >
-                    {loc.pincode || "Add pincode"}
-                  </button>
-                )}
-                <button
-                  className="icon-btn landing-area-icon-btn"
-                  type="button"
-                  title={editingPin ? "Apply pincode" : "Edit pincode"}
-                  aria-label={editingPin ? "Apply pincode" : "Edit pincode"}
-                  onClick={() => {
-                    if (editingPin) void applyPincode();
-                    else startEditPin();
-                  }}
-                >
-                  {editingPin ? (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                      <path d="M20 6 9 17l-5-5" />
-                    </svg>
-                  ) : (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                      <path d="M12 20h9" />
-                      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                    </svg>
-                  )}
-                </button>
-                <button
-                  className="icon-btn landing-area-icon-btn"
-                  type="button"
-                  title="Detect my location"
-                  aria-label="Detect my location"
-                  disabled={loc.status === "locating"}
-                  onClick={() => {
-                    setEditingPin(false);
-                    detectLocation();
-                  }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                    <path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" />
-                    <circle cx="12" cy="10" r="2.5" />
-                  </svg>
-                </button>
-              </div>
-              <p className="landing-pad-hint">
-                {loc.status === "locating"
-                  ? "Detecting your area…"
-                  : hasCoords
-                    ? `${loc.label || "Near you"}`
-                    : loc.label || "Uses GPS when available"}
+          <div className="landing-search-shell">
+            <div className="landing-search-shell-head">
+              <p className="landing-search-kicker">Find nearby help</p>
+              <p className="landing-search-sub">
+                Pick your city, then search by what you need.
               </p>
             </div>
-            <button className="btn landing-pad-submit" type="submit" disabled={searchBusy}>
-              {searchBusy ? "Searching…" : "Search"}
-            </button>
-          </form>
+            <form className="landing-booking-pad" onSubmit={onSearch}>
+              <div className="landing-pad-field landing-pad-city">
+                <label htmlFor="landing-city-field">City</label>
+                <CitySearchBox
+                  id="landing-city-field"
+                  variant="pad"
+                  value={selectedCity?.name || ""}
+                  onChange={onCitySelectChange}
+                  placeholder="Search city…"
+                />
+              </div>
+              <div className="landing-pad-divider" aria-hidden="true" />
+              <div className="landing-pad-field landing-pad-grow">
+                <label htmlFor="landing-search-q">What do you need?</label>
+                <div className="landing-pad-need-row">
+                  <input
+                    id="landing-search-q"
+                    value={searchQ}
+                    onChange={(e) => setSearchQ(e.target.value)}
+                    placeholder="Name, mobile, category, or slug…"
+                    aria-label="Search by name, mobile, category, or slug"
+                  />
+                  <button
+                    className="icon-btn landing-area-icon-btn"
+                    type="button"
+                    title="Detect my location"
+                    aria-label="Detect my location"
+                    disabled={loc.status === "locating"}
+                    onClick={() => detectLocation()}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <path d="M12 21s7-5.2 7-11a7 7 0 1 0-14 0c0 5.8 7 11 7 11Z" />
+                      <circle cx="12" cy="10" r="2.5" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <button className="btn landing-pad-submit" type="submit" disabled={searchBusy}>
+                {searchBusy ? "Searching…" : "Search"}
+              </button>
+            </form>
+            <p className="landing-search-status" aria-live="polite">
+              {loc.status === "locating"
+                ? "Detecting your area…"
+                : selectedCity
+                  ? `Ready to search near ${selectedCity.name}`
+                  : hasCoords
+                    ? `Near ${loc.label || "you"} — choose a supported city if needed`
+                    : "Choose a city or tap the pin to detect location"}
+            </p>
+          </div>
           {error && !searchDone && !browsing && <p className="error landing-hero-error">{error}</p>}
         </div>
       </section>
 
       <div className="landing-sheet">
         {searchDone && (
-          <section className="landing-section landing-section-pad" ref={searchRef} id="search-results">
+          <section className="landing-section landing-section-pad landing-results" ref={searchRef} id="search-results">
             <div className="landing-section-head landing-search-head">
               <div>
+                <p className="landing-section-kicker">Results</p>
                 <h2>
                   {searchQ.trim()
-                    ? `Results for “${searchQ.trim()}”`
-                    : loc.pincode.length === 6 && !hasCoords
-                      ? `Providers in pincode ${loc.pincode}`
+                    ? `Matches for “${searchQ.trim()}”`
+                    : selectedCity
+                      ? `Providers in ${selectedCity.name}`
                       : "Providers near you"}
                 </h2>
-                <p className="muted">{matchHint}</p>
+                <p className="landing-section-lead">{matchHint}</p>
               </div>
               {searchProviders.length > 0 && (
                 <div className="landing-search-actions">
-                  <p className="muted landing-search-selected">
+                  <p className="landing-search-selected">
                     {selectedSearchIds.length === 0
                       ? "Select providers to request"
                       : `${selectedSearchIds.length} selected`}
@@ -807,32 +872,39 @@ export function LandingPage() {
             </div>
             {searchActionError && <p className="error">{searchActionError}</p>}
             <div className="landing-provider-list">
-              {searchProviders.length === 0 && (
-                <p className="muted">No providers found. Try another keyword or browse a category below.</p>
+              {searchProviders.length === 0 ? (
+                <div className="landing-empty">
+                  <strong>No providers found</strong>
+                  <p>
+                    Try another keyword, or browse popular categories below after a new search.
+                  </p>
+                </div>
+              ) : (
+                searchProviders.map((p) => (
+                  <ProviderCard
+                    key={p.user_id}
+                    provider={p}
+                    selectable
+                    selected={selectedSearchIds.includes(p.user_id)}
+                    onToggleSelect={() => toggleSearchProvider(p.user_id)}
+                  />
+                ))
               )}
-              {searchProviders.map((p) => (
-                <ProviderCard
-                  key={p.user_id}
-                  provider={p}
-                  selectable
-                  selected={selectedSearchIds.includes(p.user_id)}
-                  onToggleSelect={() => toggleSearchProvider(p.user_id)}
-                />
-              ))}
             </div>
           </section>
         )}
 
         {!searchDone && !browsing && (
-          <section className="landing-section landing-section-pad" id="categories">
+          <section className="landing-section landing-section-pad landing-categories" id="categories">
             <div className="landing-section-head">
+              <p className="landing-section-kicker">Browse</p>
               <h2>Popular categories</h2>
-              <p className="muted">
+              <p className="landing-section-lead">
                 {hasCoords
-                  ? `Verified options near ${loc.label || "you"} within 5 km.`
-                  : loc.pincode.length === 6
-                    ? `Verified options in pincode ${loc.pincode}.`
-                    : "Allow location or enter a pincode to see how many options are near you."}
+                  ? `Verified options near ${selectedCity?.name || loc.label || "you"} within 5 km.`
+                  : selectedCity
+                    ? `Verified options in ${selectedCity.name}.`
+                    : "Choose a city above to see how many options are near you."}
               </p>
             </div>
 
@@ -843,11 +915,11 @@ export function LandingPage() {
                 const subCount = cat.subcategories?.length || 0;
                 let meta: string;
                 if (hasLocation && countsReady) {
-                  meta = `${nearby || 0} option${nearby === 1 ? "" : "s"} nearby`;
+                  meta = `${nearby || 0} nearby`;
                 } else if (hasLocation && !countsReady) {
-                  meta = "Counting nearby…";
+                  meta = "Counting…";
                 } else if (subCount > 0) {
-                  meta = `${subCount} option${subCount === 1 ? "" : "s"}`;
+                  meta = `${subCount} subcategor${subCount === 1 ? "y" : "ies"}`;
                 } else {
                   meta = offerKindLabel(cat.kind);
                 }
@@ -861,8 +933,10 @@ export function LandingPage() {
                     <span className="landing-cat-mark" aria-hidden="true">
                       {cat.name.slice(0, 1)}
                     </span>
-                    <strong>{cat.name}</strong>
-                    <span className="muted">{meta}</span>
+                    <span className="landing-cat-copy">
+                      <strong>{cat.name}</strong>
+                      <span className="landing-cat-meta">{meta}</span>
+                    </span>
                   </button>
                 );
               })}
@@ -886,7 +960,7 @@ export function LandingPage() {
                           ? ` · ${nearbyForSelected} option${nearbyForSelected === 1 ? "" : "s"}`
                           : ""
                       }`
-                    : "Allow location or enter a pincode to see nearby providers"}
+                    : "Choose a city or allow location to see nearby providers"}
                 </p>
               </div>
 
@@ -971,7 +1045,7 @@ export function LandingPage() {
               {categoryBusy && <p className="muted">Loading providers…</p>}
               {!categoryBusy && !hasLocation && (
                 <p className="muted">
-                  Allow location or enter a pincode above to see providers in this category.
+                  Choose a city or allow location above to see providers in this category.
                 </p>
               )}
               {!categoryBusy && hasLocation && categoryProviders.length === 0 && (
@@ -989,28 +1063,53 @@ export function LandingPage() {
         </footer>
       </div>
 
-      {pinPopup && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onClick={() => setPinPopup(false)}
-        >
+      {cityPopupOpen && (
+        <div className="modal-backdrop landing-city-popup-backdrop" role="presentation">
           <div
-            className="modal-dialog card"
+            className="modal-dialog card landing-city-popup"
             role="dialog"
             aria-modal="true"
-            aria-labelledby="landing-pin-popup-title"
+            aria-labelledby="landing-city-popup-title"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 id="landing-pin-popup-title" style={{ margin: "0 0 0.5rem" }}>
-              Please enter the pincode
+            <p className="dash-eyebrow">Service area</p>
+            <h3 id="landing-city-popup-title">
+              {cityPopupReason === "out_of_area" ? "Choose a supported city" : "Select your city"}
             </h3>
-            <p className="muted" style={{ margin: "0 0 1rem" }}>
-              Add a 6-digit pincode, or use Detect my location, then search again.
+            <p className="muted landing-city-popup-copy">
+              {cityPopupReason === "out_of_area"
+                ? "Your current location is outside our service cities. Pick one of the cities below to continue."
+                : "Location isn’t available. Choose a city to browse nearby providers."}
             </p>
-            <button className="btn" type="button" onClick={() => setPinPopup(false)}>
-              OK
-            </button>
+            <div className="field">
+              <label htmlFor="landing-city-popup-select">City</label>
+              <CitySearchBox
+                id="landing-city-popup-select"
+                value={cityDraft}
+                onChange={setCityDraft}
+                placeholder="Search city…"
+                autoFocus
+              />
+            </div>
+            <div className="landing-city-popup-actions">
+              {selectedCity && (
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={() => setCityPopupReason(null)}
+                >
+                  Keep {selectedCity.name}
+                </button>
+              )}
+              <button
+                className="btn"
+                type="button"
+                disabled={!cityDraft}
+                onClick={confirmCityPopup}
+              >
+                Continue
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1062,6 +1161,11 @@ function ProviderCard({
   const initial = (p.business_name || "?").trim().slice(0, 1).toUpperCase();
   const hours =
     p.opening_time && p.closing_time ? `${p.opening_time}–${p.closing_time}` : null;
+  const online = isProviderOnlineNow({
+    opening_time: p.opening_time,
+    closing_time: p.closing_time,
+    verification_status: p.verification_status,
+  });
 
   return (
     <article
@@ -1088,8 +1192,8 @@ function ProviderCard({
               <strong className="landing-provider-name">
                 <Link to={providerPublicPath(p)}>{p.business_name}</Link>
               </strong>
-              <span className={`pill ${p.is_online ? "online" : "offline"}`}>
-                {p.is_online ? "Online" : "Offline"}
+              <span className={`pill ${online ? "online" : "offline"}`}>
+                {online ? "Online" : "Offline"}
               </span>
             </div>
             {p.full_name && <p className="landing-provider-owner muted">{p.full_name}</p>}

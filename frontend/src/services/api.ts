@@ -1,4 +1,5 @@
 import axios, { AxiosError } from "axios";
+import { isLogoutNavigation } from "../utils/logoutNav";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000/api/v1";
 
@@ -34,6 +35,16 @@ api.interceptors.response.use(
   (res) => res,
   (error) => {
     if (error.response?.status === 401) {
+      const reqUrl = String(error.config?.url || "");
+      // Wrong password / register conflicts are expected — don't treat as session expiry.
+      if (
+        reqUrl.includes("/auth/login") ||
+        reqUrl.includes("/auth/register") ||
+        reqUrl.includes("/auth/forgot-password") ||
+        reqUrl.includes("/auth/reset-password")
+      ) {
+        return Promise.reject(error);
+      }
       localStorage.removeItem("ls_token");
       if (
         window.location.pathname.startsWith("/forgot-password") ||
@@ -41,13 +52,12 @@ api.interceptors.response.use(
       ) {
         return Promise.reject(error);
       }
-      const params = new URLSearchParams(window.location.search);
-      const onLandingAuth =
-        window.location.pathname === "/" &&
-        (params.get("login") === "1" || params.get("register") === "1");
-      if (!onLandingAuth) {
-        window.location.href = "/?login=1";
+      // Never hard-redirect on the landing page — Sign in / Register live there.
+      if (window.location.pathname === "/") {
+        return Promise.reject(error);
       }
+      // After logout, land on `/` quietly; otherwise prompt sign-in.
+      window.location.href = isLogoutNavigation() ? "/" : "/?login=1";
     }
     return Promise.reject(error);
   },
@@ -55,7 +65,11 @@ api.interceptors.response.use(
 
 /** Turn FastAPI / axios errors into a readable string for UI. */
 export function apiErrorMessage(err: unknown, fallback = "Request failed"): string {
-  const detail = (err as AxiosError<{ detail?: unknown }>)?.response?.data?.detail;
+  const ax = err as AxiosError<{ detail?: unknown }>;
+  if (ax?.code === "ECONNABORTED" || /timeout/i.test(ax?.message || "")) {
+    return "Server took too long to respond. Please try again.";
+  }
+  const detail = ax?.response?.data?.detail;
   if (typeof detail === "string" && detail.trim()) return detail;
   if (Array.isArray(detail)) {
     const parts = detail.map((item) => {

@@ -30,14 +30,12 @@ function navForRole(
     }
     return [
       { to: "/provider/overview", label: "Overview" },
-      { to: "/provider/inquiries", label: "Consumer inquiries" },
       {
         to: "/provider/support",
         label: "Admin messages",
         badge: badges?.adminUnread || 0,
       },
-      { to: "/provider/requests", label: "Nearby requests" },
-      { to: "/provider/quote", label: "Submit quote" },
+      { to: "/provider/requests", label: "Incoming requests" },
       { to: "/provider/quotes", label: "My sent quotes" },
       { to: "/provider/orders", label: "Orders" },
       { to: "/profile", label: "My profile" },
@@ -236,7 +234,7 @@ export function AppShell({
             type="button"
             onClick={() => {
               logout();
-              navigate("/?login=1");
+              navigate("/", { replace: true });
             }}
           >
             Log out
@@ -276,7 +274,7 @@ export function AppShell({
               title="Log out"
               onClick={() => {
                 logout();
-                navigate("/?login=1");
+                navigate("/", { replace: true });
               }}
             >
               <LogoutIcon />

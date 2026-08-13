@@ -4,6 +4,7 @@ import { MapsLink } from "../components/MapsLink";
 import { offerKindLabel } from "../components/ProviderTrust";
 import { api } from "../services/api";
 import { useAuth } from "../store/auth";
+import { isProviderOnlineNow } from "../utils/businessHours";
 import type { ProviderPublicProfile } from "../types";
 
 export function PublicProviderPage() {
@@ -102,9 +103,18 @@ export function PublicProviderPage() {
                   <h1 className="public-provider-title">{profile.business_name}</h1>
                   {profile.full_name && <p className="muted page-meta">{profile.full_name}</p>}
                 </div>
-                <span className={`pill ${profile.is_online ? "online" : "offline"}`}>
-                  {profile.is_online ? "Online" : "Offline"}
-                </span>
+                {(() => {
+                  const online = isProviderOnlineNow({
+                    opening_time: profile.opening_time,
+                    closing_time: profile.closing_time,
+                    verification_status: profile.verification_status,
+                  });
+                  return (
+                    <span className={`pill ${online ? "online" : "offline"}`}>
+                      {online ? "Online" : "Offline"}
+                    </span>
+                  );
+                })()}
               </div>
               <p className="page-lead">
                 {offerKindLabel(profile.offer_kind)} · Rating {profile.average_rating.toFixed(1)} (

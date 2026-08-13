@@ -34,6 +34,7 @@ export function InquiryChatPanel({
   autoFocus = false,
   mode = "inline",
   composeDisabled = false,
+  onMessagesLoaded,
 }: {
   conversationId: string;
   title: string;
@@ -50,6 +51,7 @@ export function InquiryChatPanel({
   /** overlay = modal portal; inline = embedded panel */
   mode?: "overlay" | "inline";
   composeDisabled?: boolean;
+  onMessagesLoaded?: () => void;
 }) {
   const user = useAuth((s) => s.user);
   const [messages, setMessages] = useState<ChatRow[]>([]);
@@ -58,16 +60,25 @@ export function InquiryChatPanel({
   const [sending, setSending] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const chatBoxRef = useRef<HTMLDivElement>(null);
+  const onMessagesLoadedRef = useRef(onMessagesLoaded);
+  const notifiedReadRef = useRef(false);
   const path = messagesPath || `/conversations/${conversationId}/messages`;
   const initial = (avatarLabel || title).trim().slice(0, 1).toUpperCase() || "C";
 
-  async function load() {
+  onMessagesLoadedRef.current = onMessagesLoaded;
+
+  async function load(opts?: { notify?: boolean }) {
     const { data } = await api.get<ChatRow[]>(path);
     setMessages(data);
+    if (opts?.notify && !notifiedReadRef.current) {
+      notifiedReadRef.current = true;
+      onMessagesLoadedRef.current?.();
+    }
   }
 
   useEffect(() => {
-    void load();
+    notifiedReadRef.current = false;
+    void load({ notify: true });
     const t = window.setInterval(() => void load(), 3000);
     return () => window.clearInterval(t);
   }, [conversationId, path]);

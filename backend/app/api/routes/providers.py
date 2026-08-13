@@ -40,7 +40,6 @@ from app.services.provider_catalog import (
 )
 from app.services.business_hours import (
     effective_is_online,
-    is_within_business_hours,
     sync_online_flag_with_hours,
 )
 from app.services.uploads import media_url, save_upload_file
@@ -589,7 +588,7 @@ def get_my_profile(
         raise HTTPException(status_code=404, detail="Provider profile not found")
     was_online = profile.is_online
     sync_online_flag_with_hours(profile)
-    if was_online and not profile.is_online:
+    if was_online != profile.is_online:
         db.commit()
         db.refresh(profile)
     return _to_out(db, profile)
@@ -678,32 +677,23 @@ def set_online(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.PROVIDER)),
 ):
+    """Online status is derived from Opens–Closes; this re-syncs the stored flag."""
     profile = (
         db.query(ProviderProfile).filter(ProviderProfile.user_id == current_user.id).first()
     )
     if not profile:
         raise HTTPException(status_code=404, detail="Provider profile not found")
+    # Keep location readiness checks when a client still posts online=true.
     if online and profile.verification_status != VerificationStatus.APPROVED:
         raise HTTPException(
             status_code=400,
             detail="Account is not verified yet. Ask an admin to approve your provider profile first.",
         )
-    if online and not is_within_business_hours(profile.opening_time, profile.closing_time):
-        opens = profile.opening_time or "—"
-        closes = profile.closing_time or "—"
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"You're outside business hours ({opens}–{closes}). "
-                "Update Opens/Closes in My profile, or try again during open hours."
-            ),
-        )
     if online and profile.base_location is None and current_user.latitude is None:
-        # Allow online when pincode is set (matched by pin) even without GPS point
         if not current_user.pincode:
             raise HTTPException(
                 status_code=400,
-                detail="Set location coordinates or a pincode in My profile before going online.",
+                detail="Set location coordinates or a pincode in My profile before appearing online.",
             )
     if (
         online
@@ -712,7 +702,7 @@ def set_online(
         and current_user.longitude is not None
     ):
         profile.base_location = make_point(current_user.longitude, current_user.latitude)
-    profile.is_online = online
+    sync_online_flag_with_hours(profile)
     db.commit()
     db.refresh(profile)
     return _to_out(db, profile)
