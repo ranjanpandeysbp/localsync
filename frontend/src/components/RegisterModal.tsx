@@ -1,15 +1,16 @@
 import { FormEvent, useEffect, useId, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CategoryMultiSelect } from "./CategoryMultiSelect";
-import { offerKindLabel } from "./ProviderTrust";
 import { api, apiErrorMessage } from "../services/api";
 import { reverseGeocodeDetails } from "../services/geo";
 import { useAuth } from "../store/auth";
-import type { CategoryTree, OfferKind, UserRole } from "../types";
+import type { UserRole } from "../types";
 import { roleHome } from "../types";
 
 const PROVIDER_PENDING_MSG =
   "Thank you for registration, your account is being currently reviewed. Please keep checking email from us in next 24hrs.";
+
+/** Indian GSTIN: 15 chars — e.g. 29AAAAA0000A1Z5 */
+const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 
 const EMPTY_FORM = {
   phone_number: "",
@@ -21,9 +22,6 @@ const EMPTY_FORM = {
   city: "",
   pincode: "",
   gst_number: "",
-  offer_kind: "BOTH" as OfferKind,
-  description: "",
-  offerings_detail: "",
 };
 
 type Props = {
@@ -38,10 +36,7 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
   const titleId = useId();
   const onCloseRef = useRef(onClose);
   const [role, setRole] = useState<UserRole>("CONSUMER");
-  const [tree, setTree] = useState<CategoryTree[]>([]);
-  const [categoryIds, setCategoryIds] = useState<number[]>([]);
   const [form, setForm] = useState(EMPTY_FORM);
-  const [aadhaarFile, setAadhaarFile] = useState<File | null>(null);
   const [coords, setCoords] = useState<{
     latitude: number | null;
     longitude: number | null;
@@ -75,9 +70,7 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
   useEffect(() => {
     if (!open) {
       setRole("CONSUMER");
-      setCategoryIds([]);
       setForm(EMPTY_FORM);
-      setAadhaarFile(null);
       setCoords({ latitude: null, longitude: null, label: "" });
       setLocStatus("Detecting location…");
       setError("");
@@ -87,14 +80,6 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
     }
     requestLocation();
   }, [open]);
-
-  useEffect(() => {
-    if (!open || !isProvider) return;
-    void api
-      .get<CategoryTree[]>("/categories/tree")
-      .then((res) => setTree(res.data))
-      .catch(() => setTree([]));
-  }, [open, isProvider]);
 
   function onLocationFail(message: string) {
     setCoords({ latitude: null, longitude: null, label: "" });
@@ -144,6 +129,26 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
         setBusy(false);
         return;
       }
+      if (!form.full_name.trim()) {
+        setError("Full name is required");
+        setBusy(false);
+        return;
+      }
+      if (!form.phone_number.trim()) {
+        setError("Mobile number is required");
+        setBusy(false);
+        return;
+      }
+      if (!form.email.trim()) {
+        setError("Email is required");
+        setBusy(false);
+        return;
+      }
+      if (!form.password.trim()) {
+        setError("Password is required");
+        setBusy(false);
+        return;
+      }
       if (!form.city.trim()) {
         setError("Enter your city / locality");
         setBusy(false);
@@ -158,51 +163,32 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
         setBusy(false);
         return;
       }
-      if (isProvider && !form.email.trim()) {
-        setError("Email is required for provider registration");
+      if (isProvider && !form.business_name.trim()) {
+        setError("Business / shop name is required");
         setBusy(false);
         return;
       }
-      if (isProvider && !aadhaarFile) {
-        setError("Please upload your Aadhaar card for verification");
-        setBusy(false);
-        return;
-      }
-      if (isProvider && categoryIds.length === 0) {
-        setError("Select at least one service / category");
-        setBusy(false);
-        return;
-      }
-      if (isProvider && !form.description.trim()) {
-        setError("Please add an About / business description");
-        setBusy(false);
-        return;
-      }
-      if (isProvider && !form.offerings_detail.trim()) {
-        setError("Please describe what you offer");
+      const gstin = form.gst_number.trim().toUpperCase();
+      if (isProvider && !GSTIN_RE.test(gstin)) {
+        setError("Enter a valid 15-character GSTIN (e.g. 29AAAAA0000A1Z5)");
         setBusy(false);
         return;
       }
 
       const body = new FormData();
       body.append("role", role);
-      body.append("phone_number", form.phone_number);
-      body.append("full_name", form.full_name);
+      body.append("phone_number", form.phone_number.trim());
+      body.append("full_name", form.full_name.trim());
       body.append("password", form.password);
-      if (form.email.trim()) body.append("email", form.email.trim());
+      body.append("email", form.email.trim());
       if (coords.latitude != null) body.append("latitude", String(coords.latitude));
       if (coords.longitude != null) body.append("longitude", String(coords.longitude));
       if (coords.label) body.append("location_label", coords.label);
-      if (form.city.trim()) body.append("city", form.city.trim());
-      if (form.pincode.trim()) body.append("pincode", form.pincode.trim());
+      body.append("city", form.city.trim());
+      body.append("pincode", form.pincode.trim());
       if (isProvider) {
-        body.append("business_name", form.business_name.trim() || form.full_name.trim());
-        body.append("description", form.description.trim());
-        body.append("offerings_detail", form.offerings_detail.trim());
-        body.append("offer_kind", form.offer_kind);
-        body.append("category_ids_json", JSON.stringify(categoryIds));
-        if (form.gst_number.trim()) body.append("gst_number", form.gst_number.trim());
-        if (aadhaarFile) body.append("aadhaar_file", aadhaarFile);
+        body.append("business_name", form.business_name.trim());
+        body.append("gst_number", gstin);
       }
 
       await api.post("/auth/register", body);
@@ -264,8 +250,8 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
             </h2>
             <p className="muted login-modal-lead">
               {isProvider
-                ? "Full provider registration — listing details, categories, and verification docs. Login opens after admin approval."
-                : "Quick signup — complete address later in My profile."}
+                ? "All fields are required. Login opens after admin approval."
+                : "All fields are required."}
             </p>
 
             <div className="field" style={{ maxWidth: 320 }}>
@@ -274,8 +260,6 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
                 value={role}
                 onChange={(e) => {
                   setRole(e.target.value as UserRole);
-                  setAadhaarFile(null);
-                  setCategoryIds([]);
                 }}
               >
                 <option value="CONSUMER">Consumer</option>
@@ -320,17 +304,17 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
                     className="field"
                     style={!isProvider ? { gridColumn: "1 / -1" } : undefined}
                   >
-                    <label>Email{isProvider ? "" : " (optional)"}</label>
+                    <label>Email</label>
                     <input
                       type="email"
-                      required={isProvider}
+                      required
                       value={form.email}
                       onChange={(e) => setForm({ ...form, email: e.target.value })}
                       placeholder="you@example.com"
                     />
                     {isProvider && (
                       <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
-                        Required so we can email you within 24 hours about approval.
+                        Used to email you within 24 hours about approval.
                       </p>
                     )}
                   </div>
@@ -473,92 +457,29 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
               </section>
 
               {isProvider && (
-                <>
-                  <section className="register-section">
-                    <h2>Services &amp; categories</h2>
-                    <p className="muted">Select the categories and subcategories you serve.</p>
-                    <div className="field">
-                      <label>I offer</label>
-                      <select
-                        value={form.offer_kind}
-                        onChange={(e) =>
-                          setForm({ ...form, offer_kind: e.target.value as OfferKind })
-                        }
-                      >
-                        <option value="SERVICE">{offerKindLabel("SERVICE")}</option>
-                        <option value="PRODUCT">{offerKindLabel("PRODUCT")}</option>
-                        <option value="BOTH">{offerKindLabel("BOTH")}</option>
-                      </select>
-                    </div>
-                    <div className="field">
-                      <label>Categories</label>
-                      <CategoryMultiSelect
-                        tree={tree}
-                        selected={categoryIds}
-                        onChange={setCategoryIds}
-                      />
-                      {categoryIds.length === 0 && (
-                        <p className="muted" style={{ marginTop: "0.35rem", fontSize: "0.85rem" }}>
-                          No categories listed yet — pick at least one above.
-                        </p>
-                      )}
-                    </div>
-                  </section>
-
-                  <section className="register-section">
-                    <h2>About</h2>
-                    <p className="muted">Short business description shown on your public page.</p>
-                    <div className="field">
-                      <label>About your business</label>
-                      <textarea
-                        required
-                        rows={4}
-                        value={form.description}
-                        onChange={(e) => setForm({ ...form, description: e.target.value })}
-                        placeholder="Tell customers who you are and what makes you reliable…"
-                      />
-                    </div>
-                  </section>
-
-                  <section className="register-section">
-                    <h2>What they offer</h2>
-                    <p className="muted">Detailed products or services customers can expect.</p>
-                    <div className="field">
-                      <label>What you offer</label>
-                      <textarea
-                        required
-                        rows={4}
-                        value={form.offerings_detail}
-                        onChange={(e) => setForm({ ...form, offerings_detail: e.target.value })}
-                        placeholder="List services, products, pricing notes, coverage area…"
-                      />
-                    </div>
-                  </section>
-
-                  <section className="register-section">
-                    <h2>Verification</h2>
-                    <div className="field">
-                      <label>Aadhaar card (image or PDF)</label>
-                      <input
-                        type="file"
-                        required
-                        accept="image/*,application/pdf"
-                        onChange={(e) => setAadhaarFile(e.target.files?.[0] || null)}
-                      />
-                      <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
-                        Required for admin review before your account is activated.
-                      </p>
-                    </div>
-                    <div className="field">
-                      <label>GST number (if any)</label>
-                      <input
-                        value={form.gst_number}
-                        onChange={(e) => setForm({ ...form, gst_number: e.target.value })}
-                        placeholder="Optional — e.g. 29AAAAA0000A1Z5"
-                      />
-                    </div>
-                  </section>
-                </>
+                <section className="register-section">
+                  <h2>Verification</h2>
+                  <div className="field">
+                    <label>GSTIN</label>
+                    <input
+                      required
+                      value={form.gst_number}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          gst_number: e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, "").slice(0, 15),
+                        })
+                      }
+                      placeholder="e.g. 29AAAAA0000A1Z5"
+                      maxLength={15}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
+                      Required 15-character GSTIN for admin review before your account is activated.
+                    </p>
+                  </div>
+                </section>
               )}
             </div>
 

@@ -83,6 +83,13 @@ def _run_startup_migrations() -> None:
             "ALTER TABLE admin_conversations ADD COLUMN IF NOT EXISTS admin_last_read_at TIMESTAMPTZ",
             "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS consumer_last_read_at TIMESTAMPTZ",
             "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS provider_last_read_at TIMESTAMPTZ",
+            "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS ekyc_photo_url VARCHAR(500)",
+            "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS ekyc_latitude DOUBLE PRECISION",
+            "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS ekyc_longitude DOUBLE PRECISION",
+            "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS ekyc_location_label VARCHAR(255)",
+            "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS ekyc_status VARCHAR(32)",
+            "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS ekyc_captured_at TIMESTAMPTZ",
+            "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS ekyc_video_requested_at TIMESTAMPTZ",
         ):
             try:
                 conn.execute(text(stmt))
@@ -140,6 +147,29 @@ def _run_startup_migrations() -> None:
             )
         except Exception as exc:
             print(f"[startup] verification_status REVOKED: {exc}")
+
+        try:
+            conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                      IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'order_status')
+                         AND NOT EXISTS (
+                           SELECT 1
+                           FROM pg_enum e
+                           JOIN pg_type t ON e.enumtypid = t.oid
+                           WHERE t.typname = 'order_status' AND e.enumlabel = 'REJECTED'
+                         )
+                      THEN
+                        ALTER TYPE order_status ADD VALUE 'REJECTED';
+                      END IF;
+                    END $$;
+                    """
+                )
+            )
+        except Exception as exc:
+            print(f"[startup] order_status REJECTED: {exc}")
 
         try:
             conn.execute(

@@ -8,6 +8,7 @@ import { InquiryChatPanel, startProviderChatWithConsumer } from "../components/I
 import { MapsLink } from "../components/MapsLink";
 import { offerKindClass, offerKindLabel } from "../components/ProviderTrust";
 import { SubmitQuoteModal } from "../components/SubmitQuoteModal";
+import { StatusFilterSelect } from "../components/StatusFilterSelect";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { api } from "../services/api";
 import { isMeaningfulLocationLabel } from "../services/geo";
@@ -24,7 +25,31 @@ type ProviderSection =
   | "orders";
 
 type OverviewAccordion = "storefront" | "location";
-type SentQuoteFilter = "all" | "pending" | "accepted" | "upcoming";
+type SentQuoteFilter = "all" | "pending" | "accepted" | "rejected" | "upcoming";
+type OrderStatusFilter =
+  | "all"
+  | "CONFIRMED"
+  | "IN_PROGRESS"
+  | "COMPLETED"
+  | "CANCELLED"
+  | "DISPUTED"
+  | "REJECTED";
+
+const ORDER_STATUS_FILTERS: { id: OrderStatusFilter; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "CONFIRMED", label: "Confirmed" },
+  { id: "IN_PROGRESS", label: "In progress" },
+  { id: "COMPLETED", label: "Completed" },
+  { id: "CANCELLED", label: "Cancelled" },
+  { id: "DISPUTED", label: "Disputed" },
+  { id: "REJECTED", label: "Rejected" },
+];
+
+function orderStatusLabel(status: Order["status"]): string {
+  if (status === "COMPLETED") return "Completed";
+  if (status === "REJECTED") return "Rejected";
+  return status.replaceAll("_", " ");
+}
 
 function AccordionChevron() {
   return (
@@ -96,6 +121,7 @@ export function ProviderDashboard() {
   const [sentQuoteFilter, setSentQuoteFilter] = useState<SentQuoteFilter>("all");
   const [sentQuoteSearchDraft, setSentQuoteSearchDraft] = useState("");
   const [sentQuoteSearch, setSentQuoteSearch] = useState("");
+  const [orderStatusFilter, setOrderStatusFilter] = useState<OrderStatusFilter>("all");
   const [loc, setLoc] = useState({ longitude: "77.5946", latitude: "12.9716", max_radius_km: "10" });
   const [hoursTick, setHoursTick] = useState(0);
 
@@ -119,7 +145,13 @@ export function ProviderDashboard() {
   const { connected } = useWebSocket((msg) => {
     const m = msg as {
       type?: string;
-      payload?: { title?: string; conversation_id?: string; reason?: string; body?: string };
+      payload?: {
+        title?: string;
+        conversation_id?: string;
+        reason?: string;
+        body?: string;
+        request_title?: string;
+      };
     };
     if (m.type === "new_request") {
       setToast(`New lead: ${m.payload?.title || "Request nearby"}`);
@@ -136,6 +168,12 @@ export function ProviderDashboard() {
       void loadConversations();
     }
     if (m.type === "order_confirmed" || m.type === "order_completed" || m.type === "order_status") {
+      void refresh();
+    }
+    if (m.type === "quote_rejected") {
+      setToast(
+        `Another quote was accepted for ${m.payload?.request_title || "a request"} — yours was rejected`,
+      );
       void refresh();
     }
     if (m.type === "admin_message") {
@@ -242,9 +280,11 @@ export function ProviderDashboard() {
   const sentQuoteFilterCounts = useMemo(() => {
     let pending = 0;
     let accepted = 0;
+    let rejected = 0;
     let upcoming = 0;
     for (const q of activeSentQuotes) {
       if (q.status === "PENDING") pending += 1;
+      if (q.status === "REJECTED") rejected += 1;
       if (q.status === "ACCEPTED") {
         accepted += 1;
         const order = orders.find((o) => o.quote_id === q.id);
@@ -260,6 +300,7 @@ export function ProviderDashboard() {
       all: activeSentQuotes.length,
       pending,
       accepted,
+      rejected,
       upcoming,
     };
   }, [activeSentQuotes, orders]);
@@ -269,6 +310,7 @@ export function ProviderDashboard() {
     return activeSentQuotes.filter((q) => {
       if (sentQuoteFilter === "pending" && q.status !== "PENDING") return false;
       if (sentQuoteFilter === "accepted" && q.status !== "ACCEPTED") return false;
+      if (sentQuoteFilter === "rejected" && q.status !== "REJECTED") return false;
       if (sentQuoteFilter === "upcoming") {
         const order = orders.find((o) => o.quote_id === q.id);
         const isUpcoming =
@@ -291,6 +333,27 @@ export function ProviderDashboard() {
       return haystack.includes(query);
     });
   }, [activeSentQuotes, orders, sentQuoteFilter, sentQuoteSearch]);
+
+  const orderStatusFilterCounts = useMemo(() => {
+    const counts: Record<OrderStatusFilter, number> = {
+      all: orders.length,
+      CONFIRMED: 0,
+      IN_PROGRESS: 0,
+      COMPLETED: 0,
+      CANCELLED: 0,
+      DISPUTED: 0,
+      REJECTED: 0,
+    };
+    for (const o of orders) {
+      counts[o.status] += 1;
+    }
+    return counts;
+  }, [orders]);
+
+  const filteredOrders = useMemo(() => {
+    if (orderStatusFilter === "all") return orders;
+    return orders.filter((o) => o.status === orderStatusFilter);
+  }, [orders, orderStatusFilter]);
 
   if (isLegacyQuoteRoute) {
     return <Navigate to="/provider/requests" replace />;
@@ -546,7 +609,10 @@ export function ProviderDashboard() {
           <section className="provider-overview-kpis">
             {(() => {
               const openOrders = orders.filter(
-                (o) => o.status !== "COMPLETED" && o.status !== "CANCELLED",
+                (o) =>
+                  o.status !== "COMPLETED" &&
+                  o.status !== "CANCELLED" &&
+                  o.status !== "REJECTED",
               ).length;
               const kpiItems = [
                 {
@@ -983,6 +1049,7 @@ export function ProviderDashboard() {
                     { id: "all", label: "All" },
                     { id: "pending", label: "Pending" },
                     { id: "accepted", label: "Accepted" },
+                    { id: "rejected", label: "Rejected" },
                     { id: "upcoming", label: "Upcoming" },
                   ] as const
                 ).map((opt) => (
@@ -1075,7 +1142,8 @@ export function ProviderDashboard() {
                   const canComplete =
                     !!linkedOrder &&
                     linkedOrder.status !== "COMPLETED" &&
-                    linkedOrder.status !== "CANCELLED";
+                    linkedOrder.status !== "CANCELLED" &&
+                    linkedOrder.status !== "REJECTED";
                   const unread =
                     conversations.find((c) => c.consumer_id === q.consumer_id)?.unread_count || 0;
                   const consumerLabel = q.consumer_name || "Consumer";
@@ -1096,7 +1164,9 @@ export function ProviderDashboard() {
                               <span className={`pill quote-status ${statusKey}`}>{q.status}</span>
                               {linkedOrder && (
                                 <span className={`pill order-status ${linkedOrder.status.toLowerCase()}`}>
-                                  {linkedOrder.status.replaceAll("_", " ")}
+                                  {linkedOrder.status === "REJECTED"
+                                    ? "Rejected"
+                                    : linkedOrder.status.replaceAll("_", " ")}
                                 </span>
                               )}
                             </div>
@@ -1126,9 +1196,15 @@ export function ProviderDashboard() {
 
                         <footer className="provider-sent-quote-footer">
                           {linkedOrder ? (
-                            <Link className="provider-sent-quote-order-link" to={`/orders/${linkedOrder.id}`}>
-                              Open order
-                            </Link>
+                            linkedOrder.status === "REJECTED" ? (
+                              <span className="muted">Consumer chose another quote</span>
+                            ) : (
+                              <Link className="provider-sent-quote-order-link" to={`/orders/${linkedOrder.id}`}>
+                                Open order
+                              </Link>
+                            )
+                          ) : q.status === "REJECTED" ? (
+                            <span className="muted">Consumer chose another quote</span>
                           ) : (
                             <span className="muted">Awaiting consumer response</span>
                           )}
@@ -1186,31 +1262,50 @@ export function ProviderDashboard() {
           <header className="page-hero">
             <p className="dash-eyebrow">Work</p>
             <h2>Orders</h2>
-            <p className="page-lead">Accepted deals and completion status.</p>
+            <p className="page-lead">
+              Accepted deals, rejected quotes (when another provider won), and completion status.
+            </p>
+            <StatusFilterSelect
+              label="Filter by status"
+              value={orderStatusFilter}
+              options={ORDER_STATUS_FILTERS.map((opt) => ({
+                ...opt,
+                count: orderStatusFilterCounts[opt.id],
+              }))}
+              onChange={setOrderStatusFilter}
+            />
           </header>
           <section className="page-panel">
             <div className="page-list list">
               {orders.length === 0 && <p className="page-empty">No orders yet.</p>}
-              {orders.map((o) => {
+              {orders.length > 0 && filteredOrders.length === 0 && (
+                <p className="page-empty">No orders in this status.</p>
+              )}
+              {filteredOrders.map((o) => {
                 const statusKey = o.status.toLowerCase();
+                const isRejected = o.status === "REJECTED";
                 return (
                   <div key={o.id} className="list-item provider-order-row">
                     <div className="provider-sent-quote-head">
                       <div className="provider-sent-quote-main">
                         <strong>₹{Number(o.agreed_price).toLocaleString("en-IN")}</strong>
                         <span className={`pill order-status ${statusKey}`}>
-                          {o.status === "COMPLETED"
-                            ? "Completed"
-                            : o.status.replaceAll("_", " ")}
+                          {orderStatusLabel(o.status)}
                         </span>
                       </div>
-                      <Link className="btn secondary btn-sm" to={`/orders/${o.id}`}>
-                        Open
-                      </Link>
+                      {!isRejected && (
+                        <Link className="btn secondary btn-sm" to={`/orders/${o.id}`}>
+                          Open
+                        </Link>
+                      )}
                     </div>
                     <div className="muted" style={{ fontSize: "0.85rem" }}>
-                      {o.fulfillment_type.replaceAll("_", " ")}
-                      {o.payment_mode ? ` · ${o.payment_mode.replaceAll("_", " ")}` : ""}
+                      {o.request_title ? `${o.request_title} · ` : ""}
+                      {isRejected
+                        ? "Consumer accepted another provider’s quote"
+                        : `${o.fulfillment_type.replaceAll("_", " ")}${
+                            o.payment_mode ? ` · ${o.payment_mode.replaceAll("_", " ")}` : ""
+                          }`}
                       {" · "}
                       {new Date(o.created_at).toLocaleString()}
                       {o.completed_at

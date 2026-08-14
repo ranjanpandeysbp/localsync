@@ -53,7 +53,7 @@ Provider sees lead ──► Chat & ask ──► Send quote
 Consumer accepts quote (delivery mode + payment mode)
                 │
                 ▼
-Order: CONFIRMED → IN_PROGRESS → (optional DISPUTED/CANCELLED)
+Order: IN_PROGRESS → (optional DISPUTED/CANCELLED) → COMPLETED (OTP)
                 │
                 ▼
 Consumer shares OTP → Provider completes → both rate each other
@@ -131,17 +131,16 @@ Scrollable modal on `/` (wider when role is **Provider**). Same fields as before
 
 **Shared fields (both roles):**
 
-- Full name, phone, email (required for provider; optional for consumer), password
-- **City / locality** and **Pincode** — always shown, editable; auto-filled from GPS via reverse geocoding when the modal opens
+- Full name, phone, email, password (all required)
+- **City / locality** and **Pincode** — always required; auto-filled from GPS via reverse geocoding when the modal opens
 - **Location** status — local place name with coordinates, e.g. `Indiranagar 1st Stage · 12.97840, 77.64080`
 - Reverse geocode prefers **local** names (neighbourhood / suburb) over generic admin labels, and also fills **state** when available
 
 **Provider-only sections:**
 
-- Business / shop name
-- Services & categories (at least one) + offer kind
-- About + What they offer
-- Aadhaar upload (required) + optional GST
+- Business / shop name (required)
+- **GSTIN** (required, 15-character)
+- About, offerings, categories, and offer kind can be completed later on **My profile**
 
 After provider submit: pending-review message stays in the modal; **login blocked** until admin approval. Consumer signup signs in immediately and stays on the landing page as logged in.
 
@@ -218,15 +217,18 @@ Consumer signs up with role, name, phone, password, city, pincode, and GPS when 
 
 ### 2. Complete profile (`/profile`)
 
-Vertical accordion sections (one open at a time; **Contact & address** open by default):
+Vertical accordion sections (one open at a time; **Contact** open by default):
 
-1. **Contact & address** — name, email, alternate mobile, address lines, city, state, pincode, map location (coords + area label)
-2. **Business / shop details** — providers only (see Provider onboarding)
-3. **Upload documents** — providers only
+1. **Contact** — name, email, alternate mobile
+2. **Address & location** — address lines, city, state, pincode, map location (coords + area label)
+3. **Business / shop details** — providers only (see Provider onboarding)
+4. **Upload documents** — providers only
+5. **eKYC** — providers only
 
-Shared contact fields:
+Shared fields:
 
-- Address, city, **state** (auto-filled from GPS when possible), pincode, email, alternate phone
+- Contact: email, alternate phone
+- Address: address lines, city, **state** (auto-filled from GPS when possible), pincode
 - **Detect location** (with location icon) fills coords, place label, city, state, pincode
 - Fields are a **single-column vertical list** (no side-by-side pairs)
 - **Save** shows a popup: **Profile Updated Successfully**
@@ -300,7 +302,7 @@ When accepting a quote, consumer chooses:
 - **Payment mode**
   - `CASH` · `UPI` · `CARD` · `BANK_TRANSFER` · `OTHER`
 
-Accepting locks the deal → creates an **Order**, marks request `FULFILLED`, rejects sibling quotes, and shows the **completion OTP** on the request quotes screen (accepted quote + deal-locked banner) until handover.
+Accepting locks the deal → creates an **Order** (`IN_PROGRESS`), marks request `FULFILLED`, rejects sibling quotes, creates **REJECTED** order rows for losing providers (shown in their Orders list), notifies them over websocket (`quote_rejected`), and shows the **completion OTP** on the request quotes screen (accepted quote + deal-locked banner) until handover.
 
 ### 8. Orders (`/consumer/orders`)
 
@@ -315,8 +317,8 @@ Statuses:
 
 | Status | Meaning |
 |--------|---------|
-| `CONFIRMED` | Deal locked; OTP visible to consumer |
-| `IN_PROGRESS` | Work / delivery underway |
+| `CONFIRMED` | Legacy / unused for new accepts (older deals) |
+| `IN_PROGRESS` | Deal accepted; work / delivery underway |
 | `DISPUTED` | Issue raised; can resume to `IN_PROGRESS` |
 | `CANCELLED` | Closed without completion |
 | `COMPLETED` | Provider submitted correct consumer OTP |
@@ -346,15 +348,13 @@ Also: `/profile` for business onboarding (vertical accordion sections). There is
 
 ### 1. Register
 
-Provider registration is a **full-page form** and requires:
+Provider registration (modal) requires:
 
-- account details (name, business name, phone, email, password)
-- city / locality + pincode (GPS auto-fill, editable)
-- **Services & categories** (at least one category) + offer kind
-- **About** (business description)
-- **What they offer** (detailed offerings)
-- **Aadhaar card upload** (image or PDF)
-- **GST number** (optional, if any)
+- account details (name, business name, phone, email, password) — all required
+- city / locality + pincode (GPS auto-fill, editable) — required
+- **GSTIN** (required, 15-character)
+
+About, offerings, categories, and offer kind are optional at signup and can be filled later on **My profile**.
 
 A unique **public slug** is created from the business / shop name (e.g. `quickfix-plumbing`; duplicates get `-2`, `-3`, …).
 
@@ -368,11 +368,13 @@ Transactional emails (when Admin SMTP is enabled): see **Transactional email** (
 
 ### 2. Onboarding (`/profile`)
 
-Same vertical accordion layout as consumer profile. Providers see three sections:
+Same vertical accordion layout as consumer profile. Providers see:
 
-1. **Contact & address**
-2. **Business / shop details**
-3. **Upload documents**
+1. **Contact**
+2. **Address & location**
+3. **Business / shop details**
+4. **Upload documents**
+5. **eKYC**
 
 Required for verification / marketplace readiness:
 
@@ -382,7 +384,7 @@ Required for verification / marketplace readiness:
 - **About** (short description)
 - **What you offer** (detailed offerings)
 - Opening / closing hours (**IST**) — drive Online/Offline status after approval
-- GST, Aadhaar (and document uploads)
+- GST certificate (document upload)
 - Max travel radius
 - Optional: **Website**, **Instagram**, **YouTube**
 
@@ -509,7 +511,7 @@ Admins can **edit and save**:
 - Contact extras (name, email, alternate phone) — login phone stays read-only
 - **Address & location** (label, address lines, city, state, pincode, coordinates)
 - **Business profile** (name, offer kind, hours, radius, description, offerings, social links, tax ID)
-- **Verification documents** (GST / Aadhaar numbers; replace Aadhaar, GST, government ID, business registration files)
+- **Verification documents** (GST number; replace GST, government ID, business registration files)
 
 **APIs:** `PATCH /admin/providers/{user_id}` · `POST /admin/providers/{user_id}/documents?doc_type=`
 
@@ -646,7 +648,7 @@ Also defined: `WITHDRAWN` (reserved).
 
 ### Order
 
-`CONFIRMED` → `IN_PROGRESS` → `COMPLETED` (via OTP)
+`IN_PROGRESS` (on accept) → `COMPLETED` (via OTP); optional `DISPUTED` / `CANCELLED`; sibling losers get `REJECTED`
 
 Also: `DISPUTED`, `CANCELLED` from mid-flow.
 

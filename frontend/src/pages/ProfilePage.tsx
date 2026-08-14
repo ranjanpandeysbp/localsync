@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { AppShell } from "../components/AppShell";
 import { CategoryMultiSelect } from "../components/CategoryMultiSelect";
 import { MapsLink } from "../components/MapsLink";
+import { ProviderEkycSection } from "../components/ProviderEkycSection";
 import { offerKindLabel } from "../components/ProviderTrust";
 import { mediaSrc } from "../components/Attachments";
 import { api } from "../services/api";
@@ -9,7 +10,7 @@ import { reverseGeocodeDetails } from "../services/geo";
 import { useAuth } from "../store/auth";
 import type { CategoryTree, OfferKind, ProviderProfile, User } from "../types";
 
-type ProfileAccordion = "contact" | "business" | "documents";
+type ProfileAccordion = "contact" | "address" | "business" | "documents" | "ekyc";
 
 function AccordionChevron() {
   return (
@@ -63,8 +64,6 @@ export function ProfilePage() {
     youtube_url: "",
     opening_time: "09:00",
     closing_time: "18:00",
-    gst_number: "",
-    aadhaar_number: "",
     max_radius_km: "10",
   });
 
@@ -122,8 +121,6 @@ export function ProfilePage() {
         youtube_url: p.data.youtube_url || "",
         opening_time: p.data.opening_time || "09:00",
         closing_time: p.data.closing_time || "18:00",
-        gst_number: p.data.gst_number || "",
-        aadhaar_number: p.data.aadhaar_number || "",
         max_radius_km: String(p.data.max_radius_km || 10),
       });
     }
@@ -218,8 +215,9 @@ export function ProfilePage() {
         setBusy(false);
         return;
       }
-      if (biz.aadhaar_number && !/^\d{12}$/.test(biz.aadhaar_number)) {
-        setError("Aadhaar must be 12 digits");
+      if (!provider?.gst_doc_url) {
+        setError("GST certificate is required — upload it under Upload documents");
+        setOpenAccordion("documents");
         setBusy(false);
         return;
       }
@@ -233,8 +231,6 @@ export function ProfilePage() {
         youtube_url: biz.youtube_url.trim() || null,
         opening_time: biz.opening_time || null,
         closing_time: biz.closing_time || null,
-        gst_number: biz.gst_number || null,
-        aadhaar_number: biz.aadhaar_number || null,
         category_ids: categoryIds,
         max_radius_km: Number(biz.max_radius_km) || 10,
         latitude: form.latitude ? Number(form.latitude) : undefined,
@@ -281,8 +277,10 @@ export function ProfilePage() {
   if (!user) return null;
 
   const contactOpen = openAccordion === "contact";
+  const addressOpen = openAccordion === "address";
   const businessOpen = openAccordion === "business";
   const documentsOpen = openAccordion === "documents";
+  const ekycOpen = openAccordion === "ekyc";
 
   return (
     <AppShell title="My profile">
@@ -324,9 +322,9 @@ export function ProfilePage() {
                 1
               </span>
               <span className="profile-accordion-copy">
-                <span className="profile-accordion-title">Contact &amp; address</span>
+                <span className="profile-accordion-title">Contact</span>
                 <span className="muted profile-accordion-hint">
-                  Name, address &amp; map pin
+                  Name, email &amp; alternate mobile
                 </span>
               </span>
               <AccordionChevron />
@@ -358,6 +356,43 @@ export function ProfilePage() {
                         onChange={(e) => setForm({ ...form, alternate_phone: e.target.value })}
                       />
                     </div>
+                  </div>
+                  <div className="profile-actions">
+                    <button className="btn" type="submit" disabled={busy}>
+                      Save contact
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+          </section>
+
+          <section
+            className={`profile-accordion ${addressOpen ? "is-open" : ""}`}
+            role="listitem"
+          >
+            <button
+              type="button"
+              className="profile-accordion-trigger"
+              aria-expanded={addressOpen}
+              aria-controls="profile-accordion-address"
+              onClick={() => toggleAccordion("address")}
+            >
+              <span className="profile-accordion-index" aria-hidden="true">
+                2
+              </span>
+              <span className="profile-accordion-copy">
+                <span className="profile-accordion-title">Address &amp; location</span>
+                <span className="muted profile-accordion-hint">
+                  Address lines, city &amp; map pin
+                </span>
+              </span>
+              <AccordionChevron />
+            </button>
+            {addressOpen && (
+              <div className="profile-accordion-panel" id="profile-accordion-address">
+                <form className="profile-section" onSubmit={saveCommon}>
+                  <div className="profile-section-list">
                     <div className="field">
                       <label>Address line 1</label>
                       <input
@@ -450,7 +485,7 @@ export function ProfilePage() {
                       Detect location
                     </button>
                     <button className="btn" type="submit" disabled={busy}>
-                      Save
+                      Save address
                     </button>
                   </div>
                 </form>
@@ -472,7 +507,7 @@ export function ProfilePage() {
                   onClick={() => toggleAccordion("business")}
                 >
                   <span className="profile-accordion-index" aria-hidden="true">
-                    2
+                    3
                   </span>
                   <span className="profile-accordion-copy">
                     <span className="profile-accordion-title">Business / shop details</span>
@@ -582,23 +617,6 @@ export function ProfilePage() {
                           />
                         </div>
                         <div className="field">
-                          <label>GST number</label>
-                          <input
-                            value={biz.gst_number}
-                            onChange={(e) => setBiz({ ...biz, gst_number: e.target.value })}
-                            placeholder="29AAAAA0000A1Z5"
-                          />
-                        </div>
-                        <div className="field">
-                          <label>Aadhaar number</label>
-                          <input
-                            value={biz.aadhaar_number}
-                            onChange={(e) => setBiz({ ...biz, aadhaar_number: e.target.value })}
-                            maxLength={12}
-                            placeholder="12 digits"
-                          />
-                        </div>
-                        <div className="field">
                           <label>Max travel radius (km)</label>
                           <input
                             type="number"
@@ -631,12 +649,12 @@ export function ProfilePage() {
                   onClick={() => toggleAccordion("documents")}
                 >
                   <span className="profile-accordion-index" aria-hidden="true">
-                    3
+                    4
                   </span>
                   <span className="profile-accordion-copy">
                     <span className="profile-accordion-title">Upload documents</span>
                     <span className="muted profile-accordion-hint">
-                      Aadhaar, GST, ID &amp; registration
+                      GST certificate required · ID &amp; registration
                     </span>
                   </span>
                   <AccordionChevron />
@@ -645,26 +663,39 @@ export function ProfilePage() {
                   <div className="profile-accordion-panel" id="profile-accordion-documents">
                     <div className="profile-section">
                       <p className="profile-section-lead muted">
-                        Images or PDF — Aadhaar, GST certificate, ID, business registration.
+                        Images or PDF. <strong>GST certificate is mandatory</strong> before you can
+                        save your business profile.
                       </p>
                       <div className="profile-doc-list">
                         {(
                           [
-                            ["aadhaar", "Aadhaar document", provider?.aadhaar_doc_url],
-                            ["gst", "GST certificate", provider?.gst_doc_url],
-                            ["government_id", "Government ID", provider?.government_id_url],
-                            ["business_reg", "Business registration", provider?.business_reg_url],
+                            ["gst", "GST certificate", provider?.gst_doc_url, true],
+                            ["government_id", "Government ID", provider?.government_id_url, false],
+                            ["business_reg", "Business registration", provider?.business_reg_url, false],
                           ] as const
-                        ).map(([key, label, url]) => (
-                          <div key={key} className="profile-doc-row">
+                        ).map(([key, label, url, required]) => (
+                          <div
+                            key={key}
+                            className={`profile-doc-row${required && !url ? " is-required-missing" : ""}`}
+                          >
                             <div className="profile-doc-meta">
-                              <strong>{label}</strong>
+                              <strong>
+                                {label}
+                                {required ? (
+                                  <span className="profile-doc-required" aria-label="required">
+                                    {" "}
+                                    *
+                                  </span>
+                                ) : null}
+                              </strong>
                               {url ? (
                                 <a href={mediaSrc(url)} target="_blank" rel="noreferrer">
                                   View uploaded file
                                 </a>
                               ) : (
-                                <span className="muted">Not uploaded</span>
+                                <span className="muted">
+                                  {required ? "Required — not uploaded" : "Not uploaded"}
+                                </span>
                               )}
                             </div>
                             <label className="profile-doc-upload">
@@ -687,6 +718,41 @@ export function ProfilePage() {
                         </p>
                       )}
                     </div>
+                  </div>
+                )}
+              </section>
+
+              <section
+                className={`profile-accordion ${ekycOpen ? "is-open" : ""}`}
+                role="listitem"
+              >
+                <button
+                  type="button"
+                  className="profile-accordion-trigger"
+                  aria-expanded={ekycOpen}
+                  aria-controls="profile-accordion-ekyc"
+                  onClick={() => toggleAccordion("ekyc")}
+                >
+                  <span className="profile-accordion-index" aria-hidden="true">
+                    5
+                  </span>
+                  <span className="profile-accordion-copy">
+                    <span className="profile-accordion-title">eKYC</span>
+                    <span className="muted profile-accordion-hint">
+                      Live photo, location &amp; video with customer service
+                    </span>
+                  </span>
+                  <AccordionChevron />
+                </button>
+                {ekycOpen && provider && (
+                  <div className="profile-accordion-panel" id="profile-accordion-ekyc">
+                    <ProviderEkycSection
+                      provider={provider}
+                      onUpdated={(p) => {
+                        setProvider(p);
+                        setNote("");
+                      }}
+                    />
                   </div>
                 )}
               </section>

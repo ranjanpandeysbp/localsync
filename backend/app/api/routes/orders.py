@@ -56,11 +56,20 @@ def _quote_out(db: Session, quote: Quote) -> QuoteOut:
     )
 
 
-def _order_out(order: Order, reveal_otp: bool, viewer_id: UUID | None = None) -> OrderOut:
+def _order_out(order: Order, reveal_otp: bool, viewer_id: UUID | None = None, db: Session | None = None) -> OrderOut:
     otp = None
-    if reveal_otp and (viewer_id is None or viewer_id == order.consumer_id):
+    # Never expose OTP on rejected (non-deal) orders.
+    if (
+        reveal_otp
+        and order.status != OrderStatus.REJECTED
+        and (viewer_id is None or viewer_id == order.consumer_id)
+    ):
         otp = order.completion_otp
     payment = getattr(order, "payment_mode", None) or PaymentMode.CASH
+    request_title = None
+    if db is not None:
+        req = db.get(ServiceRequest, order.request_id)
+        request_title = req.title if req else None
     return OrderOut(
         id=order.id,
         quote_id=order.quote_id,
@@ -74,6 +83,7 @@ def _order_out(order: Order, reveal_otp: bool, viewer_id: UUID | None = None) ->
         completion_otp=otp,
         completed_at=order.completed_at,
         created_at=order.created_at,
+        request_title=request_title,
     )
 
 
@@ -241,8 +251,23 @@ async def accept_quote(
     others = db.scalars(
         select(Quote).where(Quote.request_id == req.id, Quote.id != quote.id, Quote.status == QuoteStatus.PENDING)
     ).all()
+    rejected_provider_ids: list[UUID] = []
     for other in others:
         other.status = QuoteStatus.REJECTED
+        rejected_provider_ids.append(other.provider_id)
+        # Losing providers get a REJECTED order row so it appears in their Orders list.
+        db.add(
+            Order(
+                quote_id=other.id,
+                request_id=req.id,
+                consumer_id=current_user.id,
+                provider_id=other.provider_id,
+                agreed_price=other.price_quote,
+                fulfillment_type=payload.fulfillment_type,
+                payment_mode=payload.payment_mode,
+                status=OrderStatus.REJECTED,
+            )
+        )
 
     req.status = RequestStatus.FULFILLED
     order = Order(
@@ -253,7 +278,7 @@ async def accept_quote(
         agreed_price=quote.price_quote,
         fulfillment_type=payload.fulfillment_type,
         payment_mode=payload.payment_mode,
-        status=OrderStatus.CONFIRMED,
+        status=OrderStatus.IN_PROGRESS,
     )
     db.add(order)
     db.commit()
@@ -261,11 +286,29 @@ async def accept_quote(
 
     event = {
         "type": "order_confirmed",
-        "payload": {"order_id": str(order.id), "request_id": str(req.id), "quote_id": str(quote.id)},
+        "payload": {
+            "order_id": str(order.id),
+            "request_id": str(req.id),
+            "quote_id": str(quote.id),
+            "request_title": req.title,
+        },
     }
     await ws_manager.broadcast_to_users([order.consumer_id, order.provider_id], event)
     redis_pubsub.publish("order_confirmed", event["payload"], [order.consumer_id, order.provider_id])
-    return _order_out(order, reveal_otp=True, viewer_id=current_user.id)
+
+    if rejected_provider_ids:
+        rejected_event = {
+            "type": "quote_rejected",
+            "payload": {
+                "request_id": str(req.id),
+                "request_title": req.title,
+                "winning_quote_id": str(quote.id),
+            },
+        }
+        await ws_manager.broadcast_to_users(rejected_provider_ids, rejected_event)
+        redis_pubsub.publish("quote_rejected", rejected_event["payload"], rejected_provider_ids)
+
+    return _order_out(order, reveal_otp=True, viewer_id=current_user.id, db=db)
 
 
 @router.get("/orders/mine", response_model=list[OrderOut])
@@ -274,14 +317,20 @@ def my_orders(
     current_user: User = Depends(require_roles(UserRole.CONSUMER, UserRole.PROVIDER)),
 ):
     if current_user.role == UserRole.CONSUMER:
+        # Consumers only see real deals — not sibling REJECTED placeholders.
         rows = db.scalars(
-            select(Order).where(Order.consumer_id == current_user.id).order_by(Order.created_at.desc())
+            select(Order)
+            .where(
+                Order.consumer_id == current_user.id,
+                Order.status != OrderStatus.REJECTED,
+            )
+            .order_by(Order.created_at.desc())
         ).all()
     else:
         rows = db.scalars(
             select(Order).where(Order.provider_id == current_user.id).order_by(Order.created_at.desc())
         ).all()
-    return [_order_out(o, reveal_otp=True, viewer_id=current_user.id) for o in rows]
+    return [_order_out(o, reveal_otp=True, viewer_id=current_user.id, db=db) for o in rows]
 
 
 @router.get("/orders/{order_id}", response_model=OrderOut)
@@ -295,7 +344,14 @@ def get_order(
         raise HTTPException(status_code=404, detail="Order not found")
     if not is_staff(current_user) and current_user.id not in (order.consumer_id, order.provider_id):
         raise HTTPException(status_code=403, detail="Not allowed")
-    return _order_out(order, reveal_otp=True, viewer_id=current_user.id)
+    # Consumers should not open sibling REJECTED placeholder orders.
+    if (
+        current_user.role == UserRole.CONSUMER
+        and order.status == OrderStatus.REJECTED
+        and order.consumer_id == current_user.id
+    ):
+        raise HTTPException(status_code=404, detail="Order not found")
+    return _order_out(order, reveal_otp=True, viewer_id=current_user.id, db=db)
 
 
 @router.patch("/orders/{order_id}/status", response_model=OrderOut)
@@ -312,10 +368,15 @@ async def update_order_status(
 
     new_status = payload.status
     current = order.status
-    if current in (OrderStatus.COMPLETED, OrderStatus.CANCELLED):
+    if current in (OrderStatus.COMPLETED, OrderStatus.CANCELLED, OrderStatus.REJECTED):
         raise HTTPException(status_code=400, detail="Order is already closed")
-    if new_status == OrderStatus.COMPLETED:
-        raise HTTPException(status_code=400, detail="Use OTP complete endpoint to finish the order")
+    if new_status in (OrderStatus.COMPLETED, OrderStatus.REJECTED):
+        raise HTTPException(
+            status_code=400,
+            detail="Use OTP complete endpoint to finish the order"
+            if new_status == OrderStatus.COMPLETED
+            else "Rejected status is set automatically when another quote is accepted",
+        )
 
     allowed: dict[OrderStatus, set[OrderStatus]] = {
         OrderStatus.CONFIRMED: {OrderStatus.IN_PROGRESS, OrderStatus.CANCELLED, OrderStatus.DISPUTED},
@@ -337,7 +398,7 @@ async def update_order_status(
         "payload": {"order_id": str(order.id), "status": order.status.value},
     }
     await ws_manager.broadcast_to_users([order.consumer_id, order.provider_id], event)
-    return _order_out(order, reveal_otp=True, viewer_id=current_user.id)
+    return _order_out(order, reveal_otp=True, viewer_id=current_user.id, db=db)
 
 
 @router.post("/orders/{order_id}/complete", response_model=OrderOut)
@@ -354,8 +415,8 @@ async def complete_order(
         raise HTTPException(status_code=404, detail="Order not found")
     if order.status == OrderStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="Already completed")
-    if order.status in (OrderStatus.CANCELLED,):
-        raise HTTPException(status_code=400, detail="Cancelled orders cannot be completed")
+    if order.status in (OrderStatus.CANCELLED, OrderStatus.REJECTED):
+        raise HTTPException(status_code=400, detail="This order cannot be completed")
     if payload.otp != order.completion_otp:
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
@@ -366,4 +427,4 @@ async def complete_order(
 
     event = {"type": "order_completed", "payload": {"order_id": str(order.id)}}
     await ws_manager.broadcast_to_users([order.consumer_id, order.provider_id], event)
-    return _order_out(order, reveal_otp=False, viewer_id=current_user.id)
+    return _order_out(order, reveal_otp=False, viewer_id=current_user.id, db=db)

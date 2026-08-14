@@ -114,6 +114,13 @@ export interface ProviderProfile {
   business_reg_url?: string | null;
   aadhaar_doc_url?: string | null;
   gst_doc_url?: string | null;
+  ekyc_photo_url?: string | null;
+  ekyc_latitude?: number | null;
+  ekyc_longitude?: number | null;
+  ekyc_location_label?: string | null;
+  ekyc_status?: string | null;
+  ekyc_captured_at?: string | null;
+  ekyc_video_requested_at?: string | null;
 }
 
 export interface ProviderCatalogItem {
@@ -261,10 +268,11 @@ export interface Order {
   agreed_price: number;
   fulfillment_type: "PROVIDER_DELIVERY" | "CONSUMER_PICKUP" | "HOME_SERVICE";
   payment_mode?: "CASH" | "UPI" | "CARD" | "BANK_TRANSFER" | "OTHER";
-  status: "CONFIRMED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "DISPUTED";
+  status: "CONFIRMED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "DISPUTED" | "REJECTED";
   completion_otp: string | null;
   completed_at: string | null;
   created_at: string;
+  request_title?: string | null;
 }
 
 export interface AdminProvider {

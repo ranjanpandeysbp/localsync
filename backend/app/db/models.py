@@ -76,6 +76,7 @@ class OrderStatus(str, enum.Enum):
     COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
     DISPUTED = "DISPUTED"
+    REJECTED = "REJECTED"
 
 
 class OfferKind(str, enum.Enum):
@@ -183,6 +184,16 @@ class ProviderProfile(Base):
     aadhaar_doc_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     gst_doc_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     tax_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # eKYC — live photo + GPS + video session request with customer service
+    ekyc_photo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    ekyc_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ekyc_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ekyc_location_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ekyc_status: Mapped[str | None] = mapped_column(String(32), nullable=True, default="NONE")
+    ekyc_captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ekyc_video_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

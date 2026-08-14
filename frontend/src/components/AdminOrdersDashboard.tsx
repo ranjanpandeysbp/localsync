@@ -20,6 +20,7 @@ const STATUS_COLORS: Record<string, string> = {
   IN_PROGRESS: "#eaa11d",
   CANCELLED: "#b42318",
   DISPUTED: "#7c3aed",
+  REJECTED: "#9b1c1c",
 };
 
 type DatePreset = "7d" | "30d" | "90d" | "month" | "all" | "custom";

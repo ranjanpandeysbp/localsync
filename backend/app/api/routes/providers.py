@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -99,6 +99,13 @@ def _to_out(db: Session, profile: ProviderProfile) -> ProviderProfileOut:
         business_reg_url=profile.business_reg_url,
         aadhaar_doc_url=profile.aadhaar_doc_url,
         gst_doc_url=profile.gst_doc_url,
+        ekyc_photo_url=profile.ekyc_photo_url,
+        ekyc_latitude=profile.ekyc_latitude,
+        ekyc_longitude=profile.ekyc_longitude,
+        ekyc_location_label=profile.ekyc_location_label,
+        ekyc_status=profile.ekyc_status or "NONE",
+        ekyc_captured_at=profile.ekyc_captured_at,
+        ekyc_video_requested_at=profile.ekyc_video_requested_at,
     )
 
 
@@ -633,6 +640,28 @@ def update_my_profile(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Business profile saves (categories / business fields) require GST certificate.
+    business_touch = bool(
+        category_ids is not None
+        or any(
+            k in data
+            for k in (
+                "business_name",
+                "description",
+                "offerings_detail",
+                "offer_kind",
+                "gst_number",
+                "opening_time",
+                "closing_time",
+            )
+        )
+    )
+    if business_touch and not (profile.gst_doc_url or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="GST certificate is required. Upload it under Upload documents before saving.",
+        )
+
     if lon is not None and lat is not None:
         lon, lat = normalize_lat_lon(lon, lat)
         profile.base_location = make_point(lon, lat)
@@ -668,6 +697,121 @@ async def upload_provider_document(
     setattr(profile, field, media_url(stored_name))
     db.commit()
     db.refresh(profile)
+    return _to_out(db, profile)
+
+
+@router.post("/me/ekyc", response_model=ProviderProfileOut)
+async def submit_provider_ekyc(
+    file: UploadFile = File(...),
+    latitude: float = Form(...),
+    longitude: float = Form(...),
+    location_label: str | None = Form(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROVIDER)),
+):
+    """Capture live provider photo + GPS for eKYC."""
+    from datetime import datetime, timezone
+
+    profile = (
+        db.query(ProviderProfile).filter(ProviderProfile.user_id == current_user.id).first()
+    )
+    if not profile:
+        raise HTTPException(status_code=404, detail="Provider profile not found")
+
+    content_type = (file.content_type or "").lower()
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="eKYC photo must be an image")
+
+    lon, lat = normalize_lat_lon(longitude, latitude)
+    stored_name, _, _, _ = await save_upload_file(file)
+    profile.ekyc_photo_url = media_url(stored_name)
+    profile.ekyc_latitude = lat
+    profile.ekyc_longitude = lon
+    profile.ekyc_location_label = (location_label or "").strip() or None
+    profile.ekyc_captured_at = datetime.now(timezone.utc)
+    profile.ekyc_status = "SUBMITTED"
+    db.commit()
+    db.refresh(profile)
+    return _to_out(db, profile)
+
+
+@router.post("/me/ekyc/video-request", response_model=ProviderProfileOut)
+async def request_provider_ekyc_video(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROVIDER)),
+):
+    """Ask customer service to join a Video KYC session (via Admin messages)."""
+    from datetime import datetime, timezone
+
+    from app.db.models import AdminConversation, AdminMessage
+    from app.services.redis_pubsub import redis_pubsub
+    from app.services.ws_manager import ws_manager
+
+    profile = (
+        db.query(ProviderProfile).filter(ProviderProfile.user_id == current_user.id).first()
+    )
+    if not profile:
+        raise HTTPException(status_code=404, detail="Provider profile not found")
+    if not profile.ekyc_photo_url or profile.ekyc_latitude is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Capture your photo and location in eKYC before starting Video KYC",
+        )
+
+    conv = db.scalar(
+        select(AdminConversation).where(AdminConversation.provider_id == current_user.id)
+    )
+    if not conv:
+        conv = AdminConversation(provider_id=current_user.id, created_by_admin_id=None)
+        db.add(conv)
+        db.flush()
+
+    loc = profile.ekyc_location_label or (
+        f"{profile.ekyc_latitude:.5f}, {profile.ekyc_longitude:.5f}"
+        if profile.ekyc_latitude is not None and profile.ekyc_longitude is not None
+        else "location on file"
+    )
+    body = (
+        "Video KYC requested. I have submitted my live photo and GPS location "
+        f"({loc}). Please join a video verification call with me."
+    )
+    msg = AdminMessage(
+        conversation_id=conv.id,
+        sender_id=current_user.id,
+        body=body,
+    )
+    db.add(msg)
+    conv.updated_at = datetime.now(timezone.utc)
+    conv.provider_last_read_at = datetime.now(timezone.utc)
+    profile.ekyc_video_requested_at = datetime.now(timezone.utc)
+    profile.ekyc_status = "VIDEO_REQUESTED"
+    db.commit()
+    db.refresh(profile)
+    db.refresh(msg)
+
+    staff_ids = list(
+        db.scalars(
+            select(User.id).where(
+                User.role.in_([UserRole.ADMIN, UserRole.CUSTOMER_SERVICE]),
+                User.is_active.is_(True),
+            )
+        ).all()
+    )
+    event = {
+        "type": "admin_message",
+        "payload": {
+            "id": str(msg.id),
+            "conversation_id": str(conv.id),
+            "sender_id": str(msg.sender_id),
+            "body": msg.body,
+            "reason": "ekyc_video_request",
+            "created_at": msg.created_at.isoformat() if msg.created_at else None,
+        },
+    }
+    if staff_ids:
+        await ws_manager.broadcast_to_users(staff_ids, event)
+        redis_pubsub.publish("admin_message", event["payload"], staff_ids)
+
     return _to_out(db, profile)
 
 

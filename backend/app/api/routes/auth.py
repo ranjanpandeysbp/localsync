@@ -1,5 +1,6 @@
 from datetime import timedelta
 import json
+import re
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -28,6 +29,8 @@ from app.services.uploads import media_url, save_upload_file
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+GSTIN_RE = re.compile(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$")
+
 
 def _profile_complete(user: User, db: Session | None = None) -> bool:
     has_address = bool(user.address_line1 and user.pincode and user.city)
@@ -38,7 +41,7 @@ def _profile_complete(user: User, db: Session | None = None) -> bool:
             profile = db.query(ProviderProfile).filter(ProviderProfile.user_id == user.id).first()
         if not profile:
             return False
-        has_biz = bool(profile.business_name and profile.gst_number and profile.aadhaar_number)
+        has_biz = bool(profile.business_name and profile.gst_number)
         has_cats = bool(profile.category_links) or bool(profile.category_id)
         return has_address and has_coords and has_biz and has_cats
     return has_address and has_coords
@@ -143,18 +146,14 @@ async def register(
         raise HTTPException(status_code=400, detail="Phone number already registered")
 
     email_norm = email.strip().lower() if email and email.strip() else None
-    if role == UserRole.PROVIDER and not email_norm:
-        raise HTTPException(
-            status_code=400,
-            detail="Email is required for provider registration so we can send review updates",
-        )
-    if email_norm:
-        email_clash = db.scalar(select(User).where(User.email == email_norm))
-        if email_clash:
-            raise HTTPException(status_code=400, detail="Email already in use")
+    if not email_norm:
+        raise HTTPException(status_code=400, detail="Email is required")
+    email_clash = db.scalar(select(User).where(User.email == email_norm))
+    if email_clash:
+        raise HTTPException(status_code=400, detail="Email already in use")
 
     gst = gst_number.strip().upper() if gst_number and gst_number.strip() else None
-    biz_name = (business_name or "").strip() or full_name.strip()
+    biz_name = (business_name or "").strip()
     about = description.strip() if description and description.strip() else None
     offerings = offerings_detail.strip() if offerings_detail and offerings_detail.strip() else None
     kind = offer_kind or OfferKind.BOTH
@@ -169,24 +168,31 @@ async def register(
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
             raise HTTPException(status_code=400, detail="Invalid category_ids_json") from exc
 
+    city_norm = (city or "").strip() or None
+    pin_norm = (pincode or "").strip() or None
+    if not city_norm:
+        raise HTTPException(status_code=400, detail="City / locality is required")
+    if not pin_norm or not re.fullmatch(r"\d{6}", pin_norm):
+        raise HTTPException(status_code=400, detail="A valid 6-digit pincode is required")
+
     aadhaar_url = None
     if role == UserRole.PROVIDER:
-        if aadhaar_file is None or not getattr(aadhaar_file, "filename", None):
+        if not biz_name:
             raise HTTPException(
                 status_code=400,
-                detail="Aadhaar card upload is required for provider registration",
+                detail="Business / shop name is required for provider registration",
             )
-        if not category_ids:
+        if not gst or not GSTIN_RE.match(gst):
             raise HTTPException(
                 status_code=400,
-                detail="Select at least one service category",
+                detail="A valid 15-character GSTIN is required for provider registration",
             )
-        if not about:
-            raise HTTPException(status_code=400, detail="About / business description is required")
-        if not offerings:
-            raise HTTPException(status_code=400, detail="What you offer is required")
-        stored_name, _, _, _ = await save_upload_file(aadhaar_file)
-        aadhaar_url = media_url(stored_name)
+        # Optional legacy upload if a client still sends it
+        if aadhaar_file is not None and getattr(aadhaar_file, "filename", None):
+            stored_name, _, _, _ = await save_upload_file(aadhaar_file)
+            aadhaar_url = media_url(stored_name)
+    else:
+        biz_name = biz_name or full_name.strip()
 
     lat = latitude
     lon = longitude
@@ -196,8 +202,6 @@ async def register(
     label = (location_label or "").strip() or None
     if label and label.casefold() in {"detected from device", "current location"}:
         label = None
-    city_norm = (city or "").strip() or None
-    pin_norm = (pincode or "").strip() or None
     if lat is not None and lon is not None and (not label or not city_norm or not pin_norm):
         details = reverse_geocode_details(lat, lon)
         if not label:

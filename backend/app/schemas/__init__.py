@@ -345,6 +345,13 @@ class ProviderProfileOut(BaseModel):
     business_reg_url: str | None = None
     aadhaar_doc_url: str | None = None
     gst_doc_url: str | None = None
+    ekyc_photo_url: str | None = None
+    ekyc_latitude: float | None = None
+    ekyc_longitude: float | None = None
+    ekyc_location_label: str | None = None
+    ekyc_status: str | None = None
+    ekyc_captured_at: datetime | None = None
+    ekyc_video_requested_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -466,6 +473,7 @@ class OrderOut(BaseModel):
     completion_otp: str | None = None
     completed_at: datetime | None
     created_at: datetime
+    request_title: str | None = None
 
     model_config = {"from_attributes": True}
 

@@ -71,7 +71,10 @@ export function OrderPage() {
   const isConsumer = user?.id === order?.consumer_id;
   const isProvider = user?.id === order?.provider_id;
   const open =
-    order && order.status !== "COMPLETED" && order.status !== "CANCELLED";
+    !!order &&
+    order.status !== "COMPLETED" &&
+    order.status !== "CANCELLED" &&
+    order.status !== "REJECTED";
   const chatPeer = isProvider ? "Consumer" : "Provider";
 
   return (
@@ -91,15 +94,29 @@ export function OrderPage() {
                   <p className="dash-eyebrow">Order</p>
                   <h2>₹{order.agreed_price}</h2>
                   <p className="muted page-meta">
+                    {order.request_title && (
+                      <>
+                        <span>{order.request_title}</span>
+                        <span aria-hidden="true">·</span>
+                      </>
+                    )}
                     <span>{order.fulfillment_type.replaceAll("_", " ")}</span>
                     <span aria-hidden="true">·</span>
                     <span>{(order.payment_mode || "CASH").replaceAll("_", " ")}</span>
                     <span aria-hidden="true">·</span>
-                    <span>{order.status}</span>
+                    <span>{order.status === "REJECTED" ? "Rejected" : order.status}</span>
                   </p>
                 </div>
-                <span className={`pill ${open ? "online" : "offline"}`}>{order.status}</span>
+                <span className={`pill ${open ? "online" : "offline"}`}>
+                  {order.status === "REJECTED" ? "Rejected" : order.status}
+                </span>
               </div>
+              {order.status === "REJECTED" && (
+                <p className="page-note">
+                  This quote was not selected — the consumer accepted another provider’s quote for
+                  the same request.
+                </p>
+              )}
               {isConsumer && order.completion_otp && open && (
                 <p className="page-note">Share OTP only at handover: {order.completion_otp}</p>
               )}

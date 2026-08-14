@@ -10,12 +10,30 @@ export function CategoryMultiSelect({
   selected: number[];
   onChange: (ids: number[]) => void;
 }) {
-  function toggle(id: number) {
-    if (selected.includes(id)) {
-      onChange(selected.filter((x) => x !== id));
-    } else {
-      onChange([...selected, id]);
+  function toggleParent(parent: CategoryTree) {
+    const childIds = (parent.subcategories || []).map((s) => s.id);
+    const groupIds = [parent.id, ...childIds];
+    const isChecked = selected.includes(parent.id);
+
+    if (isChecked) {
+      // Uncheck parent → clear all of its subcategories too.
+      const drop = new Set(groupIds);
+      onChange(selected.filter((id) => !drop.has(id)));
+      return;
     }
+
+    // Check parent → select parent and every subcategory under it.
+    const next = new Set(selected);
+    for (const id of groupIds) next.add(id);
+    onChange([...next]);
+  }
+
+  function toggleSub(subId: number) {
+    if (selected.includes(subId)) {
+      onChange(selected.filter((x) => x !== subId));
+      return;
+    }
+    onChange([...selected, subId]);
   }
 
   if (tree.length === 0) {
@@ -30,7 +48,7 @@ export function CategoryMultiSelect({
             <input
               type="checkbox"
               checked={selected.includes(parent.id)}
-              onChange={() => toggle(parent.id)}
+              onChange={() => toggleParent(parent)}
             />
             <span>
               <strong>{parent.name}</strong>
@@ -42,7 +60,7 @@ export function CategoryMultiSelect({
               <input
                 type="checkbox"
                 checked={selected.includes(sub.id)}
-                onChange={() => toggle(sub.id)}
+                onChange={() => toggleSub(sub.id)}
               />
               <span>
                 {sub.name}

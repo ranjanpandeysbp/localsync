@@ -8,6 +8,7 @@ import { InquiryChatPanel, startOrOpenChat } from "../components/InquiryChat";
 import { MapsLink } from "../components/MapsLink";
 import { PostRequestModal } from "../components/PostRequestModal";
 import { ProfileCard } from "../components/ProfileCard";
+import { StatusFilterSelect } from "../components/StatusFilterSelect";
 import {
   flattenCategoryOptions,
   offerKindClass,
@@ -65,6 +66,25 @@ const TITLES: Record<ConsumerSection, string> = {
   orders: "Orders",
 };
 
+type ConsumerOrderFilter =
+  | "all"
+  | "CONFIRMED"
+  | "IN_PROGRESS"
+  | "COMPLETED"
+  | "CANCELLED"
+  | "DISPUTED"
+  | "CANCELLED_REQUEST";
+
+const CONSUMER_ORDER_FILTERS: { id: ConsumerOrderFilter; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "CONFIRMED", label: "Confirmed" },
+  { id: "IN_PROGRESS", label: "In progress" },
+  { id: "COMPLETED", label: "Completed" },
+  { id: "CANCELLED", label: "Cancelled" },
+  { id: "DISPUTED", label: "Disputed" },
+  { id: "CANCELLED_REQUEST", label: "Cancelled request" },
+];
+
 export function ConsumerDashboard() {
   const { section } = useParams<{ section?: string }>();
   const navigate = useNavigate();
@@ -95,6 +115,7 @@ export function ConsumerDashboard() {
   const [busy, setBusy] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [requestSearch, setRequestSearch] = useState("");
+  const [orderStatusFilter, setOrderStatusFilter] = useState<ConsumerOrderFilter>("all");
   const [closingRequestId, setClosingRequestId] = useState<string | null>(null);
   const [cancelTarget, setCancelTarget] = useState<{
     id: string;
@@ -319,6 +340,36 @@ export function ConsumerDashboard() {
       (a, b) => new Date(b.sortAt).getTime() - new Date(a.sortAt).getTime(),
     );
   }, [orders, requests, receivedQuotes]);
+
+  const consumerOrderFilterCounts = useMemo(() => {
+    const counts: Record<ConsumerOrderFilter, number> = {
+      all: completeOrdersFeed.length,
+      CONFIRMED: 0,
+      IN_PROGRESS: 0,
+      COMPLETED: 0,
+      CANCELLED: 0,
+      DISPUTED: 0,
+      CANCELLED_REQUEST: 0,
+    };
+    for (const item of completeOrdersFeed) {
+      if (item.kind === "cancelled_request") {
+        counts.CANCELLED_REQUEST += 1;
+      } else if (item.order.status in counts) {
+        counts[item.order.status as Exclude<ConsumerOrderFilter, "all" | "CANCELLED_REQUEST">] += 1;
+      }
+    }
+    return counts;
+  }, [completeOrdersFeed]);
+
+  const filteredOrdersFeed = useMemo(() => {
+    if (orderStatusFilter === "all") return completeOrdersFeed;
+    if (orderStatusFilter === "CANCELLED_REQUEST") {
+      return completeOrdersFeed.filter((item) => item.kind === "cancelled_request");
+    }
+    return completeOrdersFeed.filter(
+      (item) => item.kind === "order" && item.order.status === orderStatusFilter,
+    );
+  }, [completeOrdersFeed, orderStatusFilter]);
 
   if (invalidSection) {
     return <Navigate to="/consumer/details" replace />;
@@ -1481,9 +1532,20 @@ export function ConsumerDashboard() {
                 </p>
               </div>
               <span className="consumer-orders-total">
-                <strong>{completeOrdersFeed.length}</strong>
-                item{completeOrdersFeed.length === 1 ? "" : "s"}
+                <strong>{filteredOrdersFeed.length}</strong>
+                item{filteredOrdersFeed.length === 1 ? "" : "s"}
               </span>
+            </div>
+            <div className="consumer-orders-filter-row">
+              <StatusFilterSelect
+                label="Filter by status"
+                value={orderStatusFilter}
+                options={CONSUMER_ORDER_FILTERS.map((opt) => ({
+                  ...opt,
+                  count: consumerOrderFilterCounts[opt.id],
+                }))}
+                onChange={setOrderStatusFilter}
+              />
             </div>
           </section>
 
@@ -1495,9 +1557,14 @@ export function ConsumerDashboard() {
                 Broadcast request
               </Link>
             </div>
+          ) : filteredOrdersFeed.length === 0 ? (
+            <div className="dash-surface consumer-requests-empty">
+              <h3>No matches</h3>
+              <p className="muted">No orders in this status.</p>
+            </div>
           ) : (
             <div className="consumer-orders-grid">
-              {completeOrdersFeed.map((item) => {
+              {filteredOrdersFeed.map((item) => {
                 if (item.kind === "cancelled_request") {
                   const r = item.request;
                   const category = categoryNameById.get(r.category_id) || "Category";
