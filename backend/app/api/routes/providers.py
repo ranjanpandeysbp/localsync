@@ -1,4 +1,5 @@
 from uuid import UUID
+import re
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import or_, select
@@ -35,6 +36,7 @@ from app.services.slugs import (
 )
 from app.services.provider_catalog import (
     provider_category_names,
+    provider_parent_category_names,
     provider_matches_category,
     set_provider_categories,
 )
@@ -304,35 +306,48 @@ def _catalog_items(
 @router.get("/public-search", response_model=PublicSearchOut)
 def public_search(
     q: str = Query(default="", max_length=100),
+    category_id: int | None = Query(default=None),
     latitude: float | None = Query(default=None),
     longitude: float | None = Query(default=None),
     pincode: str | None = Query(default=None),
+    city: str | None = Query(default=None, max_length=100),
     db: Session = Depends(get_db),
 ):
     """Search verified providers by name, mobile, category, subcategory, or slug (public).
 
-    Empty query returns all nearby verified providers (GPS 5 km, or same pincode).
+    Empty query returns verified providers across the selected city (city-wide radius),
+    sorted nearest-first when coordinates are available.
     """
     from app.core.config import settings
     from app.services.geo import (
-        match_all_nearby_providers,
+        find_all_providers_by_city,
+        find_all_providers_by_pincode,
+        find_all_providers_in_radius,
         normalize_lat_lon,
         normalize_pincode,
     )
     from sqlalchemy import func as sa_func
 
     query = (q or "").strip()
+    city_name = (city or "").strip() or None
     lon, lat = longitude, latitude
     if lon is not None and lat is not None:
         lon, lat = normalize_lat_lon(lon, lat)
     pin = normalize_pincode(pincode)
+    city_radius = settings.city_search_radius_km
 
-    def _catalog_row(profile: ProviderProfile, user: User) -> ProviderCatalogItem:
-        plon, plat = get_lon_lat_from_profile(db, profile)
-        if plat is None:
-            plat = user.latitude
-            plon = user.longitude
-        names = provider_category_names(db, profile)
+    def _catalog_row(
+        profile: ProviderProfile,
+        user: User,
+        distance_m: float | None = None,
+    ) -> ProviderCatalogItem:
+        plat, plon = user.latitude, user.longitude
+        if plat is None or plon is None:
+            plon, plat = get_lon_lat_from_profile(db, profile)
+        names = provider_parent_category_names(db, profile)
+        distance_km = None
+        if distance_m is not None:
+            distance_km = round(float(distance_m) / 1000.0, 1)
         return ProviderCatalogItem(
             user_id=user.id,
             full_name=user.full_name,
@@ -357,49 +372,116 @@ def public_search(
             location_label=user.location_label,
             maps_url=google_maps_url(plat, plon),
             max_radius_km=profile.max_radius_km,
+            distance_km=distance_km,
         )
 
-    # Blank search → all nearby providers by GPS / pincode
-    if not query:
-        if lat is None and lon is None and not pin:
-            raise HTTPException(
-                status_code=400,
-                detail="Enter a pincode or allow location to see nearby providers",
-            )
-        nearby = match_all_nearby_providers(
-            db,
-            longitude=lon,
-            latitude=lat,
-            radius_km=settings.default_search_radius_km,
-            pincode=pin,
-            online_only=False,
-            verified_only=True,
+    def _city_pool() -> dict:
+        """profile.id -> (profile, distance_m|None) for the selected city.
+
+        Union city-name, pincode, and city-radius matches so a blank search
+        returns every provider in that city — not only those already found by GPS.
+        """
+        pool: dict = {}
+
+        def _add(profile: ProviderProfile, dist_m: float | None) -> None:
+            dist = float(dist_m) if dist_m is not None else None
+            existing = pool.get(profile.id)
+            if existing is None:
+                pool[profile.id] = (profile, dist)
+            elif existing[1] is None and dist is not None:
+                pool[profile.id] = (profile, dist)
+
+        if city_name:
+            for profile, dist_m in find_all_providers_by_city(
+                db,
+                city=city_name,
+                longitude=lon,
+                latitude=lat,
+                pincode=pin,
+                online_only=False,
+                verified_only=True,
+            ):
+                _add(profile, dist_m)
+        elif pin:
+            for profile, dist_m in find_all_providers_by_pincode(
+                db,
+                pincode=pin,
+                online_only=False,
+                verified_only=True,
+            ):
+                _add(profile, dist_m)
+
+        if lat is not None and lon is not None:
+            for profile, dist_m in find_all_providers_in_radius(
+                db,
+                longitude=lon,
+                latitude=lat,
+                radius_km=city_radius,
+                online_only=False,
+                verified_only=True,
+            ):
+                _add(profile, dist_m)
+        return pool
+
+    def _sorted_items(rows: list[tuple[ProviderProfile, float | None]], limit: int = 60):
+        rows_sorted = sorted(
+            rows,
+            key=lambda row: (
+                row[1] is None,
+                row[1] if row[1] is not None else 0.0,
+            ),
         )
         items: list[ProviderCatalogItem] = []
-        for profile, _dist in nearby[:40]:
+        for profile, dist_m in rows_sorted:
             user = db.get(User, profile.user_id)
             if not user or not user.is_active:
                 continue
-            items.append(_catalog_row(profile, user))
-        return PublicSearchOut(query="", categories=[], providers=items)
+            items.append(_catalog_row(profile, user, dist_m))
+            if len(items) >= limit:
+                break
+        return items
 
-    like = f"%{query.lower()}%"
-    phone_digits = "".join(ch for ch in query if ch.isdigit())
-    phone_like = f"%{phone_digits}%" if len(phone_digits) >= 3 else None
-
-    cat_rows = db.scalars(
-        select(Category)
-        .where(
-            Category.is_active.is_(True),
-            or_(
-                sa_func.lower(Category.name).like(like),
-                sa_func.lower(sa_func.coalesce(Category.description, "")).like(like),
-                sa_func.lower(Category.slug).like(like),
-            ),
+    # Blank search → all providers in the city, nearest first
+    if not query and category_id is None:
+        if lat is None and lon is None and not pin and not city_name:
+            raise HTTPException(
+                status_code=400,
+                detail="Choose a city to see providers",
+            )
+        pool = _city_pool()
+        return PublicSearchOut(
+            query="",
+            categories=[],
+            providers=_sorted_items(list(pool.values())),
         )
-        .order_by(Category.name)
-        .limit(40)
-    ).all()
+
+    cat_rows: list[Category] = []
+    if query:
+        like = f"%{query.lower()}%"
+        cat_match = [
+            sa_func.lower(Category.name).like(like),
+            sa_func.lower(sa_func.coalesce(Category.description, "")).like(like),
+            sa_func.lower(Category.slug).like(like),
+        ]
+        for token in re.split(r"[^a-z0-9]+", query.lower()):
+            if len(token) < 3:
+                continue
+            token_like = f"%{token}%"
+            cat_match.append(sa_func.lower(Category.name).like(token_like))
+            cat_match.append(sa_func.lower(sa_func.coalesce(Category.description, "")).like(token_like))
+        cat_rows = list(
+            db.scalars(
+                select(Category)
+                .where(Category.is_active.is_(True), or_(*cat_match))
+                .order_by(Category.name)
+                .limit(40)
+            ).all()
+        )
+
+    if category_id is not None:
+        picked = db.get(Category, category_id)
+        if picked and picked.is_active and all(c.id != picked.id for c in cat_rows):
+            cat_rows.insert(0, picked)
 
     categories: list[PublicSearchCategory] = []
     for c in cat_rows:
@@ -432,37 +514,38 @@ def public_search(
             ).all():
                 matched_cat_ids.add(child.id)
 
-    provider_match = or_(
-        sa_func.lower(ProviderProfile.business_name).like(like),
-        sa_func.lower(sa_func.coalesce(ProviderProfile.description, "")).like(like),
-        sa_func.lower(sa_func.coalesce(ProviderProfile.offerings_detail, "")).like(like),
-        sa_func.lower(sa_func.coalesce(ProviderProfile.public_slug, "")).like(like),
-        sa_func.lower(User.full_name).like(like),
-        sa_func.lower(sa_func.coalesce(User.username, "")).like(like),
-        User.phone_number.like(like),
-        sa_func.coalesce(User.alternate_phone, "").like(like),
-    )
-    if phone_like:
+    provider_rows: list = []
+    if query:
+        like = f"%{query.lower()}%"
+        phone_digits = "".join(ch for ch in query if ch.isdigit())
+        phone_like = f"%{phone_digits}%" if len(phone_digits) >= 3 else None
         provider_match = or_(
-            provider_match,
-            User.phone_number.like(phone_like),
-            sa_func.coalesce(User.alternate_phone, "").like(phone_like),
+            sa_func.lower(ProviderProfile.business_name).like(like),
+            sa_func.lower(sa_func.coalesce(ProviderProfile.description, "")).like(like),
+            sa_func.lower(sa_func.coalesce(ProviderProfile.offerings_detail, "")).like(like),
+            sa_func.lower(sa_func.coalesce(ProviderProfile.public_slug, "")).like(like),
+            sa_func.lower(User.full_name).like(like),
+            User.phone_number.like(like),
+            sa_func.coalesce(User.alternate_phone, "").like(like),
         )
-
-    # Providers matching text in name / mobile / slug / offerings
-    provider_rows = list(
-        db.execute(
-            select(ProviderProfile, User)
-            .join(User, User.id == ProviderProfile.user_id)
-            .where(
-                ProviderProfile.verification_status == VerificationStatus.APPROVED,
-                User.is_active.is_(True),
+        if phone_like:
+            provider_match = or_(
                 provider_match,
+                User.phone_number.like(phone_like),
+                sa_func.coalesce(User.alternate_phone, "").like(phone_like),
             )
-            .order_by(ProviderProfile.is_online.desc(), User.average_rating.desc())
-            .limit(40)
-        ).all()
-    )
+        provider_rows = list(
+            db.execute(
+                select(ProviderProfile, User)
+                .join(User, User.id == ProviderProfile.user_id)
+                .where(
+                    ProviderProfile.verification_status == VerificationStatus.APPROVED,
+                    User.is_active.is_(True),
+                    provider_match,
+                )
+                .limit(80)
+            ).all()
+        )
 
     # Also include providers linked to matching categories / subcategories
     if matched_cat_ids:
@@ -481,8 +564,7 @@ def public_search(
                     ),
                 ),
             )
-            .order_by(ProviderProfile.is_online.desc(), User.average_rating.desc())
-            .limit(40)
+            .limit(80)
         ).all()
         seen = {p.id for p, _ in provider_rows}
         for row in extra:
@@ -490,31 +572,22 @@ def public_search(
                 provider_rows.append(row)
                 seen.add(row[0].id)
 
-    # Optional nearby filter (name / mobile / slug / category hits must still be local)
-    nearby_ids = None
-    if (lat is not None and lon is not None) or pin:
-        nearby_ids = {
-            profile.id
-            for profile, _dist in match_all_nearby_providers(
-                db,
-                longitude=lon,
-                latitude=lat,
-                radius_km=settings.default_search_radius_km,
-                pincode=pin,
-                online_only=False,
-                verified_only=True,
-            )
-        }
+    # Restrict to city-wide pool when location/city is known; keep distance for sorting
+    pool = _city_pool() if ((lat is not None and lon is not None) or pin or city_name) else None
+    ranked: list[tuple[ProviderProfile, float | None]] = []
+    for profile, _user in provider_rows:
+        if pool is not None:
+            if profile.id not in pool:
+                continue
+            ranked.append((profile, pool[profile.id][1]))
+        else:
+            ranked.append((profile, None))
 
-    items = []
-    for profile, user in provider_rows:
-        if nearby_ids is not None and profile.id not in nearby_ids:
-            continue
-        items.append(_catalog_row(profile, user))
-        if len(items) >= 24:
-            break
-
-    return PublicSearchOut(query=query, categories=categories, providers=items)
+    return PublicSearchOut(
+        query=query,
+        categories=categories,
+        providers=_sorted_items(ranked),
+    )
 
 
 @router.get("/public/{slug_or_id}", response_model=ProviderPublicOut)
@@ -552,6 +625,10 @@ def public_provider_page(
         db.commit()
         db.refresh(profile)
 
+    cat_ids = [link.category_id for link in profile.category_links]
+    if not cat_ids and profile.category_id:
+        cat_ids = [profile.category_id]
+
     return ProviderPublicOut(
         user_id=user.id,
         business_name=profile.business_name,
@@ -580,6 +657,8 @@ def public_provider_page(
         state=user.state,
         pincode=user.pincode,
         public_url_path=public_url_path_for(profile),
+        category_id=profile.category_id or (cat_ids[0] if cat_ids else None),
+        category_ids=cat_ids,
     )
 
 

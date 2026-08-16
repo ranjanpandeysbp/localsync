@@ -177,6 +177,7 @@ class ProviderCatalogItem(BaseModel):
     location_label: str | None = None
     maps_url: str | None = None
     max_radius_km: int
+    distance_km: float | None = None
 
 
 class ProviderPublicOut(BaseModel):
@@ -209,12 +210,15 @@ class ProviderPublicOut(BaseModel):
     state: str | None = None
     pincode: str | None = None
     public_url_path: str
+    category_id: int | None = None
+    category_ids: list[int] = Field(default_factory=list)
 
 
 class ConversationCreate(BaseModel):
     provider_id: UUID
     category_id: int | None = None
     initial_message: str | None = Field(default=None, min_length=1, max_length=2000)
+    request_id: UUID | None = None
 
 
 class ProviderConversationCreate(BaseModel):
@@ -223,6 +227,7 @@ class ProviderConversationCreate(BaseModel):
     consumer_id: UUID
     category_id: int | None = None
     initial_message: str | None = Field(default=None, min_length=1, max_length=2000)
+    request_id: UUID | None = None
 
 
 class InquiryMessageOut(BaseModel):
@@ -284,6 +289,16 @@ class AdminSupportConversationOut(BaseModel):
 
 
 class AdminSupportUnreadOut(BaseModel):
+    unread_count: int = 0
+
+
+class ConversationUnreadOut(BaseModel):
+    unread_count: int = 0
+    request_unread_count: int = 0
+    quote_unread_count: int = 0
+
+
+class QuoteUnreadOut(BaseModel):
     unread_count: int = 0
 
 
@@ -442,6 +457,8 @@ class QuoteOut(BaseModel):
     category_id: int | None = None
     provider_trust: ProviderTrustInfo | None = None
     attachments: list[AttachmentOut] = Field(default_factory=list)
+    unseen: bool = False
+    request_status: RequestStatus | None = None
 
     model_config = {"from_attributes": True}
 

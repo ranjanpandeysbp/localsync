@@ -7,6 +7,7 @@ export type PostRequestProvider = {
 export type PostRequestDraft = {
   providerIds: string[];
   categoryId: number | null;
+  categoryLabels?: string[];
   providers?: PostRequestProvider[];
 };
 
@@ -39,6 +40,9 @@ export function readPostRequestDraft(): PostRequestDraft | null {
         parsed.categoryId == null || Number.isNaN(Number(parsed.categoryId))
           ? null
           : Number(parsed.categoryId),
+      categoryLabels: Array.isArray(parsed.categoryLabels)
+        ? parsed.categoryLabels.map(String)
+        : undefined,
       providers: parsed.providers?.map((p) => ({
         id: String(p.id),
         name: p.name,
@@ -78,7 +82,8 @@ export function majorityCategoryId(
 
 type CategoryNode = {
   id: number;
-  subcategories?: { id: number }[] | null;
+  name?: string;
+  subcategories?: { id: number; name?: string }[] | null;
 };
 
 /** Resolve a category (or subcategory) id to its top-level parent id. */
@@ -95,6 +100,57 @@ export function topLevelCategoryId(
     }
   }
   return id;
+}
+
+function categoryOptionsFromTree(
+  tree: CategoryNode[],
+): { id: number; label: string }[] {
+  const opts: { id: number; label: string }[] = [];
+  for (const parent of tree) {
+    const parentName = parent.name || String(parent.id);
+    opts.push({ id: parent.id, label: parentName });
+    for (const sub of parent.subcategories || []) {
+      const subName = sub.name || String(sub.id);
+      opts.push({ id: sub.id, label: `${parentName} › ${subName}` });
+    }
+  }
+  return opts;
+}
+
+/** Pick the draft category id, matching the provider's category once the tree is loaded. */
+export function resolveDraftCategoryId(
+  draft: PostRequestDraft | null | undefined,
+  tree: CategoryNode[],
+): number | null {
+  if (!draft) return null;
+  const opts = categoryOptionsFromTree(tree);
+  const candidates = [
+    draft.categoryId,
+    ...(draft.providers || []).map((p) => p.categoryId ?? null),
+  ].filter((id): id is number => id != null && !Number.isNaN(Number(id)));
+
+  for (const id of candidates) {
+    if (opts.some((o) => o.id === id)) return id;
+  }
+  if (tree.length === 0 && candidates[0] != null) return candidates[0];
+
+  const labels = [
+    ...(draft.categoryLabels || []),
+    ...candidates.map((id) => opts.find((o) => o.id === id)?.label || ""),
+  ].filter(Boolean);
+
+  for (const raw of labels) {
+    const text = raw.trim().toLowerCase();
+    const exact = opts.find((o) => o.label.toLowerCase() === text);
+    if (exact) return exact.id;
+    const parentName = text.split(" › ")[0]?.trim();
+    const parent = opts.find((o) => o.label.toLowerCase() === parentName);
+    if (parent) return parent.id;
+  }
+
+  const fallback = candidates[0];
+  if (fallback == null) return null;
+  return topLevelCategoryId(tree, fallback);
 }
 
 /** True when every provider shares the same top-level category. */

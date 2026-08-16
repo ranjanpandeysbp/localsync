@@ -27,8 +27,6 @@ export function ProviderEkycSection({ provider, onUpdated }: Props) {
     label: provider.ekyc_location_label || "",
   });
   const [busy, setBusy] = useState(false);
-  const [videoBusy, setVideoBusy] = useState(false);
-  const [videoLive, setVideoLive] = useState(false);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
 
@@ -47,17 +45,16 @@ export function ProviderEkycSection({ provider, onUpdated }: Props) {
     setCameraOn(false);
   }
 
-  async function startCamera(forVideoCall = false) {
+  async function startCamera() {
     setError("");
     stopCamera();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user" },
-        audio: forVideoCall,
+        audio: false,
       });
       streamRef.current = stream;
       setCameraOn(true);
-      setVideoLive(forVideoCall);
       // Attach after React paints the <video> element.
       window.requestAnimationFrame(() => {
         if (videoRef.current) {
@@ -167,30 +164,6 @@ export function ProviderEkycSection({ provider, onUpdated }: Props) {
     }
   }
 
-  async function startVideoKyc() {
-    setError("");
-    setNote("");
-    if (!provider.ekyc_photo_url || provider.ekyc_latitude == null) {
-      setError("Submit photo and location before starting Video KYC");
-      return;
-    }
-    setVideoBusy(true);
-    try {
-      await startCamera(true);
-      const { data } = await api.post<ProviderProfile>("/providers/me/ekyc/video-request");
-      onUpdated(data);
-      setNote(
-        "Video KYC requested. Keep this camera on — a customer service agent will join via Admin messages.",
-      );
-    } catch (err) {
-      setError(apiErrorMessage(err, "Could not start Video KYC"));
-      stopCamera();
-      setVideoLive(false);
-    } finally {
-      setVideoBusy(false);
-    }
-  }
-
   const status = (provider.ekyc_status || "NONE").toUpperCase();
   const statusLabel =
     status === "VIDEO_REQUESTED"
@@ -206,8 +179,7 @@ export function ProviderEkycSection({ provider, onUpdated }: Props) {
   return (
     <div className="profile-section profile-ekyc">
       <p className="profile-section-lead muted">
-        Capture a live photo and your current GPS location, then start a Video KYC session with a
-        Gharq customer service agent.
+        Capture a live photo and your current GPS location for verification.
       </p>
 
       <p className="profile-verification">
@@ -228,7 +200,7 @@ export function ProviderEkycSection({ provider, onUpdated }: Props) {
               ref={videoRef}
               className="profile-ekyc-video"
               playsInline
-              muted={!videoLive}
+              muted
               autoPlay
               hidden={!cameraOn}
             />
@@ -241,12 +213,12 @@ export function ProviderEkycSection({ provider, onUpdated }: Props) {
           </div>
           <div className="page-actions profile-ekyc-actions">
             {!cameraOn ? (
-              <button className="btn secondary" type="button" onClick={() => void startCamera(false)}>
+              <button className="btn secondary" type="button" onClick={() => void startCamera()}>
                 Open camera
               </button>
             ) : (
               <>
-                <button className="btn" type="button" onClick={capturePhoto} disabled={videoLive}>
+                <button className="btn" type="button" onClick={capturePhoto}>
                   Capture photo
                 </button>
                 <button className="btn secondary" type="button" onClick={stopCamera}>
@@ -281,25 +253,11 @@ export function ProviderEkycSection({ provider, onUpdated }: Props) {
         <button className="btn" type="button" disabled={busy} onClick={() => void submitEkyc()}>
           {busy ? "Submitting…" : "Submit photo & location"}
         </button>
-        <button
-          className="btn secondary"
-          type="button"
-          disabled={videoBusy || !provider.ekyc_photo_url}
-          onClick={() => void startVideoKyc()}
-        >
-          {videoBusy ? "Starting…" : videoLive ? "Video KYC live" : "Start Video KYC"}
-        </button>
         <Link className="btn secondary" to="/provider/support">
           Open Admin messages
         </Link>
       </div>
 
-      {videoLive && (
-        <p className="page-note">
-          Your camera and mic are on for Video KYC. Stay on this page while an agent connects through
-          Admin messages.
-        </p>
-      )}
       {note && <p className="page-note">{note}</p>}
       {error && <p className="error">{error}</p>}
     </div>

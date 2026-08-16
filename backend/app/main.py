@@ -61,6 +61,7 @@ def _run_startup_migrations() -> None:
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION",
             "ALTER TABLE categories ADD COLUMN IF NOT EXISTS parent_id INTEGER REFERENCES categories(id) ON DELETE CASCADE",
+            "ALTER TABLE categories ALTER COLUMN name TYPE VARCHAR(255)",
             "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS offerings_detail TEXT",
             "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS opening_time VARCHAR(5)",
             "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS closing_time VARCHAR(5)",
@@ -90,6 +91,7 @@ def _run_startup_migrations() -> None:
             "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS ekyc_status VARCHAR(32)",
             "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS ekyc_captured_at TIMESTAMPTZ",
             "ALTER TABLE provider_profiles ADD COLUMN IF NOT EXISTS ekyc_video_requested_at TIMESTAMPTZ",
+            "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS consumer_seen_at TIMESTAMPTZ",
         ):
             try:
                 conn.execute(text(stmt))
@@ -109,6 +111,19 @@ def _run_startup_migrations() -> None:
             )
         except Exception as exc:
             print(f"[startup] conversation last_read backfill: {exc}")
+
+        try:
+            conn.execute(
+                text(
+                    """
+                    UPDATE quotes
+                    SET consumer_seen_at = COALESCE(consumer_seen_at, created_at, NOW())
+                    WHERE consumer_seen_at IS NULL
+                    """
+                )
+            )
+        except Exception as exc:
+            print(f"[startup] quote consumer_seen_at backfill: {exc}")
 
         try:
             conn.execute(
@@ -170,6 +185,29 @@ def _run_startup_migrations() -> None:
             )
         except Exception as exc:
             print(f"[startup] order_status REJECTED: {exc}")
+
+        try:
+            conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                      IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'request_status')
+                         AND NOT EXISTS (
+                           SELECT 1
+                           FROM pg_enum e
+                           JOIN pg_type t ON e.enumtypid = t.oid
+                           WHERE t.typname = 'request_status' AND e.enumlabel = 'EXPIRED'
+                         )
+                      THEN
+                        ALTER TYPE request_status ADD VALUE 'EXPIRED';
+                      END IF;
+                    END $$;
+                    """
+                )
+            )
+        except Exception as exc:
+            print(f"[startup] request_status EXPIRED: {exc}")
 
         try:
             conn.execute(
@@ -323,6 +361,27 @@ async def lifespan(_: FastAPI):
     try:
         _run_startup_migrations()
         _backfill_provider_public_slugs()
+        from app.services.category_catalog import ensure_marketplace_categories
+        from app.services.request_expiry import apply_request_expiry
+
+        db = SessionLocal()
+        try:
+            n_cats = ensure_marketplace_categories(db)
+            db.commit()
+            print(f"[startup] marketplace categories ready ({n_cats})")
+        except Exception as exc:
+            db.rollback()
+            print(f"[startup] marketplace categories failed: {exc}")
+        finally:
+            db.close()
+
+        db = SessionLocal()
+        try:
+            n = apply_request_expiry(db)
+            if n:
+                print(f"[startup] expired {n} stale unlocked request(s)")
+        finally:
+            db.close()
     except Exception as exc:
         # Never block the API forever on migration issues
         print(f"[startup] migration failed (continuing): {exc}")

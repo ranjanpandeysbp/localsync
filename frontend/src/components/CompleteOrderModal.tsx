@@ -87,22 +87,24 @@ export function CompleteOrderModal({ open, quote, order, onClose, onSuccess }: P
         </p>
 
         <form className="page-form submit-quote-form" onSubmit={(e) => void onSubmit(e)}>
-          {error && <p className="error">{error}</p>}
-          <div className="field">
-            <label htmlFor="complete-order-otp">Consumer OTP</label>
-            <input
-              id="complete-order-otp"
-              required
-              inputMode="numeric"
-              pattern="[0-9]{6}"
-              maxLength={6}
-              minLength={6}
-              value={otp}
-              onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
-              placeholder="6-digit code"
-              autoFocus
-              autoComplete="one-time-code"
-            />
+          <div className="post-request-modal-scroll">
+            {error && <p className="error">{error}</p>}
+            <div className="field">
+              <label htmlFor="complete-order-otp">Consumer OTP</label>
+              <input
+                id="complete-order-otp"
+                required
+                inputMode="numeric"
+                pattern="[0-9]{6}"
+                maxLength={6}
+                minLength={6}
+                value={otp}
+                onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                placeholder="6-digit code"
+                autoFocus
+                autoComplete="one-time-code"
+              />
+            </div>
           </div>
           <div className="page-actions submit-quote-actions">
             <button className="btn secondary" type="button" onClick={onClose} disabled={busy}>

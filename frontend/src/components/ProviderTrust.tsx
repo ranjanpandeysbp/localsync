@@ -21,7 +21,12 @@ export function flattenCategoryOptions(tree: CategoryTree[]): { id: number; labe
   for (const p of tree) {
     opts.push({ id: p.id, label: p.name });
     for (const s of p.subcategories || []) {
-      opts.push({ id: s.id, label: `${p.name} › ${s.name}` });
+      opts.push({
+        id: s.id,
+        label: s.description
+          ? `${p.name} › ${s.name} — ${s.description}`
+          : `${p.name} › ${s.name}`,
+      });
     }
   }
   return opts;

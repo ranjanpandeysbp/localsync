@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useParams } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
@@ -8,12 +8,14 @@ import { MapsLink } from "../components/MapsLink";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { api } from "../services/api";
 import { playQuoteBell } from "../services/sounds";
-import type { Order, Quote, ServiceRequest } from "../types";
+import { useConsumerNav } from "../store/consumerNav";
+import type { Conversation, Order, Quote, ServiceRequest } from "../types";
 
 export function RequestDetailPage() {
   const { id } = useParams();
   const [request, setRequest] = useState<ServiceRequest | null>(null);
   const [quotes, setQuotes] = useState<Quote[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
   const [lockedOrder, setLockedOrder] = useState<Order | null>(null);
   const [fulfillment, setFulfillment] = useState("PROVIDER_DELIVERY");
   const [paymentMode, setPaymentMode] = useState("CASH");
@@ -23,6 +25,7 @@ export function RequestDetailPage() {
   const [chatTitle, setChatTitle] = useState("");
   const knownIds = useRef<Set<string>>(new Set());
   const primed = useRef(false);
+  const refreshQuotesChatUnread = useConsumerNav((s) => s.refreshQuotesChatUnread);
 
   function showMessage(text: string, tone: "success" | "error" = "success") {
     setMessageTone(tone);
@@ -40,12 +43,14 @@ export function RequestDetailPage() {
 
   async function load(opts?: { silent?: boolean }) {
     if (!id) return;
-    const [req, qs, orders] = await Promise.all([
+    const [req, qs, orders, convs] = await Promise.all([
       api.get<ServiceRequest>(`/requests/${id}`),
       api.get<Quote[]>(`/requests/${id}/quotes`),
       api.get<Order[]>("/orders/mine"),
+      api.get<Conversation[]>("/conversations"),
     ]);
     setRequest(req.data);
+    setConversations(convs.data);
 
     const next = qs.data;
     if (primed.current) {
@@ -64,8 +69,35 @@ export function RequestDetailPage() {
     setLockedOrder(orderForRequest);
   }
 
+  const unreadByProvider = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const c of conversations) {
+      const n = c.unread_count || 0;
+      if (n > 0 && c.provider_id) {
+        map.set(c.provider_id, (map.get(c.provider_id) || 0) + n);
+      }
+    }
+    return map;
+  }, [conversations]);
+
+  const requestUnreadTotal = useMemo(() => {
+    const providerIds = new Set(quotes.map((q) => q.provider_id).filter(Boolean) as string[]);
+    let total = 0;
+    for (const pid of providerIds) {
+      total += unreadByProvider.get(pid) || 0;
+    }
+    return total;
+  }, [quotes, unreadByProvider]);
+
   const { connected } = useWebSocket((msg) => {
-    const m = msg as { type?: string; payload?: Quote & { request_id?: string } };
+    const m = msg as {
+      type?: string;
+      payload?: Quote & {
+        request_id?: string;
+        conversation_id?: string;
+        provider_id?: string;
+      };
+    };
     if (
       (m.type === "new_quote" || m.type === "quote_updated") &&
       m.payload?.request_id === id
@@ -76,8 +108,30 @@ export function RequestDetailPage() {
     if (m.type === "order_confirmed" && m.payload?.request_id === id) {
       void load({ silent: true });
     }
-    if (m.type === "order_completed") {
+    if (m.type === "order_completed" || m.type === "conversation_reset") {
+      const closedId = m.payload?.conversation_id;
+      const closedProviderId = m.payload?.provider_id;
+      setConversations((prev) =>
+        prev.filter((c) => {
+          if (closedId && c.id === closedId) return false;
+          if (closedProviderId && c.provider_id === closedProviderId) return false;
+          return true;
+        }),
+      );
+      setChatId((current) => {
+        if (closedId && current === closedId) {
+          setChatTitle("");
+          return null;
+        }
+        return current;
+      });
+      if (m.type === "order_completed") {
+        void load({ silent: true });
+      }
+    }
+    if (m.type === "inquiry_message") {
       void load({ silent: true });
+      void refreshQuotesChatUnread();
     }
   });
 
@@ -118,6 +172,7 @@ export function RequestDetailPage() {
         providerId,
         request?.category_id,
         `Hi, following up on my request "${request?.title || ""}".`,
+        request?.id,
       );
       setChatId(conv.id);
       setChatTitle(name);
@@ -315,7 +370,18 @@ export function RequestDetailPage() {
           <div className="request-detail-quotes-head">
             <div>
               <p className="dash-eyebrow">Offers</p>
-              <h3>Quotes received</h3>
+              <h3>
+                Quotes received
+                {requestUnreadTotal > 0 && (
+                  <span
+                    className="nav-badge"
+                    style={{ marginLeft: "0.5rem", verticalAlign: "middle" }}
+                    aria-label={`${requestUnreadTotal} unread chat messages`}
+                  >
+                    {requestUnreadTotal > 99 ? "99+" : requestUnreadTotal}
+                  </span>
+                )}
+              </h3>
             </div>
           </div>
 
@@ -362,10 +428,18 @@ export function RequestDetailPage() {
                               )}
                             </div>
                             <button
-                              className="icon-btn request-detail-chat-icon"
+                              className="icon-btn request-detail-chat-icon provider-quote-chat-btn"
                               type="button"
-                              title="Chat"
-                              aria-label={`Chat with ${providerLabel}`}
+                              title={
+                                (unreadByProvider.get(q.provider_id) || 0) > 0
+                                  ? `Chat with ${providerLabel}, ${unreadByProvider.get(q.provider_id)} unread`
+                                  : "Chat"
+                              }
+                              aria-label={
+                                (unreadByProvider.get(q.provider_id) || 0) > 0
+                                  ? `Chat with ${providerLabel}, ${unreadByProvider.get(q.provider_id)} unread`
+                                  : `Chat with ${providerLabel}`
+                              }
                               onClick={() => void chatWithProvider(q.provider_id, providerLabel)}
                             >
                               <svg
@@ -381,6 +455,13 @@ export function RequestDetailPage() {
                               >
                                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                               </svg>
+                              {(unreadByProvider.get(q.provider_id) || 0) > 0 && (
+                                <span className="nav-badge provider-quote-chat-badge">
+                                  {(unreadByProvider.get(q.provider_id) || 0) > 99
+                                    ? "99+"
+                                    : unreadByProvider.get(q.provider_id)}
+                                </span>
+                              )}
                             </button>
                           </div>
                           <p className="muted consumer-quote-meta">
@@ -448,11 +529,18 @@ export function RequestDetailPage() {
                         </time>
                         <div className="consumer-quote-card-actions">
                           <button
-                            className="btn secondary request-detail-chat-btn"
+                            className="btn secondary request-detail-chat-btn provider-quote-chat-btn"
                             type="button"
                             onClick={() => void chatWithProvider(q.provider_id, providerLabel)}
                           >
                             Chat
+                            {(unreadByProvider.get(q.provider_id) || 0) > 0 && (
+                              <span className="nav-badge provider-quote-chat-badge">
+                                {(unreadByProvider.get(q.provider_id) || 0) > 99
+                                  ? "99+"
+                                  : unreadByProvider.get(q.provider_id)}
+                              </span>
+                            )}
                           </button>
                         </div>
                       </footer>
@@ -475,6 +563,10 @@ export function RequestDetailPage() {
             emptyHint="Ask the provider about their quote or timing."
             placeholder="Write a message…"
             onClose={() => setChatId(null)}
+            onMessagesLoaded={() => {
+              void load({ silent: true });
+              void refreshQuotesChatUnread();
+            }}
           />
         )}
       </div>

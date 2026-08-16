@@ -56,6 +56,36 @@ def provider_category_names(db: Session, profile: ProviderProfile) -> list[str]:
     return names
 
 
+def provider_parent_category_names(db: Session, profile: ProviderProfile) -> list[str]:
+    """Top-level category names only (no subcategory tags)."""
+    names: list[str] = []
+    seen: set[str] = set()
+
+    def add(name: str | None) -> None:
+        label = (name or "").strip()
+        if not label or label in seen:
+            return
+        seen.add(label)
+        names.append(label)
+
+    cats: list[Category] = []
+    for link in profile.category_links:
+        cat = db.get(Category, link.category_id)
+        if cat:
+            cats.append(cat)
+    if not cats and profile.category_id:
+        cat = db.get(Category, profile.category_id)
+        if cat:
+            cats.append(cat)
+    for cat in cats:
+        if cat.parent_id:
+            parent = db.get(Category, cat.parent_id)
+            add(parent.name if parent else cat.name)
+        else:
+            add(cat.name)
+    return names
+
+
 def provider_matches_category(db: Session, profile: ProviderProfile, category_id: int) -> bool:
     """True if provider offers this category or its parent / any of its children."""
     target = db.get(Category, category_id)

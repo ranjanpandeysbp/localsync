@@ -1,5 +1,23 @@
+import { useState } from "react";
 import type { CategoryTree, OfferKind } from "../types";
 import { offerKindLabel } from "./ProviderTrust";
+
+function CategoryChevron() {
+  return (
+    <svg
+      className="category-group-chevron"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden="true"
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
 
 export function CategoryMultiSelect({
   tree,
@@ -10,6 +28,12 @@ export function CategoryMultiSelect({
   selected: number[];
   onChange: (ids: number[]) => void;
 }) {
+  const [openIds, setOpenIds] = useState<number[]>([]);
+
+  function toggleOpen(id: number) {
+    setOpenIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
   function toggleParent(parent: CategoryTree) {
     const childIds = (parent.subcategories || []).map((s) => s.id);
     const groupIds = [parent.id, ...childIds];
@@ -42,34 +66,69 @@ export function CategoryMultiSelect({
 
   return (
     <div className="category-multi">
-      {tree.map((parent) => (
-        <div key={parent.id} className="category-group">
-          <label className="check-row">
-            <input
-              type="checkbox"
-              checked={selected.includes(parent.id)}
-              onChange={() => toggleParent(parent)}
-            />
-            <span>
-              <strong>{parent.name}</strong>
-              <span className="muted"> · {offerKindLabel(parent.kind)}</span>
-            </span>
-          </label>
-          {(parent.subcategories || []).map((sub) => (
-            <label key={sub.id} className="check-row sub">
-              <input
-                type="checkbox"
-                checked={selected.includes(sub.id)}
-                onChange={() => toggleSub(sub.id)}
-              />
-              <span>
-                {sub.name}
-                <span className="muted"> · {offerKindLabel(sub.kind as OfferKind)}</span>
-              </span>
-            </label>
-          ))}
-        </div>
-      ))}
+      {tree.map((parent) => {
+        const subs = parent.subcategories || [];
+        const open = openIds.includes(parent.id);
+        const selectedSubs = subs.filter((s) => selected.includes(s.id)).length;
+        const panelId = `category-group-panel-${parent.id}`;
+        return (
+          <div key={parent.id} className={`category-group${open ? " is-open" : ""}`}>
+            <div className="category-group-head">
+              <button
+                type="button"
+                className="category-group-toggle"
+                aria-expanded={open}
+                aria-controls={panelId}
+                onClick={() => toggleOpen(parent.id)}
+              >
+                <CategoryChevron />
+                <span className="category-group-toggle-copy">
+                  <strong>{parent.name}</strong>
+                  <span className="muted"> · {offerKindLabel(parent.kind)}</span>
+                  {selectedSubs > 0 && (
+                    <span className="category-group-count">
+                      {selectedSubs} selected
+                    </span>
+                  )}
+                </span>
+              </button>
+              <label className="category-group-check" onClick={(e) => e.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  checked={selected.includes(parent.id)}
+                  onChange={() => toggleParent(parent)}
+                  aria-label={`Select all in ${parent.name}`}
+                />
+              </label>
+            </div>
+            {open && (
+              <div className="category-group-panel" id={panelId}>
+                {subs.length === 0 ? (
+                  <p className="muted category-group-empty">No subcategories</p>
+                ) : (
+                  subs.map((sub) => (
+                    <label key={sub.id} className="check-row sub">
+                      <input
+                        type="checkbox"
+                        checked={selected.includes(sub.id)}
+                        onChange={() => toggleSub(sub.id)}
+                      />
+                      <span>
+                        <strong>{sub.name}</strong>
+                        <span className="muted"> · {offerKindLabel(sub.kind as OfferKind)}</span>
+                        {sub.description &&
+                          sub.description !== sub.name && (
+                            <span className="category-sub-desc muted">{sub.description}</span>
+                          )}
+                      </span>
+                    </label>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

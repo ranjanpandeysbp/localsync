@@ -92,7 +92,7 @@ export function CitySearchBox({
           <input
             ref={inputRef}
             id={id}
-            type="search"
+            type="text"
             role="combobox"
             aria-expanded={open}
             aria-controls={listId}
@@ -113,9 +113,15 @@ export function CitySearchBox({
               } else if (e.key === "ArrowUp") {
                 e.preventDefault();
                 setHighlight((h) => Math.max(h - 1, 0));
-              } else if (e.key === "Enter" && open && filtered[highlight]) {
-                e.preventDefault();
-                pick(filtered[highlight]);
+              } else if (e.key === "Enter") {
+                if (selected && !query.trim()) {
+                  setOpen(false);
+                  return;
+                }
+                if (open && filtered[highlight]) {
+                  e.preventDefault();
+                  pick(filtered[highlight]);
+                }
               } else if (e.key === "Escape") {
                 setOpen(false);
               }

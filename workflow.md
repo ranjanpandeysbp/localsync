@@ -41,7 +41,7 @@ Guest search / browse
 Consumer registers / logs in (+ GPS, city, pincode)
         │
         ▼
-Browse providers by category ──► Chat & ask (online or offline)
+Discover providers on landing Home (search / category) ──► Chat & ask
         │
         ├─ Targeted: select 1+ same top-level category ──► Send a request (modal)
         └─ Broadcast request: nearby verified providers in a category
@@ -71,7 +71,7 @@ Consumer shares OTP → Provider completes → both rate each other
    - **Mobile** — phone / alternate phone (digit-friendly)
    - **Category / subcategory** — name or slug (parent↔child links included)
    - **Slug** — provider public slug and category slug  
-   Blank keyword still supports nearby matching via selected city coords (and city default pincode sent to the API when available). Nearby filter applies when location/city is set.
+   Blank or keyword search scopes to the **whole selected city** (city-wide radius + city-name matches), sorted **nearest first**, and each result includes **distance_km** shown on the card.
 5. **City selection** — served cities for now: **Bhubaneswar**, **Sambalpur**, **Jharsuguda**.
    - If a city is **already saved**, the city popup does **not** auto-show on landing open
    - On landing open with **no** saved city: if GPS is unavailable/denied → city popup with searchable dropdown
@@ -197,7 +197,6 @@ Reset link: `{frontend_url}/reset-password?token=…` (default expiry 30 minutes
 | Route | Purpose |
 |-------|---------|
 | `/consumer/details` | **My Account** — profile summary → Edit profile |
-| `/consumer/providers` | Browse providers by category (Online/Offline); **Chat & ask**; select for targeted **Send a request** |
 | `/consumer/inquiries` | **Recent inquiries** — chats updated in the last 30 days; delete chat |
 | `/consumer/post` | **Broadcast request** — notify nearby verified providers in a category |
 | `/consumer/requests` | **My requests** — ACTIVE requests only (+ cancel; **Broadcast request** → `/consumer/post`) |
@@ -233,16 +232,9 @@ Shared fields:
 - Fields are a **single-column vertical list** (no side-by-side pairs)
 - **Save** shows a popup: **Profile Updated Successfully**
 
-### 3. Browse providers (`/consumer/providers`)
+### 3. Discover providers (landing Home)
 
-Hero + category search + **Online / Offline** segments. Cards show offer kind, business name, offerings, rating, hours, and map when available.
-
-Actions:
-
-- **View profile** → `/p/:slug` (or user id fallback)
-- **Chat & ask** — opens sleek inquiry chat overlay (works for online or offline approved providers)
-- **Checkbox** — select one or more for a targeted send  
-  → **Send request to selected** opens the **Send a request** modal (same top-level category required; otherwise the same-category popup)
+Provider discovery lives on **`/`** (landing Home search / category browse), not a consumer dashboard section. Signed-in consumers use the same flow: search or browse, open `/p/:slug`, **Chat & ask**, or select providers for a targeted **Send a request**. Visiting `/consumer/providers` redirects to `/consumer/details`.
 
 ### 4. Chat before requesting
 
@@ -259,17 +251,17 @@ Inquiry chat is **not** tied to a request/order.
 
 Nav label and page title: **Broadcast request**. Also reachable from **My requests → Broadcast request**.
 
-Fields: category, title, details, optional attachments, location.
+Fields: category, title, details, optional attachments, **Search City** (same searchable city list as Home; defaults to the city chosen on the landing page).
 
-Always **broadcasts** to verified nearby providers in that category (geo 5 km or same pincode). There is no “who should receive it” chooser on this page.
+Always **broadcasts** to verified nearby providers in that category near the selected city (geo ~5 km, with city pincode). There is no “who should receive it” chooser on this page.
 
-**Targeted sends** use **Send a request** from landing search or Providers selection (modal), not this page.
+**Targeted sends** use **Send a request** from landing Home search selection (modal), not this page.
 
 On successful create, the app navigates to **`/consumer/requests`**.
 
 ### 5b. Send a request (modal)
 
-Opened from landing search selection or Providers **Send request to selected**.
+Opened from landing Home search selection.
 
 - Requires one or more selected providers that share the **same top-level category**
 - Consumer picks/adjusts category, adds providers by name, describes the need, optional attachments
@@ -686,7 +678,7 @@ Delete removes the user entirely.
 | Audience | Paths |
 |----------|--------|
 | Guest | `/` (landing + login/register modals via `?login=1` / `?register=1`), `/login` → `/?login=1`, `/register` → `/?register=1`, `/forgot-password`, `/reset-password`, `/p/:slug` (or `/p/:userId`) |
-| Consumer | `/consumer/*` (details, providers, inquiries, post, requests, quotes, orders), `/profile`, `/orders/:id` |
+| Consumer | `/consumer/*` (details, inquiries, post, requests, quotes, orders), `/profile`, `/orders/:id` |
 | Provider | `/provider/*` (overview, support, requests, quotes, orders), `/profile`, `/orders/:id` |
 | Admin | `/admin/providers`, `/admin/providers/:userId`, `/admin/consumers`, `/admin/orders`, `/admin/categories`, `/admin/messages`, `/admin/customer-service`, `/admin/config` |
 | Customer service | Same as admin **except** `/admin/customer-service` and `/admin/config` |

@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -33,7 +33,9 @@ from app.services.geo import (
     normalize_pincode,
     users_share_pincode,
 )
+from app.services.inquiry_chat import reset_inquiry_conversation
 from app.services.provider_catalog import provider_matches_category
+from app.services.request_expiry import apply_request_expiry
 from app.services.redis_pubsub import redis_pubsub
 from app.services.ws_manager import ws_manager
 
@@ -166,6 +168,14 @@ async def create_request(
         provider_ids = [p.user_id for p, _ in matched]
         matched_count = len(matched)
 
+    reset_events: list[tuple[UUID, UUID]] = []
+    for pid in provider_ids:
+        old_id = reset_inquiry_conversation(db, current_user.id, pid)
+        if old_id:
+            reset_events.append((pid, old_id))
+    if reset_events:
+        db.commit()
+
     event_payload = {
         "request_id": str(req.id),
         "category_id": req.category_id,
@@ -185,14 +195,31 @@ async def create_request(
     )
     redis_pubsub.publish("new_request", event_payload, target_user_ids=provider_ids)
 
+    for pid, old_id in reset_events:
+        await ws_manager.broadcast_to_users(
+            [pid, current_user.id],
+            {
+                "type": "conversation_reset",
+                "payload": {
+                    "conversation_id": str(old_id),
+                    "consumer_id": str(current_user.id),
+                    "provider_id": str(pid),
+                    "request_id": str(req.id),
+                    "reason": "new_request",
+                },
+            },
+        )
+
     return _to_out(db, req, matched=matched_count)
 
 
 @router.get("/mine", response_model=list[ServiceRequestOut])
 def my_requests(
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.CONSUMER)),
 ):
+    apply_request_expiry(db, background_tasks)
     rows = db.scalars(
         select(ServiceRequest)
         .where(ServiceRequest.consumer_id == current_user.id)
@@ -203,9 +230,11 @@ def my_requests(
 
 @router.get("/feed", response_model=list[ServiceRequestOut])
 def provider_feed(
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.PROVIDER)),
 ):
+    apply_request_expiry(db, background_tasks)
     profile = db.query(ProviderProfile).filter(ProviderProfile.user_id == current_user.id).first()
     if not profile:
         return []
@@ -270,9 +299,11 @@ def provider_feed(
 @router.get("/{request_id}", response_model=ServiceRequestOut)
 def get_request(
     request_id: UUID,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.CONSUMER, UserRole.PROVIDER, *STAFF_ROLES)),
 ):
+    apply_request_expiry(db, background_tasks)
     req = db.get(ServiceRequest, request_id)
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")
@@ -290,10 +321,12 @@ def get_request(
 @router.post("/{request_id}/close", response_model=ServiceRequestOut)
 async def close_request(
     request_id: UUID,
+    background_tasks: BackgroundTasks,
     payload: ServiceRequestClose = ServiceRequestClose(),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.CONSUMER)),
 ):
+    apply_request_expiry(db, background_tasks)
     req = db.get(ServiceRequest, request_id)
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")

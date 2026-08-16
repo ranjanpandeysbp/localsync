@@ -1,11 +1,13 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import STAFF_ROLES, is_staff, require_roles
 from app.db.models import (
+    Conversation,
     Order,
     OrderStatus,
     PaymentMode,
@@ -20,8 +22,18 @@ from app.db.models import (
     VerificationStatus,
 )
 from app.db.session import get_db
-from app.schemas import OrderAccept, OrderComplete, OrderOut, OrderStatusUpdate, QuoteCreate, QuoteOut, QuoteUpdate
+from app.schemas import (
+    OrderAccept,
+    OrderComplete,
+    OrderOut,
+    OrderStatusUpdate,
+    QuoteCreate,
+    QuoteOut,
+    QuoteUnreadOut,
+    QuoteUpdate,
+)
 from app.services.redis_pubsub import redis_pubsub
+from app.services.request_expiry import apply_request_expiry
 from app.services.ws_manager import ws_manager
 
 router = APIRouter(tags=["quotes-orders"])
@@ -53,6 +65,8 @@ def _quote_out(db: Session, quote: Quote) -> QuoteOut:
         category_id=req.category_id if req else None,
         provider_trust=build_provider_trust(db, quote.provider_id),
         attachments=list_attachments_for_quote(db, quote.id),
+        unseen=quote.consumer_seen_at is None and quote.status == QuoteStatus.PENDING,
+        request_status=req.status if req else None,
     )
 
 
@@ -97,9 +111,11 @@ def _provider_allowed_on_request(req: ServiceRequest, provider_id: UUID) -> bool
 @router.post("/quotes", response_model=QuoteOut, status_code=status.HTTP_201_CREATED)
 async def create_quote(
     payload: QuoteCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.PROVIDER)),
 ):
+    apply_request_expiry(db, background_tasks)
     profile = db.query(ProviderProfile).filter(ProviderProfile.user_id == current_user.id).first()
     if not profile or profile.verification_status != VerificationStatus.APPROVED:
         raise HTTPException(status_code=400, detail="Provider must be verified to quote")
@@ -155,9 +171,11 @@ async def create_quote(
 async def update_quote(
     quote_id: UUID,
     payload: QuoteUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.PROVIDER)),
 ):
+    apply_request_expiry(db, background_tasks)
     quote = db.get(Quote, quote_id)
     if not quote or quote.provider_id != current_user.id:
         raise HTTPException(status_code=404, detail="Quote not found")
@@ -177,6 +195,7 @@ async def update_quote(
         quote.estimated_days = payload.estimated_days
     if payload.message is not None:
         quote.message = payload.message.strip() or None
+    quote.consumer_seen_at = None
 
     db.commit()
     db.refresh(quote)
@@ -191,9 +210,11 @@ async def update_quote(
 @router.get("/requests/{request_id}/quotes", response_model=list[QuoteOut])
 def list_quotes(
     request_id: UUID,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.CONSUMER, UserRole.PROVIDER, *STAFF_ROLES)),
 ):
+    apply_request_expiry(db, background_tasks)
     req = db.get(ServiceRequest, request_id)
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")
@@ -208,10 +229,12 @@ def list_quotes(
 
 @router.get("/quotes/sent", response_model=list[QuoteOut])
 def my_sent_quotes(
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.PROVIDER)),
 ):
     """All quotes this provider has sent (past + pending)."""
+    apply_request_expiry(db, background_tasks)
     quotes = db.scalars(
         select(Quote).where(Quote.provider_id == current_user.id).order_by(Quote.created_at.desc())
     ).all()
@@ -220,10 +243,12 @@ def my_sent_quotes(
 
 @router.get("/quotes/received", response_model=list[QuoteOut])
 def my_received_quotes(
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.CONSUMER)),
 ):
     """All quotes received across this consumer's requests."""
+    apply_request_expiry(db, background_tasks)
     quotes = db.scalars(
         select(Quote)
         .join(ServiceRequest, ServiceRequest.id == Quote.request_id)
@@ -233,12 +258,54 @@ def my_received_quotes(
     return [_quote_out(db, q) for q in quotes]
 
 
-@router.post("/orders/accept", response_model=OrderOut, status_code=status.HTTP_201_CREATED)
-async def accept_quote(
-    payload: OrderAccept,
+@router.get("/quotes/received/unread-count", response_model=QuoteUnreadOut)
+def received_quotes_unread_count(
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.CONSUMER)),
 ):
+    apply_request_expiry(db, background_tasks)
+    total = db.scalar(
+        select(func.count())
+        .select_from(Quote)
+        .join(ServiceRequest, ServiceRequest.id == Quote.request_id)
+        .where(
+            ServiceRequest.consumer_id == current_user.id,
+            Quote.status == QuoteStatus.PENDING,
+            Quote.consumer_seen_at.is_(None),
+        )
+    ) or 0
+    return QuoteUnreadOut(unread_count=int(total))
+
+
+@router.post("/quotes/received/mark-seen", response_model=QuoteUnreadOut)
+def mark_received_quotes_seen(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CONSUMER)),
+):
+    now = datetime.now(timezone.utc)
+    quotes = db.scalars(
+        select(Quote)
+        .join(ServiceRequest, ServiceRequest.id == Quote.request_id)
+        .where(
+            ServiceRequest.consumer_id == current_user.id,
+            Quote.consumer_seen_at.is_(None),
+        )
+    ).all()
+    for quote in quotes:
+        quote.consumer_seen_at = now
+    db.commit()
+    return QuoteUnreadOut(unread_count=0)
+
+
+@router.post("/orders/accept", response_model=OrderOut, status_code=status.HTTP_201_CREATED)
+async def accept_quote(
+    payload: OrderAccept,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CONSUMER)),
+):
+    apply_request_expiry(db, background_tasks)
     quote = db.get(Quote, payload.quote_id)
     if not quote or quote.status != QuoteStatus.PENDING:
         raise HTTPException(status_code=400, detail="Quote not available")
@@ -313,9 +380,11 @@ async def accept_quote(
 
 @router.get("/orders/mine", response_model=list[OrderOut])
 def my_orders(
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.CONSUMER, UserRole.PROVIDER)),
 ):
+    apply_request_expiry(db, background_tasks)
     if current_user.role == UserRole.CONSUMER:
         # Consumers only see real deals — not sibling REJECTED placeholders.
         rows = db.scalars(
@@ -422,9 +491,30 @@ async def complete_order(
 
     order.status = OrderStatus.COMPLETED
     order.completed_at = datetime.now(timezone.utc)
+
+    # Close inquiry chat between this consumer and provider once the deal is done.
+    closed_conversation_id = None
+    inquiry = db.scalar(
+        select(Conversation).where(
+            Conversation.consumer_id == order.consumer_id,
+            Conversation.provider_id == order.provider_id,
+        )
+    )
+    if inquiry:
+        closed_conversation_id = str(inquiry.id)
+        db.delete(inquiry)
+
     db.commit()
     db.refresh(order)
 
-    event = {"type": "order_completed", "payload": {"order_id": str(order.id)}}
+    event = {
+        "type": "order_completed",
+        "payload": {
+            "order_id": str(order.id),
+            "consumer_id": str(order.consumer_id),
+            "provider_id": str(order.provider_id),
+            "conversation_id": closed_conversation_id,
+        },
+    }
     await ws_manager.broadcast_to_users([order.consumer_id, order.provider_id], event)
     return _order_out(order, reveal_otp=False, viewer_id=current_user.id, db=db)

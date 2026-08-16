@@ -147,6 +147,7 @@ export interface ProviderCatalogItem {
   location_label: string | null;
   maps_url: string | null;
   max_radius_km: number;
+  distance_km?: number | null;
 }
 
 export interface ProviderPublicProfile {
@@ -177,6 +178,8 @@ export interface ProviderPublicProfile {
   state: string | null;
   pincode: string | null;
   public_url_path: string;
+  category_id?: number | null;
+  category_ids?: number[];
 }
 
 export interface PublicSearchCategory {
@@ -257,6 +260,8 @@ export interface Quote {
   category_id?: number | null;
   provider_trust?: ProviderTrustInfo | null;
   attachments?: Attachment[];
+  unseen?: boolean;
+  request_status?: "ACTIVE" | "FULFILLED" | "EXPIRED" | "CANCELLED" | null;
 }
 
 export interface Order {

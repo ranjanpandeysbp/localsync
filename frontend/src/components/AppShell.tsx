@@ -3,6 +3,7 @@ import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useAuth } from "../store/auth";
 import { useAdminNav } from "../store/adminNav";
+import { useConsumerNav } from "../store/consumerNav";
 import { useProviderNav } from "../store/providerNav";
 import { unlockNotificationSound } from "../services/sounds";
 import { isStaffRole, roleHome, type UserRole } from "../types";
@@ -13,7 +14,15 @@ type NavItem = { to: string; label: string; end?: boolean; badge?: number };
 function navForRole(
   role: UserRole | undefined,
   adminLabels?: Record<string, string>,
-  badges?: { adminUnread?: number; messagesUnread?: number },
+  badges?: {
+    adminUnread?: number;
+    messagesUnread?: number;
+    quotesChatUnread?: number;
+    receivedQuotesUnread?: number;
+    inquiryUnread?: number;
+    requestInquiryUnread?: number;
+    quoteInquiryUnread?: number;
+  },
   providerVerification?: string | null,
 ): NavItem[] {
   if (role === "PROVIDER") {
@@ -35,8 +44,16 @@ function navForRole(
         label: "Admin messages",
         badge: badges?.adminUnread || 0,
       },
-      { to: "/provider/requests", label: "Incoming requests" },
-      { to: "/provider/quotes", label: "My sent quotes" },
+      {
+        to: "/provider/requests",
+        label: "Incoming requests",
+        badge: badges?.requestInquiryUnread || 0,
+      },
+      {
+        to: "/provider/quotes",
+        label: "My sent quotes",
+        badge: badges?.quoteInquiryUnread || 0,
+      },
       { to: "/provider/orders", label: "Orders" },
       { to: "/profile", label: "My profile" },
     ];
@@ -61,7 +78,15 @@ function navForRole(
     }
     return items;
   }
-  return CONSUMER_NAV.map((item) => ({ ...item }));
+  return CONSUMER_NAV.map((item) => {
+    if (item.to === "/consumer/quotes") {
+      return { ...item, badge: badges?.receivedQuotesUnread || 0 };
+    }
+    if (item.to === "/consumer/inquiries") {
+      return { ...item, badge: badges?.quotesChatUnread || 0 };
+    }
+    return { ...item };
+  });
 }
 
 export function AppShell({
@@ -84,11 +109,45 @@ export function AppShell({
   const countsLoading = useAdminNav((s) => s.loading);
   const adminUnread = useProviderNav((s) => s.adminUnread);
   const refreshAdminUnread = useProviderNav((s) => s.refreshAdminUnread);
+  const inquiryUnread = useProviderNav((s) => s.inquiryUnread);
+  const requestInquiryUnread = useProviderNav((s) => s.requestInquiryUnread);
+  const quoteInquiryUnread = useProviderNav((s) => s.quoteInquiryUnread);
+  const refreshInquiryUnread = useProviderNav((s) => s.refreshInquiryUnread);
+  const quotesChatUnread = useConsumerNav((s) => s.quotesChatUnread);
+  const receivedQuotesUnread = useConsumerNav((s) => s.receivedQuotesUnread);
+  const refreshQuotesChatUnread = useConsumerNav((s) => s.refreshQuotesChatUnread);
+  const refreshReceivedQuotesUnread = useConsumerNav((s) => s.refreshReceivedQuotesUnread);
+  const markReceivedQuotesSeen = useConsumerNav((s) => s.markReceivedQuotesSeen);
+  const bumpQuotesChatUnread = useConsumerNav((s) => s.bumpQuotesChatUnread);
   const messagesUnread = useAdminNav((s) => s.counts.messagesUnread);
   const bumpMessagesUnread = useAdminNav((s) => s.bumpMessagesUnread);
 
   useWebSocket((msg) => {
     const m = msg as { type?: string; payload?: { sender_id?: string } };
+    if (user?.role === "CONSUMER" && (m.type === "new_quote" || m.type === "quote_updated")) {
+      if (location.pathname.startsWith("/consumer/quotes")) {
+        void refreshReceivedQuotesUnread();
+        return;
+      }
+      void refreshReceivedQuotesUnread();
+      return;
+    }
+    if (user?.role === "CONSUMER" && m.type === "inquiry_message") {
+      if (
+        location.pathname.startsWith("/consumer/inquiries") ||
+        location.pathname.startsWith("/consumer/requests/") ||
+        location.pathname.startsWith("/consumer/quotes")
+      ) {
+        void refreshQuotesChatUnread();
+        return;
+      }
+      bumpQuotesChatUnread(1);
+      return;
+    }
+    if (user?.role === "PROVIDER" && m.type === "inquiry_message") {
+      void refreshInquiryUnread();
+      return;
+    }
     if (!isStaffRole(user?.role) || m.type !== "admin_message") return;
     // Provider replies arrive as admin_message; ignore while already viewing messages inbox/chat
     if (location.pathname.startsWith("/admin/messages")) {
@@ -122,11 +181,27 @@ export function AppShell({
         adminLabels,
         {
           adminUnread: user?.role === "PROVIDER" ? adminUnread : 0,
+          inquiryUnread: user?.role === "PROVIDER" ? inquiryUnread : 0,
+          requestInquiryUnread: user?.role === "PROVIDER" ? requestInquiryUnread : 0,
+          quoteInquiryUnread: user?.role === "PROVIDER" ? quoteInquiryUnread : 0,
           messagesUnread: isStaffRole(user?.role) ? messagesUnread : 0,
+          quotesChatUnread: user?.role === "CONSUMER" ? quotesChatUnread : 0,
+          receivedQuotesUnread: user?.role === "CONSUMER" ? receivedQuotesUnread : 0,
         },
         user?.verification_status,
       ),
-    [user?.role, user?.verification_status, adminLabels, adminUnread, messagesUnread],
+    [
+      user?.role,
+      user?.verification_status,
+      adminLabels,
+      adminUnread,
+      inquiryUnread,
+      requestInquiryUnread,
+      quoteInquiryUnread,
+      messagesUnread,
+      quotesChatUnread,
+      receivedQuotesUnread,
+    ],
   );
 
   useEffect(() => {
@@ -135,8 +210,28 @@ export function AppShell({
 
   useEffect(() => {
     if (isStaffRole(user?.role)) void refreshCounts();
-    if (user?.role === "PROVIDER") void refreshAdminUnread();
-  }, [user?.role, location.pathname, refreshCounts, refreshAdminUnread]);
+    if (user?.role === "PROVIDER") {
+      void refreshAdminUnread();
+      void refreshInquiryUnread();
+    }
+    if (user?.role === "CONSUMER") {
+      void refreshQuotesChatUnread();
+      if (location.pathname.startsWith("/consumer/quotes")) {
+        void markReceivedQuotesSeen();
+      } else {
+        void refreshReceivedQuotesUnread();
+      }
+    }
+  }, [
+    user?.role,
+    location.pathname,
+    refreshCounts,
+    refreshAdminUnread,
+    refreshInquiryUnread,
+    refreshQuotesChatUnread,
+    refreshReceivedQuotesUnread,
+    markReceivedQuotesSeen,
+  ]);
 
   useEffect(() => {
     document.body.style.overflow = open ? "hidden" : "";
@@ -167,7 +262,14 @@ export function AppShell({
   async function handleRefresh() {
     if (onRefresh) await onRefresh();
     if (isStaffRole(user?.role)) await refreshCounts();
-    if (user?.role === "PROVIDER") await refreshAdminUnread();
+    if (user?.role === "PROVIDER") {
+      await refreshAdminUnread();
+      await refreshInquiryUnread();
+    }
+    if (user?.role === "CONSUMER") {
+      await refreshQuotesChatUnread();
+      await refreshReceivedQuotesUnread();
+    }
   }
 
   return (
@@ -206,7 +308,18 @@ export function AppShell({
           {(location.pathname.startsWith("/orders/") ||
             location.pathname.startsWith("/consumer/requests/")) && (
             <div className="sidebar-link active subtle">
-              {location.pathname.startsWith("/orders/") ? "Order detail" : "Request quotes"}
+              {location.pathname.startsWith("/orders/") ? (
+                "Order detail"
+              ) : (
+                <>
+                  <span className="sidebar-link-label">Request quotes</span>
+                  {quotesChatUnread > 0 && (
+                    <span className="nav-badge" aria-label={`${quotesChatUnread} unread`}>
+                      {quotesChatUnread > 99 ? "99+" : quotesChatUnread}
+                    </span>
+                  )}
+                </>
+              )}
             </div>
           )}
         </nav>

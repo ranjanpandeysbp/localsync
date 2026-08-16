@@ -91,39 +91,41 @@ export function EditQuoteModal({ open, quote, onClose, onSuccess }: Props) {
         </p>
 
         <form className="page-form submit-quote-form" onSubmit={(e) => void onSubmit(e)}>
-          {error && <p className="error">{error}</p>}
-          <div className="field">
-            <label htmlFor="edit-quote-price">Price (₹)</label>
-            <input
-              id="edit-quote-price"
-              required
-              type="number"
-              min={1}
-              value={priceQuote}
-              onChange={(e) => setPriceQuote(e.target.value)}
-              autoFocus
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="edit-quote-eta">ETA (days)</label>
-            <input
-              id="edit-quote-eta"
-              required
-              type="number"
-              min={1}
-              max={365}
-              value={estimatedDays}
-              onChange={(e) => setEstimatedDays(e.target.value)}
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="edit-quote-message">Message</label>
-            <textarea
-              id="edit-quote-message"
-              rows={3}
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-            />
+          <div className="post-request-modal-scroll">
+            {error && <p className="error">{error}</p>}
+            <div className="field">
+              <label htmlFor="edit-quote-price">Price (₹)</label>
+              <input
+                id="edit-quote-price"
+                required
+                type="number"
+                min={1}
+                value={priceQuote}
+                onChange={(e) => setPriceQuote(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="edit-quote-eta">ETA (days)</label>
+              <input
+                id="edit-quote-eta"
+                required
+                type="number"
+                min={1}
+                max={365}
+                value={estimatedDays}
+                onChange={(e) => setEstimatedDays(e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="edit-quote-message">Message</label>
+              <textarea
+                id="edit-quote-message"
+                rows={3}
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+              />
+            </div>
           </div>
           <div className="page-actions submit-quote-actions">
             <button className="btn secondary" type="button" onClick={onClose} disabled={busy}>

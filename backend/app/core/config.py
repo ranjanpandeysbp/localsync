@@ -15,7 +15,9 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     default_search_radius_km: int = 5
+    city_search_radius_km: int = 30
     max_search_radius_km: int = 50
+    request_expire_after_days: int = 30
     upload_dir: str = "uploads"
     max_upload_bytes: int = 8 * 1024 * 1024  # 8 MB
     max_attachments_per_entity: int = 5

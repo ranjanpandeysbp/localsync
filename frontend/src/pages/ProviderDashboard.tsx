@@ -33,7 +33,8 @@ type OrderStatusFilter =
   | "COMPLETED"
   | "CANCELLED"
   | "DISPUTED"
-  | "REJECTED";
+  | "REJECTED"
+  | "EXPIRED_REQUEST";
 
 const ORDER_STATUS_FILTERS: { id: OrderStatusFilter; label: string }[] = [
   { id: "all", label: "All" },
@@ -43,6 +44,7 @@ const ORDER_STATUS_FILTERS: { id: OrderStatusFilter; label: string }[] = [
   { id: "CANCELLED", label: "Cancelled" },
   { id: "DISPUTED", label: "Disputed" },
   { id: "REJECTED", label: "Rejected" },
+  { id: "EXPIRED_REQUEST", label: "Expired" },
 ];
 
 function orderStatusLabel(status: Order["status"]): string {
@@ -109,6 +111,7 @@ export function ProviderDashboard() {
   const bumpAdminUnread = useProviderNav((s) => s.bumpAdminUnread);
   const clearAdminUnread = useProviderNav((s) => s.clearAdminUnread);
   const refreshAdminUnread = useProviderNav((s) => s.refreshAdminUnread);
+  const refreshInquiryUnread = useProviderNav((s) => s.refreshInquiryUnread);
   const refreshUser = useAuth((s) => s.refreshUser);
   const [toast, setToast] = useState("");
   const [linkCopied, setLinkCopied] = useState(false);
@@ -148,6 +151,7 @@ export function ProviderDashboard() {
       payload?: {
         title?: string;
         conversation_id?: string;
+        consumer_id?: string;
         reason?: string;
         body?: string;
         request_title?: string;
@@ -163,12 +167,41 @@ export function ProviderDashboard() {
       void refresh();
       void loadConversations();
     }
+    if (m.type === "request_expired") {
+      setToast("A request expired before a deal was locked");
+      void refresh();
+    }
     if (m.type === "inquiry_message") {
       setToast("New inquiry from a consumer");
       void loadConversations();
+      void refreshInquiryUnread();
     }
-    if (m.type === "order_confirmed" || m.type === "order_completed" || m.type === "order_status") {
+    if (m.type === "order_confirmed" || m.type === "order_status") {
       void refresh();
+    }
+    if (m.type === "order_completed" || m.type === "conversation_reset") {
+      const closedId = m.payload?.conversation_id;
+      const closedConsumerId = m.payload?.consumer_id;
+      setConversations((prev) =>
+        prev.filter((c) => {
+          if (closedId && c.id === closedId) return false;
+          if (closedConsumerId && c.consumer_id === closedConsumerId) return false;
+          return true;
+        }),
+      );
+      setActiveChatId((current) => {
+        if (closedId && current === closedId) {
+          setActiveChatTitle("");
+          return null;
+        }
+        return current;
+      });
+      if (m.type === "order_completed") {
+        void refresh();
+      } else {
+        void loadConversations();
+        void refreshInquiryUnread();
+      }
     }
     if (m.type === "quote_rejected") {
       setToast(
@@ -213,7 +246,13 @@ export function ProviderDashboard() {
 
   async function loadConversations() {
     const { data } = await api.get<Conversation[]>("/conversations");
-    setConversations(data);
+    const sorted = [...data].sort((a, b) => {
+      const aUnread = (a.unread_count || 0) > 0 ? 0 : 1;
+      const bUnread = (b.unread_count || 0) > 0 ? 0 : 1;
+      if (aUnread !== bUnread) return aUnread - bUnread;
+      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+    });
+    setConversations(sorted);
   }
 
   async function loadSupportThreads() {
@@ -274,7 +313,9 @@ export function ProviderDashboard() {
     const completedQuoteIds = new Set(
       orders.filter((o) => o.status === "COMPLETED").map((o) => o.quote_id),
     );
-    return sentQuotes.filter((q) => !completedQuoteIds.has(q.id));
+    return sentQuotes.filter(
+      (q) => !completedQuoteIds.has(q.id) && q.request_status !== "EXPIRED",
+    );
   }, [sentQuotes, orders]);
 
   const sentQuoteFilterCounts = useMemo(() => {
@@ -334,26 +375,59 @@ export function ProviderDashboard() {
     });
   }, [activeSentQuotes, orders, sentQuoteFilter, sentQuoteSearch]);
 
+  const expiredSentQuotes = useMemo(
+    () => sentQuotes.filter((q) => q.request_status === "EXPIRED"),
+    [sentQuotes],
+  );
+
+  const completeOrdersFeed = useMemo(() => {
+    const orderItems = orders.map((o) => ({
+      kind: "order" as const,
+      id: o.id,
+      sortAt: o.completed_at || o.created_at,
+      order: o,
+    }));
+    const expiredItems = expiredSentQuotes.map((q) => ({
+      kind: "expired_request" as const,
+      id: q.id,
+      sortAt: q.created_at,
+      quote: q,
+    }));
+    return [...orderItems, ...expiredItems].sort(
+      (a, b) => new Date(b.sortAt).getTime() - new Date(a.sortAt).getTime(),
+    );
+  }, [orders, expiredSentQuotes]);
+
   const orderStatusFilterCounts = useMemo(() => {
     const counts: Record<OrderStatusFilter, number> = {
-      all: orders.length,
+      all: completeOrdersFeed.length,
       CONFIRMED: 0,
       IN_PROGRESS: 0,
       COMPLETED: 0,
       CANCELLED: 0,
       DISPUTED: 0,
       REJECTED: 0,
+      EXPIRED_REQUEST: 0,
     };
-    for (const o of orders) {
-      counts[o.status] += 1;
+    for (const item of completeOrdersFeed) {
+      if (item.kind === "expired_request") {
+        counts.EXPIRED_REQUEST += 1;
+      } else {
+        counts[item.order.status] += 1;
+      }
     }
     return counts;
-  }, [orders]);
+  }, [completeOrdersFeed]);
 
   const filteredOrders = useMemo(() => {
-    if (orderStatusFilter === "all") return orders;
-    return orders.filter((o) => o.status === orderStatusFilter);
-  }, [orders, orderStatusFilter]);
+    if (orderStatusFilter === "all") return completeOrdersFeed;
+    if (orderStatusFilter === "EXPIRED_REQUEST") {
+      return completeOrdersFeed.filter((item) => item.kind === "expired_request");
+    }
+    return completeOrdersFeed.filter(
+      (item) => item.kind === "order" && item.order.status === orderStatusFilter,
+    );
+  }, [completeOrdersFeed, orderStatusFilter]);
 
   if (isLegacyQuoteRoute) {
     return <Navigate to="/provider/requests" replace />;
@@ -400,10 +474,12 @@ export function ProviderDashboard() {
         r.consumer_id,
         r.category_id,
         `Hi, I received your request "${r.title}". Could I ask a few clarifying questions?`,
+        r.id,
       );
       setActiveChatId(conv.id);
       setActiveChatTitle("Consumer");
       await loadConversations();
+      void refreshInquiryUnread();
       setToast("Chat opened — ask questions before sending your quote");
     } catch (err: unknown) {
       const msg =
@@ -429,6 +505,7 @@ export function ProviderDashboard() {
       setActiveChatId(conv.id);
       setActiveChatTitle(q.consumer_name || "Consumer");
       await loadConversations();
+      void refreshInquiryUnread();
       setToast("Chat opened with consumer");
     } catch (err: unknown) {
       const msg =
@@ -1004,11 +1081,18 @@ export function ProviderDashboard() {
                 emptyHint="Ask clarifying questions before sending your quote."
                 placeholder="Write a message…"
                 onClose={() => setActiveChatId(null)}
+                onMessagesLoaded={() => {
+                  void loadConversations();
+                  void refreshInquiryUnread();
+                }}
               />
             )}
             <div className="page-list list">
               {feed.length === 0 && <p className="page-empty">No matching active requests.</p>}
-              {feed.map((r) => (
+              {feed.map((r) => {
+                const unread =
+                  conversations.find((c) => c.consumer_id === r.consumer_id)?.unread_count || 0;
+                return (
                 <div key={r.id} className="list-item">
                   <strong>{r.title}</strong>
                   <p className="muted">{r.description}</p>
@@ -1019,18 +1103,29 @@ export function ProviderDashboard() {
                   <AttachmentGallery attachments={r.attachments} />
                   <div className="page-actions">
                     <button
-                      className="btn secondary"
+                      className="btn secondary provider-quote-chat-btn"
                       type="button"
+                      aria-label={
+                        unread > 0
+                          ? `Chat about request, ${unread} unread`
+                          : "Chat & ask"
+                      }
                       onClick={() => void chatAboutRequest(r)}
                     >
                       Chat & ask
+                      {unread > 0 && (
+                        <span className="nav-badge provider-quote-chat-badge">
+                          {unread > 99 ? "99+" : unread}
+                        </span>
+                      )}
                     </button>
                     <button className="btn" type="button" onClick={() => setQuoteTarget(r)}>
                       Send quote
                     </button>
                   </div>
                 </div>
-              ))}
+              );
+              })}
             </div>
           </section>
         </div>
@@ -1116,7 +1211,10 @@ export function ProviderDashboard() {
                 emptyHint="Follow up on your quote with the consumer."
                 placeholder="Write a message…"
                 onClose={() => setActiveChatId(null)}
-                onMessagesLoaded={() => void loadConversations()}
+                onMessagesLoaded={() => {
+                  void loadConversations();
+                  void refreshInquiryUnread();
+                }}
               />
             )}
             {activeSentQuotes.length === 0 ? (
@@ -1263,7 +1361,7 @@ export function ProviderDashboard() {
             <p className="dash-eyebrow">Work</p>
             <h2>Orders</h2>
             <p className="page-lead">
-              Accepted deals, rejected quotes (when another provider won), and completion status.
+              Accepted deals, rejected quotes, expired requests, and completion status.
             </p>
             <StatusFilterSelect
               label="Filter by status"
@@ -1277,11 +1375,31 @@ export function ProviderDashboard() {
           </header>
           <section className="page-panel">
             <div className="page-list list">
-              {orders.length === 0 && <p className="page-empty">No orders yet.</p>}
-              {orders.length > 0 && filteredOrders.length === 0 && (
+              {completeOrdersFeed.length === 0 && <p className="page-empty">No orders yet.</p>}
+              {completeOrdersFeed.length > 0 && filteredOrders.length === 0 && (
                 <p className="page-empty">No orders in this status.</p>
               )}
-              {filteredOrders.map((o) => {
+              {filteredOrders.map((item) => {
+                if (item.kind === "expired_request") {
+                  const q = item.quote;
+                  return (
+                    <div key={`expired-${q.id}`} className="list-item provider-order-row">
+                      <div className="provider-sent-quote-head">
+                        <div className="provider-sent-quote-main">
+                          <strong>₹{Number(q.price_quote).toLocaleString("en-IN")}</strong>
+                          <span className="pill request-status expired">Expired</span>
+                        </div>
+                      </div>
+                      <div className="muted" style={{ fontSize: "0.85rem" }}>
+                        {q.request_title ? `${q.request_title} · ` : ""}
+                        Request expired with no locked deal
+                        {" · "}
+                        {new Date(q.created_at).toLocaleString()}
+                      </div>
+                    </div>
+                  );
+                }
+                const o = item.order;
                 const statusKey = o.status.toLowerCase();
                 const isRejected = o.status === "REJECTED";
                 return (

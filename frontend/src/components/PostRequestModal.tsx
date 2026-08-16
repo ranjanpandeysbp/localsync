@@ -12,6 +12,7 @@ import {
   clearPostRequestDraft,
   normalizeDraftProviders,
   providersShareTopLevelCategory,
+  resolveDraftCategoryId,
   SAME_CATEGORY_REQUEST_MESSAGE,
 } from "../utils/postRequestDraft";
 import type { CategoryTree, ProviderCatalogItem, PublicSearchResult, ServiceRequest, User } from "../types";
@@ -35,9 +36,10 @@ const EMPTY_FORM: FormState = {
 };
 
 function formFromUser(user: User | null | undefined, draft?: PostRequestDraft | null): FormState {
+  const categoryId = draft?.categoryId ?? draft?.providers?.find((p) => p.categoryId != null)?.categoryId;
   return {
     ...EMPTY_FORM,
-    category_id: draft?.categoryId != null ? String(draft.categoryId) : "",
+    category_id: categoryId != null ? String(categoryId) : "",
     latitude: user?.latitude != null ? String(user.latitude) : "",
     longitude: user?.longitude != null ? String(user.longitude) : "",
   };
@@ -109,7 +111,18 @@ export function PostRequestModal({ open, onClose, draft = null, onSuccess }: Pro
       .then((res) => setTree(res.data))
       .catch(() => setTree([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, draft]);
+
+  useEffect(() => {
+    if (!open || tree.length === 0) return;
+    const resolved = resolveDraftCategoryId(draft, tree);
+    if (resolved == null) return;
+    setForm((current) =>
+      current.category_id === String(resolved)
+        ? current
+        : { ...current, category_id: String(resolved) },
+    );
+  }, [open, tree, draft]);
 
   useEffect(() => {
     if (!open) return;
@@ -287,6 +300,7 @@ export function PostRequestModal({ open, onClose, draft = null, onSuccess }: Pro
         </p>
 
         <form className="post-request-form" onSubmit={onSubmit}>
+          <div className="post-request-modal-scroll">
           <section className="post-request-step">
             <h3>1. Category</h3>
             <div className="field">
@@ -450,6 +464,7 @@ export function PostRequestModal({ open, onClose, draft = null, onSuccess }: Pro
           </section>
 
           {error && <p className="error">{error}</p>}
+          </div>
 
           <div className="page-actions post-request-actions">
             <button className="btn secondary" type="button" onClick={onClose} disabled={busy}>

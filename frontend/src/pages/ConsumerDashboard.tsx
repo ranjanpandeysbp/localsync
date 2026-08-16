@@ -4,35 +4,33 @@ import { Link, Navigate, useLocation, useNavigate, useParams } from "react-route
 import { AppShell } from "../components/AppShell";
 import { AttachmentGallery, FilePicker } from "../components/Attachments";
 import { CategorySearchBox } from "../components/CategorySearchBox";
-import { InquiryChatPanel, startOrOpenChat } from "../components/InquiryChat";
+import { CitySearchBox } from "../components/CitySearchBox";
+import { InquiryChatPanel } from "../components/InquiryChat";
 import { MapsLink } from "../components/MapsLink";
 import { PostRequestModal } from "../components/PostRequestModal";
 import { ProfileCard } from "../components/ProfileCard";
 import { StatusFilterSelect } from "../components/StatusFilterSelect";
-import {
-  flattenCategoryOptions,
-  offerKindClass,
-  offerKindLabel,
-} from "../components/ProviderTrust";
+import { flattenCategoryOptions } from "../components/ProviderTrust";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { api } from "../services/api";
 import { useAuth } from "../store/auth";
+import { useConsumerNav } from "../store/consumerNav";
 import { playQuoteBell } from "../services/sounds";
 import { uploadFiles } from "../services/uploads";
 import {
   clearPostRequestDraft,
-  providersShareTopLevelCategory,
   readPostRequestDraft,
-  SAME_CATEGORY_REQUEST_MESSAGE,
   type PostRequestDraft,
 } from "../utils/postRequestDraft";
-import { providerPublicPath } from "../utils/providerUrl";
-import { isProviderOnlineNow } from "../utils/businessHours";
+import {
+  findServiceCityByName,
+  readSavedServiceCity,
+  saveServiceCity,
+} from "../utils/serviceCities";
 import type {
   CategoryTree,
   Conversation,
   Order,
-  ProviderCatalogItem,
   Quote,
   ServiceRequest,
 } from "../types";
@@ -41,7 +39,6 @@ type ConsumerSection =
   | "details"
   | "requests"
   | "post"
-  | "providers"
   | "inquiries"
   | "quotes"
   | "orders";
@@ -50,7 +47,6 @@ const SECTIONS: ConsumerSection[] = [
   "details",
   "requests",
   "post",
-  "providers",
   "inquiries",
   "quotes",
   "orders",
@@ -60,7 +56,6 @@ const TITLES: Record<ConsumerSection, string> = {
   details: "My Account",
   requests: "My requests",
   post: "Broadcast request",
-  providers: "Providers in category",
   inquiries: "Recent inquiries",
   quotes: "Received Quotes",
   orders: "Orders",
@@ -73,7 +68,8 @@ type ConsumerOrderFilter =
   | "COMPLETED"
   | "CANCELLED"
   | "DISPUTED"
-  | "CANCELLED_REQUEST";
+  | "CANCELLED_REQUEST"
+  | "EXPIRED_REQUEST";
 
 const CONSUMER_ORDER_FILTERS: { id: ConsumerOrderFilter; label: string }[] = [
   { id: "all", label: "All" },
@@ -83,6 +79,7 @@ const CONSUMER_ORDER_FILTERS: { id: ConsumerOrderFilter; label: string }[] = [
   { id: "CANCELLED", label: "Cancelled" },
   { id: "DISPUTED", label: "Disputed" },
   { id: "CANCELLED_REQUEST", label: "Cancelled request" },
+  { id: "EXPIRED_REQUEST", label: "Expired" },
 ];
 
 export function ConsumerDashboard() {
@@ -95,22 +92,17 @@ export function ConsumerDashboard() {
   const invalidSection = !!section && !SECTIONS.includes(section as ConsumerSection);
 
   const user = useAuth((s) => s.user);
+  const refreshQuotesChatUnread = useConsumerNav((s) => s.refreshQuotesChatUnread);
+  const bumpQuotesChatUnread = useConsumerNav((s) => s.bumpQuotesChatUnread);
+  const refreshReceivedQuotesUnread = useConsumerNav((s) => s.refreshReceivedQuotesUnread);
+  const markReceivedQuotesSeen = useConsumerNav((s) => s.markReceivedQuotesSeen);
   const [tree, setTree] = useState<CategoryTree[]>([]);
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [receivedQuotes, setReceivedQuotes] = useState<Quote[]>([]);
-  const [providers, setProviders] = useState<ProviderCatalogItem[]>([]);
-  const [providerTab, setProviderTab] = useState<"online" | "offline">("online");
-  const [selectedProviders, setSelectedProviders] = useState<string[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [activeChatTitle, setActiveChatTitle] = useState("");
-  const [activeChatMeta, setActiveChatMeta] = useState<{
-    businessName: string;
-    ownerName: string;
-    isOnline: boolean;
-  } | null>(null);
-  const [openingChatId, setOpeningChatId] = useState<string | null>(null);
   const [toast, setToast] = useState("");
   const [busy, setBusy] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
@@ -139,40 +131,56 @@ export function ConsumerDashboard() {
     description: "",
     longitude: "",
     latitude: "",
-    search_radius_km: "5",
     target_mode: "broadcast" as "broadcast" | "selected",
   });
+  const [broadcastCity, setBroadcastCity] = useState(
+    () => readSavedServiceCity()?.name || "",
+  );
   const [postModalOpen, setPostModalOpen] = useState(false);
   const [postDraft, setPostDraft] = useState<PostRequestDraft | null>(null);
-  const [categoryMismatchPopup, setCategoryMismatchPopup] = useState(false);
   const categoryOptions = useMemo(() => flattenCategoryOptions(tree), [tree]);
+  const selectedBroadcastCity = useMemo(
+    () => findServiceCityByName(broadcastCity),
+    [broadcastCity],
+  );
 
-  const hasCoords = user?.latitude != null && user?.longitude != null;
-  const matchHint = hasCoords
-    ? user?.pincode
-      ? `Suggestions prefer providers within 5 km of your GPS. If none are nearby, same pincode (${user.pincode}) is used.`
-      : "Suggestions use providers within 5 km of your GPS location."
-    : user?.pincode
-      ? `Suggestions use your pincode (${user.pincode}) to connect nearby providers.`
-      : "Add GPS or a pincode in My profile to get nearby provider suggestions.";
-
-  const { connected } = useWebSocket((msg) => {
+    const { connected } = useWebSocket((msg) => {
     const m = msg as {
       type?: string;
-      payload?: Quote & { conversation_id?: string; request_id?: string };
+      payload?: Quote & {
+        conversation_id?: string;
+        request_id?: string;
+        provider_id?: string;
+        order_id?: string;
+      };
     };
     if (m.type === "new_quote") {
       void playQuoteBell();
       setToast(`New quote: ₹${m.payload?.price_quote}`);
       void refresh();
+      if (tab === "quotes") {
+        void markReceivedQuotesSeen();
+      } else {
+        void refreshReceivedQuotesUnread();
+      }
     }
     if (m.type === "quote_updated") {
       setToast(`Quote updated: ₹${m.payload?.price_quote}`);
       void refresh();
+      if (tab === "quotes") {
+        void markReceivedQuotesSeen();
+      } else {
+        void refreshReceivedQuotesUnread();
+      }
     }
     if (m.type === "inquiry_message") {
       setToast("New reply from a provider");
       void loadConversations();
+      if (tab === "inquiries" || tab === "quotes") {
+        void refreshQuotesChatUnread();
+      } else {
+        bumpQuotesChatUnread(1);
+      }
     }
     if (m.type === "order_confirmed") {
       const requestId = m.payload?.request_id;
@@ -183,26 +191,48 @@ export function ConsumerDashboard() {
       }
       void refresh();
     }
-    if (m.type === "order_completed") {
-      setToast("Order completed");
+    if (m.type === "request_expired") {
       void refresh();
+    }
+    if (m.type === "order_completed" || m.type === "conversation_reset") {
+      if (m.type === "order_completed") {
+        setToast("Order completed");
+      }
+      const closedId = m.payload?.conversation_id;
+      const closedProviderId = m.payload?.provider_id;
+      setConversations((prev) =>
+        prev.filter((c) => {
+          if (closedId && c.id === closedId) return false;
+          if (closedProviderId && c.provider_id === closedProviderId) return false;
+          return true;
+        }),
+      );
+      setActiveChatId((current) => {
+        if (!current) return null;
+        if (closedId && current === closedId) {
+          setActiveChatTitle("");
+          return null;
+        }
+        return current;
+      });
+      if (m.type === "order_completed") {
+        void refresh();
+      } else {
+        void loadConversations();
+        void refreshQuotesChatUnread();
+      }
     }
   });
 
   async function loadConversations() {
     const { data } = await api.get<Conversation[]>("/conversations");
-    setConversations(data);
-  }
-
-  async function loadProviders(categoryId: string) {
-    if (!categoryId) {
-      setProviders([]);
-      return;
-    }
-    const { data } = await api.get<ProviderCatalogItem[]>("/providers/catalog", {
-      params: { category_id: categoryId },
+    const sorted = [...data].sort((a, b) => {
+      const aUnread = (a.unread_count || 0) > 0 ? 0 : 1;
+      const bUnread = (b.unread_count || 0) > 0 ? 0 : 1;
+      if (aUnread !== bUnread) return aUnread - bUnread;
+      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
     });
-    setProviders(data);
+    setConversations(sorted);
   }
 
   async function refresh() {
@@ -216,16 +246,20 @@ export function ConsumerDashboard() {
     setRequests(reqs.data);
     setOrders(ords.data);
     setReceivedQuotes(quotes.data);
+    if (tab === "quotes") {
+      void markReceivedQuotesSeen();
+    } else {
+      void refreshReceivedQuotesUnread();
+    }
     const opts = flattenCategoryOptions(cats.data);
-    const catId = form.category_id || (opts[0] ? String(opts[0].id) : "");
     if (opts[0]) {
       setForm((f) => ({
         ...f,
         category_id: f.category_id || String(opts[0].id),
       }));
     }
-    if (catId) await loadProviders(catId);
     await loadConversations();
+    void refreshQuotesChatUnread();
   }
 
   useEffect(() => {
@@ -251,7 +285,19 @@ export function ConsumerDashboard() {
   }, [location.state, location.pathname, navigate]);
 
   useEffect(() => {
-    if (user?.latitude != null && user?.longitude != null) {
+    if (tab !== "post") return;
+    const saved = readSavedServiceCity();
+    if (!saved) return;
+    setBroadcastCity(saved.name);
+    setForm((f) => ({
+      ...f,
+      latitude: String(saved.latitude),
+      longitude: String(saved.longitude),
+    }));
+  }, [tab]);
+
+  useEffect(() => {
+    if (user?.latitude != null && user?.longitude != null && !readSavedServiceCity()) {
       setForm((f) => ({
         ...f,
         latitude: String(user.latitude),
@@ -260,34 +306,20 @@ export function ConsumerDashboard() {
     }
   }, [user?.latitude, user?.longitude]);
 
-  useEffect(() => {
-    if (form.category_id) void loadProviders(form.category_id);
-  }, [form.category_id]);
-
-  const onlineProviders = useMemo(
-    () =>
-      providers.filter((p) =>
-        isProviderOnlineNow({
-          opening_time: p.opening_time,
-          closing_time: p.closing_time,
-          verification_status: p.verification_status,
-        }),
-      ),
-    [providers],
-  );
-  const offlineProviders = useMemo(
-    () =>
-      providers.filter(
-        (p) =>
-          !isProviderOnlineNow({
-            opening_time: p.opening_time,
-            closing_time: p.closing_time,
-            verification_status: p.verification_status,
-          }),
-      ),
-    [providers],
-  );
-  const tabProviders = providerTab === "online" ? onlineProviders : offlineProviders;
+  function onBroadcastCityChange(name: string) {
+    setBroadcastCity(name);
+    const city = findServiceCityByName(name);
+    if (!city) {
+      setForm((f) => ({ ...f, latitude: "", longitude: "" }));
+      return;
+    }
+    saveServiceCity(city);
+    setForm((f) => ({
+      ...f,
+      latitude: String(city.latitude),
+      longitude: String(city.longitude),
+    }));
+  }
 
   const categoryNameById = useMemo(() => {
     const map = new Map<number, string>();
@@ -336,7 +368,16 @@ export function ConsumerDashboard() {
         request: r,
         quoteCount: receivedQuotes.filter((q) => q.request_id === r.id).length,
       }));
-    return [...orderItems, ...cancelledItems].sort(
+    const expiredItems = requests
+      .filter((r) => r.status === "EXPIRED")
+      .map((r) => ({
+        kind: "expired_request" as const,
+        id: r.id,
+        sortAt: r.expires_at || r.created_at,
+        request: r,
+        quoteCount: receivedQuotes.filter((q) => q.request_id === r.id).length,
+      }));
+    return [...orderItems, ...cancelledItems, ...expiredItems].sort(
       (a, b) => new Date(b.sortAt).getTime() - new Date(a.sortAt).getTime(),
     );
   }, [orders, requests, receivedQuotes]);
@@ -350,12 +391,15 @@ export function ConsumerDashboard() {
       CANCELLED: 0,
       DISPUTED: 0,
       CANCELLED_REQUEST: 0,
+      EXPIRED_REQUEST: 0,
     };
     for (const item of completeOrdersFeed) {
       if (item.kind === "cancelled_request") {
         counts.CANCELLED_REQUEST += 1;
+      } else if (item.kind === "expired_request") {
+        counts.EXPIRED_REQUEST += 1;
       } else if (item.order.status in counts) {
-        counts[item.order.status as Exclude<ConsumerOrderFilter, "all" | "CANCELLED_REQUEST">] += 1;
+        counts[item.order.status as Exclude<ConsumerOrderFilter, "all" | "CANCELLED_REQUEST" | "EXPIRED_REQUEST">] += 1;
       }
     }
     return counts;
@@ -365,6 +409,9 @@ export function ConsumerDashboard() {
     if (orderStatusFilter === "all") return completeOrdersFeed;
     if (orderStatusFilter === "CANCELLED_REQUEST") {
       return completeOrdersFeed.filter((item) => item.kind === "cancelled_request");
+    }
+    if (orderStatusFilter === "EXPIRED_REQUEST") {
+      return completeOrdersFeed.filter((item) => item.kind === "expired_request");
     }
     return completeOrdersFeed.filter(
       (item) => item.kind === "order" && item.order.status === orderStatusFilter,
@@ -384,38 +431,29 @@ export function ConsumerDashboard() {
         setBusy(false);
         return;
       }
-      if (!hasCoords && !user?.pincode && !(form.latitude && form.longitude)) {
-        setToast("Add a location or pincode in My profile before broadcasting");
+      const city = findServiceCityByName(broadcastCity);
+      if (!city) {
+        setToast("Select a city to broadcast");
         setBusy(false);
         return;
       }
       const uploaded = await uploadFiles(files);
-      const lat = form.latitude ? Number(form.latitude) : user?.latitude ?? null;
-      const lon = form.longitude ? Number(form.longitude) : user?.longitude ?? null;
       const { data } = await api.post<ServiceRequest>("/requests", {
         category_id: Number(form.category_id),
         title: form.title,
         description: form.description,
-        longitude: lon,
-        latitude: lat,
-        pincode: user?.pincode || null,
-        search_radius_km: Number(form.search_radius_km),
+        longitude: city.longitude,
+        latitude: city.latitude,
+        pincode: city.pincode,
         attachment_ids: uploaded.map((a) => a.id),
         target_provider_ids: [],
       });
-      const mode =
-        lat != null && lon != null
-          ? "within 5 km"
-          : user?.pincode
-            ? `by pincode ${user.pincode}`
-            : "";
       setToast(
-        `Request broadcast to ${data.matched_provider_count ?? 0} nearby providers${mode ? ` (${mode})` : ""}` +
+        `Request broadcast to ${data.matched_provider_count ?? 0} nearby providers in ${city.name}` +
           (uploaded.length ? ` · ${uploaded.length} file(s)` : ""),
       );
       setForm((f) => ({ ...f, title: "", description: "" }));
       setFiles([]);
-      setSelectedProviders([]);
       await refresh();
       navigate("/consumer/requests");
     } catch (err: unknown) {
@@ -425,64 +463,6 @@ export function ConsumerDashboard() {
       setToast(String(msg));
     } finally {
       setBusy(false);
-    }
-  }
-
-  function toggleProvider(userId: string) {
-    setSelectedProviders((prev) =>
-      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId],
-    );
-  }
-
-  function goPostToSelected() {
-    if (selectedProviders.length === 0) {
-      setToast("Select one or more providers first");
-      return;
-    }
-    const selected = providers.filter((p) => selectedProviders.includes(p.user_id));
-    if (!providersShareTopLevelCategory(tree, selected)) {
-      setCategoryMismatchPopup(true);
-      return;
-    }
-    setPostDraft({
-      providerIds: selectedProviders,
-      categoryId: form.category_id ? Number(form.category_id) : null,
-      providers: selected.map((p) => ({
-        id: p.user_id,
-        name: p.business_name || p.full_name,
-        categoryId: p.category_id,
-      })),
-    });
-    setPostModalOpen(true);
-  }
-
-  async function chatWith(provider: ProviderCatalogItem) {
-    if (openingChatId) return;
-    setOpeningChatId(provider.user_id);
-    try {
-      const conv = await startOrOpenChat(
-        provider.user_id,
-        Number(form.category_id) || provider.category_id,
-      );
-      setActiveChatId(conv.id);
-      setActiveChatTitle(provider.business_name || provider.full_name);
-      setActiveChatMeta({
-        businessName: provider.business_name || provider.full_name,
-        ownerName: provider.full_name,
-        isOnline: isProviderOnlineNow({
-          opening_time: provider.opening_time,
-          closing_time: provider.closing_time,
-          verification_status: provider.verification_status,
-        }),
-      });
-      await loadConversations();
-    } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-        "Cannot start chat";
-      setToast(String(msg));
-    } finally {
-      setOpeningChatId(null);
     }
   }
 
@@ -547,7 +527,6 @@ export function ConsumerDashboard() {
       if (activeChatId === conversationId) {
         setActiveChatId(null);
         setActiveChatTitle("");
-        setActiveChatMeta(null);
       }
       setDeleteChatTarget(null);
       setToast("Chat deleted");
@@ -591,39 +570,10 @@ export function ConsumerDashboard() {
           setPostDraft(null);
         }}
         onSuccess={() => {
-          setSelectedProviders([]);
           setPostDraft(null);
           void refresh();
         }}
       />
-
-      {categoryMismatchPopup &&
-        createPortal(
-          <div
-            className="modal-backdrop"
-            onClick={() => setCategoryMismatchPopup(false)}
-            role="presentation"
-          >
-            <div
-              className="modal-dialog card"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="consumer-category-mismatch-title"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <h3 id="consumer-category-mismatch-title" style={{ margin: "0 0 0.5rem" }}>
-                Same category required
-              </h3>
-              <p className="muted" style={{ margin: "0 0 1rem" }}>
-                {SAME_CATEGORY_REQUEST_MESSAGE}
-              </p>
-              <button className="btn" type="button" onClick={() => setCategoryMismatchPopup(false)}>
-                OK
-              </button>
-            </div>
-          </div>,
-          document.body,
-        )}
 
       {simpleCancelTarget &&
         createPortal(
@@ -808,290 +758,179 @@ export function ConsumerDashboard() {
 
       {tab === "details" && <ProfileCard title="My Account" />}
 
-      {tab === "providers" && (
-        <div className="consumer-providers">
-          <section className="page-hero consumer-providers-hero">
-            <div className="consumer-providers-hero-top">
-              <div>
-                <p className="dash-eyebrow">Browse</p>
-                <h2>Providers in category</h2>
-                <p className="page-lead">
-                  Chat before requesting, or select providers for a targeted send.
-                </p>
-                <p className="muted consumer-providers-hint">{matchHint}</p>
-              </div>
-              <span className="consumer-providers-total">
-                <strong>{tabProviders.length}</strong>
-                {providerTab}
-              </span>
-            </div>
-
-            {selectedProviders.length > 0 && (
-              <div className="consumer-providers-selection">
-                <span className="pill online">
-                  {selectedProviders.length} selected
-                </span>
-                <div className="consumer-providers-selection-actions">
-                  <button className="btn" type="button" onClick={goPostToSelected}>
-                    Send request to selected
-                  </button>
-                  <button
-                    className="btn secondary"
-                    type="button"
-                    onClick={() => setSelectedProviders([])}
-                  >
-                    Clear
-                  </button>
-                </div>
-              </div>
-            )}
-          </section>
-
-          <section className="dash-surface consumer-providers-tools">
-            <div className="field consumer-providers-category">
-              <label>Category / subcategory</label>
-              <CategorySearchBox
-                options={categoryOptions}
-                value={form.category_id}
-                onChange={(id) => {
-                  setForm({ ...form, category_id: id });
-                  setProviderTab("online");
-                  setSelectedProviders([]);
-                }}
-                placeholder="Search categories…"
-              />
-            </div>
-            <div className="dash-segment" role="tablist" aria-label="Provider availability">
-              <button
-                type="button"
-                className={`dash-segment-btn ${providerTab === "online" ? "active" : ""}`}
-                onClick={() => setProviderTab("online")}
-              >
-                Online
-                <span className="consumer-requests-count">{onlineProviders.length}</span>
-              </button>
-              <button
-                type="button"
-                className={`dash-segment-btn ${providerTab === "offline" ? "active" : ""}`}
-                onClick={() => setProviderTab("offline")}
-              >
-                Offline
-                <span className="consumer-requests-count">{offlineProviders.length}</span>
-              </button>
-            </div>
-          </section>
-
-          {tabProviders.length === 0 ? (
-            <div className="dash-surface consumer-requests-empty">
-              <h3>No {providerTab} providers</h3>
-              <p className="muted">
-                Try another category, or check the {providerTab === "online" ? "offline" : "online"}{" "}
-                list.
-              </p>
-            </div>
-          ) : (
-            <div className="consumer-providers-grid">
-              {tabProviders.map((p) => {
-                const kindClass = offerKindClass(p.offer_kind);
-                const initial = (p.business_name || "P").trim().slice(0, 1).toUpperCase();
-                const blurb = p.offerings_detail || p.description || "";
-                const selected = selectedProviders.includes(p.user_id);
-                const online = isProviderOnlineNow({
-                  opening_time: p.opening_time,
-                  closing_time: p.closing_time,
-                  verification_status: p.verification_status,
-                });
-                return (
-                  <article
-                    key={p.user_id}
-                    className={`consumer-provider-card ${kindClass} ${selected ? "selected" : ""}`}
-                  >
-                    <div className="consumer-provider-card-accent" aria-hidden="true" />
-                    <div className="consumer-provider-card-body">
-                      <header className="consumer-provider-card-head">
-                        <span className={`consumer-provider-mark ${kindClass}`} aria-hidden="true">
-                          {initial}
-                        </span>
-                        <div className="consumer-provider-identity">
-                          <div className="consumer-provider-topline">
-                            <span className={`pill ${online ? "online" : "offline"}`}>
-                              {online ? "Online" : "Offline"}
-                            </span>
-                            {p.verification_status === "APPROVED" && (
-                              <span className="pill online">Verified</span>
-                            )}
-                          </div>
-                          <h3>
-                            <Link to={providerPublicPath(p)}>{p.business_name}</Link>
-                          </h3>
-                          <p className="muted consumer-provider-owner">
-                            {p.full_name}
-                            {p.average_rating != null
-                              ? ` · ★ ${Number(p.average_rating).toFixed(1)} (${p.rating_count ?? 0})`
-                              : ""}
-                          </p>
-                        </div>
-                        <label className="consumer-provider-select">
-                          <input
-                            type="checkbox"
-                            checked={selected}
-                            onChange={() => toggleProvider(p.user_id)}
-                            aria-label={`Select ${p.business_name}`}
-                          />
-                          <span>Select</span>
-                        </label>
-                      </header>
-
-                      {blurb && (
-                        <p className="consumer-provider-blurb">
-                          {blurb.length > 140 ? `${blurb.slice(0, 140).trim()}…` : blurb}
-                        </p>
-                      )}
-
-                      <div className="consumer-provider-chips">
-                        <span className="consumer-provider-chip">
-                          <strong>{offerKindLabel(p.offer_kind)}</strong>
-                          offers
-                        </span>
-                        <span className="consumer-provider-chip">
-                          <strong>{p.max_radius_km} km</strong>
-                          radius
-                        </span>
-                        {p.opening_time && p.closing_time && (
-                          <span className="consumer-provider-chip">
-                            <strong>
-                              {p.opening_time}–{p.closing_time}
-                            </strong>
-                            hours
-                          </span>
-                        )}
-                        {(p.categories || []).slice(0, 2).map((cat) => (
-                          <span key={cat} className="consumer-provider-chip">
-                            <strong>{cat}</strong>
-                            category
-                          </span>
-                        ))}
-                      </div>
-
-                      <div className="consumer-provider-links">
-                        <MapsLink
-                          latitude={p.latitude}
-                          longitude={p.longitude}
-                          maps_url={p.maps_url}
-                          label={p.location_label || undefined}
-                        />
-                      </div>
-
-                      <footer className="consumer-provider-card-footer">
-                        <Link className="btn secondary" to={providerPublicPath(p)}>
-                          View profile
-                        </Link>
-                        <button
-                          className="btn"
-                          type="button"
-                          disabled={openingChatId === p.user_id}
-                          onClick={() => void chatWith(p)}
-                        >
-                          {openingChatId === p.user_id ? "Opening…" : "Chat & ask"}
-                        </button>
-                      </footer>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-
-          {tab === "providers" && activeChatId && (
-            <InquiryChatPanel
-              conversationId={activeChatId}
-              mode="overlay"
-              title={activeChatMeta?.businessName || activeChatTitle}
-              subtitle={
-                activeChatMeta?.ownerName &&
-                activeChatMeta.ownerName !== activeChatMeta.businessName
-                  ? activeChatMeta.ownerName
-                  : "Inquiry chat"
-              }
-              avatarLabel={activeChatMeta?.businessName || activeChatTitle}
-              statusLabel={
-                activeChatMeta ? (activeChatMeta.isOnline ? "Online" : "Offline") : undefined
-              }
-              statusTone={
-                activeChatMeta ? (activeChatMeta.isOnline ? "online" : "offline") : "neutral"
-              }
-              autoFocus
-              emptyHint="Say hello and ask about availability, pricing, or timing. They’ll see your message when they’re next available."
-              placeholder="Write a message…"
-              onClose={() => {
-                setActiveChatId(null);
-                setActiveChatMeta(null);
-              }}
-            />
-          )}
-        </div>
-      )}
-
       {tab === "inquiries" && (
-        <div className="page-stack">
-          <header className="page-hero">
-            <p className="dash-eyebrow">Messages</p>
-            <h2>Recent inquiries</h2>
-            <p className="page-lead">Chats from the last 30 days.</p>
-          </header>
-          <section className="page-panel">
-            {activeChatId ? (
+        <div className="consumer-inquiries">
+          <section className="page-hero consumer-inquiries-hero">
+            <div className="consumer-inquiries-hero-top">
+              <div>
+                <p className="dash-eyebrow">Messages</p>
+                <h2>Recent inquiries</h2>
+                <p className="page-lead">
+                  Chats with providers from the last 30 days.
+                </p>
+              </div>
+              {!activeChatId && (
+                <span className="consumer-inquiries-total">
+                  <strong>{conversations.length}</strong>
+                  chat{conversations.length === 1 ? "" : "s"}
+                </span>
+              )}
+            </div>
+          </section>
+
+          {activeChatId ? (
+            <section className="consumer-inquiries-chat-shell">
+              <div className="consumer-inquiries-chat-bar">
+                <button
+                  type="button"
+                  className="btn secondary btn-with-icon consumer-inquiries-back"
+                  onClick={() => {
+                    setActiveChatId(null);
+                    setActiveChatTitle("");
+                    void loadConversations();
+                    void refreshQuotesChatUnread();
+                  }}
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.25"
+                    aria-hidden="true"
+                  >
+                    <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  All chats
+                </button>
+              </div>
               <InquiryChatPanel
                 conversationId={activeChatId}
                 mode="inline"
                 title={activeChatTitle}
                 subtitle="Inquiry chat"
                 avatarLabel={activeChatTitle}
+                statusLabel={
+                  conversations.find((c) => c.id === activeChatId)?.provider_is_online
+                    ? "Online"
+                    : "Offline"
+                }
+                statusTone={
+                  conversations.find((c) => c.id === activeChatId)?.provider_is_online
+                    ? "online"
+                    : "offline"
+                }
                 autoFocus
                 emptyHint="Continue the conversation with this provider."
                 placeholder="Write a message…"
-                onClose={() => setActiveChatId(null)}
+                onClose={() => {
+                  setActiveChatId(null);
+                  setActiveChatTitle("");
+                  void loadConversations();
+                  void refreshQuotesChatUnread();
+                }}
+                onMessagesLoaded={() => {
+                  void loadConversations();
+                  void refreshQuotesChatUnread();
+                }}
               />
-            ) : (
-              <div className="page-list list">
-                {conversations.length === 0 && (
-                  <p className="page-empty">No recent inquiries.</p>
-                )}
-                {conversations.map((c) => (
-                  <div key={c.id} className="list-item">
-                    <strong>{c.provider_business_name || c.provider_name}</strong>
-                    <div className="muted">{c.last_message || "No messages yet"}</div>
-                    <div className="page-actions">
+            </section>
+          ) : conversations.length === 0 ? (
+            <div className="dash-surface consumer-requests-empty">
+              <h3>No recent inquiries</h3>
+              <p className="muted">
+                Start a chat from Home search results or from a received quote.
+              </p>
+              <Link className="btn" to="/">
+                Browse providers
+              </Link>
+            </div>
+          ) : (
+            <div className="consumer-inquiries-list">
+              {conversations.map((c) => {
+                const title = c.provider_business_name || c.provider_name || "Provider";
+                const initial = title.trim().slice(0, 1).toUpperCase() || "P";
+                const unread = c.unread_count || 0;
+                const online = Boolean(c.provider_is_online);
+                return (
+                  <article
+                    key={c.id}
+                    className={`consumer-inquiry-card${unread > 0 ? " has-unread" : ""}`}
+                  >
+                    <div className="consumer-inquiry-card-accent" aria-hidden="true" />
+                    <div className="consumer-inquiry-card-body">
                       <button
-                        className="btn secondary"
                         type="button"
+                        className="consumer-inquiry-main"
                         onClick={() => {
                           setActiveChatId(c.id);
-                          setActiveChatTitle(
-                            c.provider_business_name || c.provider_name || "Chat",
-                          );
+                          setActiveChatTitle(title);
                         }}
                       >
-                        Open chat
+                        <span className="consumer-inquiry-mark" aria-hidden="true">
+                          {initial}
+                          {unread > 0 && <span className="consumer-inquiry-mark-dot" />}
+                        </span>
+                        <span className="consumer-inquiry-copy">
+                          <span className="consumer-inquiry-topline">
+                            <strong className="consumer-inquiry-name">{title}</strong>
+                            <span className={`pill ${online ? "online" : "offline"}`}>
+                              {online ? "Online" : "Offline"}
+                            </span>
+                            {unread > 0 && (
+                              <span className="nav-badge" aria-label={`${unread} unread`}>
+                                {unread > 99 ? "99+" : unread}
+                              </span>
+                            )}
+                          </span>
+                          {c.provider_name &&
+                            c.provider_business_name &&
+                            c.provider_name !== c.provider_business_name && (
+                              <span className="muted consumer-inquiry-owner">
+                                {c.provider_name}
+                              </span>
+                            )}
+                          <span
+                            className={`consumer-inquiry-preview${unread > 0 ? " is-unread" : ""}`}
+                          >
+                            {c.last_message || "No messages yet"}
+                          </span>
+                          <time className="muted consumer-inquiry-time" dateTime={c.updated_at}>
+                            {new Date(c.updated_at).toLocaleString()}
+                          </time>
+                        </span>
                       </button>
-                      <button
-                        className="btn secondary consumer-request-close"
-                        type="button"
-                        onClick={() =>
-                          setDeleteChatTarget({
-                            id: c.id,
-                            title: c.provider_business_name || c.provider_name || "this chat",
-                          })
-                        }
-                      >
-                        Delete chat
-                      </button>
+                      <div className="consumer-inquiry-actions">
+                        <button
+                          className="btn"
+                          type="button"
+                          onClick={() => {
+                            setActiveChatId(c.id);
+                            setActiveChatTitle(title);
+                          }}
+                        >
+                          {unread > 0 ? "Read" : "Open"}
+                        </button>
+                        <button
+                          className="btn secondary consumer-request-close"
+                          type="button"
+                          onClick={() =>
+                            setDeleteChatTarget({
+                              id: c.id,
+                              title: title === "Provider" ? "this chat" : title,
+                            })
+                          }
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -1159,74 +998,47 @@ export function ConsumerDashboard() {
 
             <section className="post-request-step post-request-location">
               <h3>3. Location</h3>
-              <div className="post-request-location-card">
-                {hasCoords ? (
-                  <>
-                    <p>
-                      Using your profile location
-                      {user?.location_label ? `: ${user.location_label}` : ""}.
-                    </p>
-                    <p className="muted">
-                      Broadcast matches providers within about 5 km
-                      {user?.pincode ? ` (pincode ${user.pincode} as fallback)` : ""}.
-                    </p>
-                    <MapsLink
-                      latitude={Number(form.latitude || user?.latitude)}
-                      longitude={Number(form.longitude || user?.longitude)}
-                    />
-                  </>
-                ) : user?.pincode ? (
-                  <p>
-                    Matching by pincode <strong>{user.pincode}</strong> — providers in the same
-                    pincode for this category will be notified.
-                  </p>
-                ) : (
-                  <p className="muted">
-                    Add GPS or a pincode in <Link to="/profile">My profile</Link> so we can match
-                    nearby providers.
-                  </p>
-                )}
+              <div className="field">
+                <label htmlFor="broadcast-search-city">Search City</label>
+                <CitySearchBox
+                  id="broadcast-search-city"
+                  value={broadcastCity}
+                  onChange={onBroadcastCityChange}
+                  placeholder="Search city…"
+                />
+                <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
+                  Defaults to the city from Home. Click to search or pick from the list.
+                </p>
               </div>
-              {!hasCoords && (
-                <div className="grid grid-2 post-request-coords">
-                  <div className="field">
-                    <label>Longitude (optional)</label>
-                    <input
-                      value={form.longitude}
-                      onChange={(e) => setForm({ ...form, longitude: e.target.value })}
-                      placeholder="From profile or map"
-                    />
-                  </div>
-                  <div className="field">
-                    <label>Latitude (optional)</label>
-                    <input
-                      value={form.latitude}
-                      onChange={(e) => setForm({ ...form, latitude: e.target.value })}
-                      placeholder="From profile or map"
-                    />
-                  </div>
-                </div>
-              )}
-              {hasCoords && (
-                <div className="field">
-                  <label>Search radius (km)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={50}
-                    value={form.search_radius_km}
-                    onChange={(e) => setForm({ ...form, search_radius_km: e.target.value })}
-                    disabled
-                  />
-                  <p className="muted" style={{ fontSize: "0.85rem" }}>
-                    Nearby matching uses a fixed 5 km radius when coordinates are available.
+              {selectedBroadcastCity ? (
+                <div className="post-request-location-card">
+                  <p>
+                    Broadcasting near <strong>{selectedBroadcastCity.name}</strong>
+                    {selectedBroadcastCity.pincode
+                      ? ` · pincode ${selectedBroadcastCity.pincode}`
+                      : ""}
+                    .
                   </p>
+                  <p className="muted">
+                    Nearby verified providers in {selectedBroadcastCity.name} will be notified.
+                  </p>
+                  <MapsLink
+                    latitude={selectedBroadcastCity.latitude}
+                    longitude={selectedBroadcastCity.longitude}
+                    label={selectedBroadcastCity.name}
+                  />
                 </div>
+              ) : (
+                <p className="muted">Select a city to match nearby providers.</p>
               )}
             </section>
 
             <div className="page-actions post-request-actions">
-              <button className="btn" type="submit" disabled={busy || !form.category_id}>
+              <button
+                className="btn"
+                type="submit"
+                disabled={busy || !form.category_id || !selectedBroadcastCity}
+              >
                 {busy ? "Sending…" : "Broadcast request"}
               </button>
             </div>
@@ -1454,6 +1266,8 @@ export function ConsumerDashboard() {
                 const providerLabel =
                   q.provider_trust?.business_name || q.provider_name || "Provider";
                 const initial = providerLabel.trim().slice(0, 1).toUpperCase() || "Q";
+                const unread =
+                  conversations.find((c) => c.provider_id === q.provider_id)?.unread_count || 0;
                 return (
                   <article key={q.id} className={`consumer-quote-card status-${statusKey}`}>
                     <div className="consumer-quote-card-accent" aria-hidden="true" />
@@ -1468,8 +1282,24 @@ export function ConsumerDashboard() {
                               {q.request_title || "Request"}
                             </span>
                             <span className={`pill quote-status ${statusKey}`}>{q.status}</span>
+                            {q.unseen && q.status === "PENDING" && (
+                              <span className="nav-badge" aria-label="New quote">
+                                New
+                              </span>
+                            )}
                           </div>
-                          <h3>{providerLabel}</h3>
+                          <h3>
+                            {providerLabel}
+                            {unread > 0 && (
+                              <span
+                                className="nav-badge"
+                                style={{ marginLeft: "0.45rem", verticalAlign: "middle" }}
+                                aria-label={`${unread} unread messages`}
+                              >
+                                {unread > 99 ? "99+" : unread}
+                              </span>
+                            )}
+                          </h3>
                           <p className="muted consumer-quote-meta">
                             ★ {(q.provider_rating ?? 0).toFixed(1)}
                             {q.provider_trust?.full_name
@@ -1506,8 +1336,16 @@ export function ConsumerDashboard() {
                               Provider
                             </Link>
                           )}
-                          <Link className="btn" to={`/consumer/requests/${q.request_id}`}>
+                          <Link
+                            className="btn provider-quote-chat-btn"
+                            to={`/consumer/requests/${q.request_id}`}
+                          >
                             Open request
+                            {unread > 0 && (
+                              <span className="nav-badge provider-quote-chat-badge">
+                                {unread > 99 ? "99+" : unread}
+                              </span>
+                            )}
                           </Link>
                         </div>
                       </footer>
@@ -1552,7 +1390,7 @@ export function ConsumerDashboard() {
           {completeOrdersFeed.length === 0 ? (
             <div className="dash-surface consumer-requests-empty">
               <h3>No orders yet</h3>
-              <p className="muted">Accepted deals and cancelled requests will show up here.</p>
+              <p className="muted">Accepted deals, cancelled requests, and expired requests will show up here.</p>
               <Link className="btn" to="/consumer/post">
                 Broadcast request
               </Link>
@@ -1565,22 +1403,28 @@ export function ConsumerDashboard() {
           ) : (
             <div className="consumer-orders-grid">
               {filteredOrdersFeed.map((item) => {
-                if (item.kind === "cancelled_request") {
+                if (item.kind === "cancelled_request" || item.kind === "expired_request") {
                   const r = item.request;
                   const category = categoryNameById.get(r.category_id) || "Category";
+                  const expired = item.kind === "expired_request";
                   return (
-                    <article key={`cancelled-${r.id}`} className="consumer-order-card cancelled">
+                    <article
+                      key={`${expired ? "expired" : "cancelled"}-${r.id}`}
+                      className={`consumer-order-card ${expired ? "expired" : "cancelled"}`}
+                    >
                       <div className="consumer-order-card-accent" aria-hidden="true" />
                       <div className="consumer-order-card-body">
                         <header className="consumer-order-card-head">
                           <div>
                             <div className="consumer-order-card-topline">
-                              <span className="pill offline">Cancelled Order</span>
+                              <span className={`pill ${expired ? "request-status expired" : "offline"}`}>
+                                {expired ? "Expired" : "Cancelled Order"}
+                              </span>
                               <span className="consumer-order-category">{category}</span>
                             </div>
                             <h3>{r.title}</h3>
                             <p className="muted consumer-order-meta">
-                              Request cancelled
+                              {expired ? "Request expired with no locked provider" : "Request cancelled"}
                               {item.quoteCount > 0
                                 ? ` · ${item.quoteCount} quote${item.quoteCount === 1 ? "" : "s"} withdrawn`
                                 : ""}
@@ -1588,8 +1432,8 @@ export function ConsumerDashboard() {
                           </div>
                         </header>
                         <footer className="consumer-order-card-footer">
-                          <time className="muted" dateTime={r.created_at}>
-                            {new Date(r.created_at).toLocaleString()}
+                          <time className="muted" dateTime={r.expires_at || r.created_at}>
+                            {new Date(r.expires_at || r.created_at).toLocaleString()}
                           </time>
                           <Link className="btn secondary" to={`/consumer/requests/${r.id}`}>
                             View request

@@ -38,8 +38,8 @@ async def send_message(
     order = db.get(Order, order_id)
     if not order or current_user.id not in (order.consumer_id, order.provider_id):
         raise HTTPException(status_code=404, detail="Order not found")
-    if order.status in (OrderStatus.CANCELLED,):
-        raise HTTPException(status_code=400, detail="Cannot chat on cancelled order")
+    if order.status in (OrderStatus.CANCELLED, OrderStatus.COMPLETED, OrderStatus.REJECTED):
+        raise HTTPException(status_code=400, detail="This order chat is closed")
 
     msg = ChatMessage(order_id=order_id, sender_id=current_user.id, body=payload.body)
     db.add(msg)

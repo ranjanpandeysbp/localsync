@@ -4,13 +4,17 @@ import { LoginModal } from "../components/LoginModal";
 import { PostRequestModal } from "../components/PostRequestModal";
 import { RegisterModal } from "../components/RegisterModal";
 import { CitySearchBox } from "../components/CitySearchBox";
+import { CategoryNeedSearch, type CategoryNeedOption } from "../components/CategoryNeedSearch";
+import { InquiryChatPanel, startOrOpenChat } from "../components/InquiryChat";
 import { MapsLink } from "../components/MapsLink";
 import { MarketplaceScene } from "../components/MarketplaceScene";
 import { offerKindClass, offerKindLabel } from "../components/ProviderTrust";
 import { CONSUMER_NAV } from "../nav/consumer";
+import { useWebSocket } from "../hooks/useWebSocket";
 import { api } from "../services/api";
 import { reverseGeocodeDetails, isMeaningfulLocationLabel } from "../services/geo";
 import { useAuth } from "../store/auth";
+import { useConsumerNav } from "../store/consumerNav";
 import { consumeLogoutNavigation } from "../utils/logoutNav";
 import { providerPublicPath } from "../utils/providerUrl";
 import { isProviderOnlineNow } from "../utils/businessHours";
@@ -33,6 +37,7 @@ import {
 import type {
   Category,
   CategoryTree,
+  Conversation,
   NearbyCategoryCounts,
   ProviderCatalogItem,
   PublicSearchCategory,
@@ -49,10 +54,39 @@ type LocState = {
 
 type CityPopupReason = "no_location" | "out_of_area" | null;
 
+const SEARCH_PAGE_SIZE = 10;
+
+function parentCategoryTags(categories: string[] | undefined): string[] {
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const raw of categories || []) {
+    const parent = (raw.split(" › ")[0] || raw).trim();
+    if (!parent || seen.has(parent)) continue;
+    seen.add(parent);
+    tags.push(parent);
+  }
+  return tags;
+}
+
+function sortProvidersNearest(items: ProviderCatalogItem[]): ProviderCatalogItem[] {
+  return [...items].sort((a, b) => {
+    const da = a.distance_km;
+    const db = b.distance_km;
+    if (da == null && db == null) return 0;
+    if (da == null) return 1;
+    if (db == null) return -1;
+    return da - db;
+  });
+}
+
 export function LandingPage() {
   const navigate = useNavigate();
   const { user, token, logout } = useAuth();
   const signedIn = Boolean(token && user);
+  const quotesChatUnread = useConsumerNav((s) => s.quotesChatUnread);
+  const receivedQuotesUnread = useConsumerNav((s) => s.receivedQuotesUnread);
+  const refreshQuotesChatUnread = useConsumerNav((s) => s.refreshQuotesChatUnread);
+  const refreshReceivedQuotesUnread = useConsumerNav((s) => s.refreshReceivedQuotesUnread);
   const [searchParams, setSearchParams] = useSearchParams();
   const searchRef = useRef<HTMLElement | null>(null);
   const browseRef = useRef<HTMLElement | null>(null);
@@ -67,12 +101,23 @@ export function LandingPage() {
   const [searchQ, setSearchQ] = useState("");
   const [searchBusy, setSearchBusy] = useState(false);
   const [searchProviders, setSearchProviders] = useState<ProviderCatalogItem[]>([]);
+  const [searchCategories, setSearchCategories] = useState<PublicSearchCategory[]>([]);
   const [searchDone, setSearchDone] = useState(false);
+  const [searchPage, setSearchPage] = useState(1);
   const [selectedSearchIds, setSelectedSearchIds] = useState<string[]>([]);
   const [searchActionError, setSearchActionError] = useState("");
   const [postDraft, setPostDraft] = useState<PostRequestDraft | null>(null);
   const [postModalOpen, setPostModalOpen] = useState(false);
   const [categoryMismatchPopup, setCategoryMismatchPopup] = useState(false);
+  const [activeChat, setActiveChat] = useState<{
+    id: string;
+    title: string;
+    ownerName: string;
+    isOnline: boolean;
+  } | null>(null);
+  const [openingChatId, setOpeningChatId] = useState<string | null>(null);
+  const [chatError, setChatError] = useState("");
+  const [chatUnreadByProvider, setChatUnreadByProvider] = useState<Record<string, number>>({});
   const [selectedCity, setSelectedCity] = useState<ServiceCity | null>(() => readSavedServiceCity());
   const [cityDraft, setCityDraft] = useState(() => readSavedServiceCity()?.name || "");
   const [cityPopupReason, setCityPopupReason] = useState<CityPopupReason>(null);
@@ -108,12 +153,82 @@ export function LandingPage() {
 
   const hasCoords = loc.latitude != null && loc.longitude != null;
   const hasLocation = hasCoords || Boolean(selectedCity);
+  const consumerOrigin = useMemo(() => {
+    if (signedIn && user?.role === "CONSUMER" && user.latitude != null && user.longitude != null) {
+      return { latitude: user.latitude, longitude: user.longitude };
+    }
+    if (loc.latitude != null && loc.longitude != null) {
+      return { latitude: loc.latitude, longitude: loc.longitude };
+    }
+    if (selectedCity) {
+      return { latitude: selectedCity.latitude, longitude: selectedCity.longitude };
+    }
+    return { latitude: null as number | null, longitude: null as number | null };
+  }, [
+    signedIn,
+    user?.role,
+    user?.latitude,
+    user?.longitude,
+    loc.latitude,
+    loc.longitude,
+    selectedCity,
+  ]);
   const matchHint = useMemo(() => {
-    if (selectedCity && hasCoords) return `Near ${selectedCity.name} · within 5 km`;
-    if (hasCoords) return `Near ${loc.label || "you"} · within 5 km`;
-    if (selectedCity) return `In ${selectedCity.name}`;
+    if (selectedCity && consumerOrigin.latitude != null) {
+      return `In ${selectedCity.name} · nearest to you first`;
+    }
+    if (consumerOrigin.latitude != null) return `Near ${loc.label || "you"} · nearest first`;
+    if (selectedCity) return `In ${selectedCity.name} · nearest first`;
     return "Choose a city or allow location to see nearby providers";
-  }, [hasCoords, loc.label, selectedCity]);
+  }, [consumerOrigin.latitude, loc.label, selectedCity]);
+  const searchPageCount = Math.max(1, Math.ceil(searchProviders.length / SEARCH_PAGE_SIZE));
+  const currentSearchPage = Math.min(searchPage, searchPageCount);
+  const pagedSearchProviders = searchProviders.slice(
+    (currentSearchPage - 1) * SEARCH_PAGE_SIZE,
+    currentSearchPage * SEARCH_PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    if (signedIn && user?.role === "CONSUMER") {
+      void refreshQuotesChatUnread();
+      void refreshReceivedQuotesUnread();
+    }
+  }, [signedIn, user?.role, refreshQuotesChatUnread, refreshReceivedQuotesUnread]);
+
+  useWebSocket((msg) => {
+    const m = msg as { type?: string };
+    if (!signedIn || user?.role !== "CONSUMER") return;
+    if (m.type === "new_quote" || m.type === "quote_updated") {
+      void refreshReceivedQuotesUnread();
+    }
+    if (m.type === "inquiry_message") {
+      void refreshQuotesChatUnread();
+    }
+  });
+
+  async function refreshLandingChatUnread() {
+    if (!signedIn || user?.role !== "CONSUMER") {
+      setChatUnreadByProvider({});
+      return;
+    }
+    try {
+      const { data } = await api.get<Conversation[]>("/conversations");
+      const map: Record<string, number> = {};
+      for (const c of data) {
+        const n = c.unread_count || 0;
+        if (n > 0 && c.provider_id) {
+          map[c.provider_id] = (map[c.provider_id] || 0) + n;
+        }
+      }
+      setChatUnreadByProvider(map);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  useEffect(() => {
+    void refreshLandingChatUnread();
+  }, [signedIn, user?.role, activeChat?.id]);
 
   const popularTree = useMemo(() => {
     if (!countsReady || !hasLocation) return tree;
@@ -425,10 +540,12 @@ export function LandingPage() {
     setFilterOpen(false);
   }
 
-  async function onSearch(e: FormEvent) {
-    e.preventDefault();
-    const q = searchQ.trim();
-    if (!hasCoords && !selectedCity) {
+  async function runSearch(q: string, categoryId?: number) {
+    const city =
+      selectedCity ||
+      findServiceCityByName(loc.label) ||
+      matchServiceCity(loc.label);
+    if (!city && !hasCoords) {
       openCityPopup("no_location");
       return;
     }
@@ -442,14 +559,25 @@ export function LandingPage() {
     setFilterOpen(false);
     try {
       const params: Record<string, string | number> = { q };
-      if (loc.latitude != null && loc.longitude != null) {
-        params.latitude = loc.latitude;
-        params.longitude = loc.longitude;
+      if (categoryId != null) params.category_id = categoryId;
+      if (city) {
+        params.city = city.name;
+        params.pincode = city.pincode;
       }
-      const pin = (loc.pincode || selectedCity?.pincode || "").replace(/\D/g, "").slice(0, 6);
-      if (pin.length === 6) params.pincode = pin;
+      const lat = consumerOrigin.latitude ?? city?.latitude ?? null;
+      const lon = consumerOrigin.longitude ?? city?.longitude ?? null;
+      if (lat != null && lon != null) {
+        params.latitude = lat;
+        params.longitude = lon;
+      }
+      if (!params.pincode) {
+        const pin = loc.pincode.replace(/\D/g, "").slice(0, 6);
+        if (pin.length === 6) params.pincode = pin;
+      }
       const { data } = await api.get<PublicSearchResult>("/providers/public-search", { params });
-      setSearchProviders(data.providers);
+      setSearchProviders(sortProvidersNearest(data.providers || []));
+      setSearchCategories(data.categories || []);
+      setSearchPage(1);
       setSearchDone(true);
       window.setTimeout(() => {
         searchRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -462,6 +590,15 @@ export function LandingPage() {
     } finally {
       setSearchBusy(false);
     }
+  }
+
+  async function onSearch(e: FormEvent) {
+    e.preventDefault();
+    await runSearch(searchQ.trim());
+  }
+
+  function onPickNeed(opt: CategoryNeedOption) {
+    void runSearch(opt.name, opt.id);
   }
 
   function categoryMeta(cat: CategoryTree | Category): string {
@@ -526,6 +663,7 @@ export function LandingPage() {
     return {
       providerIds: selected.map((p) => p.user_id),
       categoryId: majorityCategoryId(searchProviders, selectedSearchIds),
+      categoryLabels: selected.flatMap((p) => p.categories || []),
       providers: selected.map((p) => ({
         id: p.user_id,
         name: p.business_name || p.full_name,
@@ -564,6 +702,48 @@ export function LandingPage() {
     setPostDraft(draft);
     setPostModalOpen(true);
   }
+
+  async function chatWithProvider(provider: ProviderCatalogItem) {
+    setChatError("");
+    if (!signedIn || !user) {
+      openLogin();
+      return;
+    }
+    if (user.role !== "CONSUMER") {
+      setChatError("Only consumers can chat with providers. Sign in with a consumer account.");
+      return;
+    }
+    if (openingChatId) return;
+    setOpeningChatId(provider.user_id);
+    try {
+      const conv = await startOrOpenChat(
+        provider.user_id,
+        provider.category_id,
+        `Hi, I'm interested in your services.`,
+      );
+      setActiveChat({
+        id: conv.id,
+        title: provider.business_name || provider.full_name,
+        ownerName: provider.full_name,
+        isOnline: isProviderOnlineNow({
+          opening_time: provider.opening_time,
+          closing_time: provider.closing_time,
+          verification_status: provider.verification_status,
+        }),
+      });
+      void refreshQuotesChatUnread();
+      void refreshLandingChatUnread();
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        "Cannot start chat";
+      setChatError(String(msg));
+    } finally {
+      setOpeningChatId(null);
+    }
+  }
+
+  const showChat = !signedIn || user?.role === "CONSUMER";
 
   useEffect(() => {
     if (!signedIn || user?.role !== "CONSUMER") return;
@@ -635,6 +815,7 @@ export function LandingPage() {
           onSuccess={() => {
             setSelectedSearchIds([]);
             setPostDraft(null);
+            setActiveChat(null);
           }}
         />
       )}
@@ -666,19 +847,32 @@ export function LandingPage() {
               <p className="muted sidebar-tagline">Hyper-local marketplace</p>
             </div>
             <nav className="landing-sidebar-nav">
-              {CONSUMER_NAV.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.end}
-                  className={({ isActive }) =>
-                    `landing-sidebar-link${isActive ? " active" : ""}`
-                  }
-                  onClick={() => setNavOpen(false)}
-                >
-                  {item.label}
-                </NavLink>
-              ))}
+              {CONSUMER_NAV.map((item) => {
+                const badge =
+                  item.to === "/consumer/quotes"
+                    ? receivedQuotesUnread
+                    : item.to === "/consumer/inquiries"
+                      ? quotesChatUnread
+                      : 0;
+                return (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.end}
+                    className={({ isActive }) =>
+                      `landing-sidebar-link${isActive ? " active" : ""}`
+                    }
+                    onClick={() => setNavOpen(false)}
+                  >
+                    <span className="landing-sidebar-link-label">{item.label}</span>
+                    {badge > 0 && (
+                      <span className="nav-badge" aria-label={`${badge} unread`}>
+                        {badge > 99 ? "99+" : badge}
+                      </span>
+                    )}
+                  </NavLink>
+                );
+              })}
             </nav>
             <div className="landing-sidebar-footer">
               <div className="sidebar-user">
@@ -772,14 +966,14 @@ export function LandingPage() {
         <div className="landing-hero-veil" aria-hidden="true" />
         <div className="landing-hero-inner">
           <p className="landing-lead">
-            Book trusted local help — verified providers within 5 km of you.
+            Every Store. Every Service. Nearby.
           </p>
 
           <div className="landing-search-shell">
             <div className="landing-search-shell-head">
               <p className="landing-search-kicker">Find nearby help</p>
               <p className="landing-search-sub">
-                Pick your city, then search by what you need.
+                Pick your city, then search a category or subcategory — or leave the need blank to see every provider there.
               </p>
             </div>
             <form className="landing-booking-pad" onSubmit={onSearch}>
@@ -797,12 +991,13 @@ export function LandingPage() {
               <div className="landing-pad-field landing-pad-grow">
                 <label htmlFor="landing-search-q">What do you need?</label>
                 <div className="landing-pad-need-row">
-                  <input
+                  <CategoryNeedSearch
                     id="landing-search-q"
+                    tree={tree}
                     value={searchQ}
-                    onChange={(e) => setSearchQ(e.target.value)}
-                    placeholder="Name, mobile, category, or slug…"
-                    aria-label="Search by name, mobile, category, or slug"
+                    onChange={setSearchQ}
+                    onPick={onPickNeed}
+                    placeholder="Leave blank for all, or type a category…"
                   />
                   <button
                     className="icon-btn landing-area-icon-btn"
@@ -851,6 +1046,33 @@ export function LandingPage() {
                       : "Providers near you"}
                 </h2>
                 <p className="landing-section-lead">{matchHint}</p>
+                {searchCategories.length > 0 && (
+                  <div className="landing-search-cats" aria-label="Matching categories">
+                    {searchCategories.slice(0, 8).map((cat) => (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        className="landing-search-cat"
+                        onClick={() => {
+                          const parent = tree.find((p) => p.id === cat.id);
+                          const subParent = tree.find((p) =>
+                            (p.subcategories || []).some((s) => s.id === cat.id),
+                          );
+                          const sub = subParent?.subcategories?.find((s) => s.id === cat.id);
+                          onSelectCategory(parent || sub || cat, subParent);
+                        }}
+                      >
+                        {cat.parent_name ? `${cat.parent_name} › ${cat.name}` : cat.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {searchProviders.length > 0 && (
+                  <p className="muted landing-search-page-meta">
+                    {searchProviders.length} provider{searchProviders.length === 1 ? "" : "s"} · page{" "}
+                    {currentSearchPage} of {searchPageCount}
+                  </p>
+                )}
               </div>
               {searchProviders.length > 0 && (
                 <div className="landing-search-actions">
@@ -871,6 +1093,11 @@ export function LandingPage() {
               )}
             </div>
             {searchActionError && <p className="error">{searchActionError}</p>}
+            {chatError && (
+              <p className="error" onClick={() => setChatError("")}>
+                {chatError}
+              </p>
+            )}
             <div className="landing-provider-list">
               {searchProviders.length === 0 ? (
                 <div className="landing-empty">
@@ -880,17 +1107,65 @@ export function LandingPage() {
                   </p>
                 </div>
               ) : (
-                searchProviders.map((p) => (
+                pagedSearchProviders.map((p) => (
                   <ProviderCard
                     key={p.user_id}
                     provider={p}
                     selectable
                     selected={selectedSearchIds.includes(p.user_id)}
                     onToggleSelect={() => toggleSearchProvider(p.user_id)}
+                    showDistance
+                    parentCategoriesOnly
+                    showChat={showChat}
+                    chatBusy={openingChatId === p.user_id}
+                    chatUnread={chatUnreadByProvider[p.user_id] || 0}
+                    onChat={() => void chatWithProvider(p)}
                   />
                 ))
               )}
             </div>
+            {searchProviders.length > SEARCH_PAGE_SIZE && (
+              <nav className="landing-search-pager" aria-label="Search results pages">
+                <button
+                  type="button"
+                  className="btn secondary"
+                  disabled={currentSearchPage <= 1}
+                  onClick={() => {
+                    setSearchPage((p) => Math.max(1, p - 1));
+                    searchRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }}
+                >
+                  Previous
+                </button>
+                <div className="landing-search-pager-pages">
+                  {Array.from({ length: searchPageCount }, (_, i) => i + 1).map((page) => (
+                    <button
+                      key={page}
+                      type="button"
+                      className={`landing-search-pager-page${page === currentSearchPage ? " is-active" : ""}`}
+                      aria-current={page === currentSearchPage ? "page" : undefined}
+                      onClick={() => {
+                        setSearchPage(page);
+                        searchRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }}
+                    >
+                      {page}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="btn secondary"
+                  disabled={currentSearchPage >= searchPageCount}
+                  onClick={() => {
+                    setSearchPage((p) => Math.min(searchPageCount, p + 1));
+                    searchRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }}
+                >
+                  Next
+                </button>
+              </nav>
+            )}
           </section>
         )}
 
@@ -901,7 +1176,7 @@ export function LandingPage() {
               <h2>Popular categories</h2>
               <p className="landing-section-lead">
                 {hasCoords
-                  ? `Verified options near ${selectedCity?.name || loc.label || "you"} within 5 km.`
+                  ? `Verified options near ${selectedCity?.name || loc.label || "you"}.`
                   : selectedCity
                     ? `Verified options in ${selectedCity.name}.`
                     : "Choose a city above to see how many options are near you."}
@@ -1019,6 +1294,7 @@ export function LandingPage() {
                                 <button
                                   type="button"
                                   className={selected.id === sub.id ? "active" : ""}
+                                  title={sub.description || undefined}
                                   onClick={() => onSelectCategory(sub, cat)}
                                 >
                                   <span>{sub.name}</span>
@@ -1052,7 +1328,16 @@ export function LandingPage() {
                 <p className="muted">No verified providers nearby in this category.</p>
               )}
               {!categoryBusy &&
-                categoryProviders.map((p) => <ProviderCard key={p.user_id} provider={p} />)}
+                categoryProviders.map((p) => (
+                  <ProviderCard
+                    key={p.user_id}
+                    provider={p}
+                    showChat={showChat}
+                    chatBusy={openingChatId === p.user_id}
+                    chatUnread={chatUnreadByProvider[p.user_id] || 0}
+                    onChat={() => void chatWithProvider(p)}
+                  />
+                ))}
             </div>
           </section>
         )}
@@ -1062,6 +1347,30 @@ export function LandingPage() {
           <span className="muted">Verified providers · nearby matching</span>
         </footer>
       </div>
+
+      {activeChat && (
+        <InquiryChatPanel
+          conversationId={activeChat.id}
+          mode="overlay"
+          title={activeChat.title}
+          subtitle={
+            activeChat.ownerName && activeChat.ownerName !== activeChat.title
+              ? activeChat.ownerName
+              : "Inquiry chat"
+          }
+          avatarLabel={activeChat.title}
+          statusLabel={activeChat.isOnline ? "Online" : "Offline"}
+          statusTone={activeChat.isOnline ? "online" : "offline"}
+          autoFocus
+          emptyHint="Say hello and ask about availability, pricing, or timing."
+          placeholder="Write a message…"
+          onClose={() => setActiveChat(null)}
+          onMessagesLoaded={() => {
+            void refreshQuotesChatUnread();
+            void refreshLandingChatUnread();
+          }}
+        />
+      )}
 
       {cityPopupOpen && (
         <div className="modal-backdrop landing-city-popup-backdrop" role="presentation">
@@ -1144,16 +1453,36 @@ export function LandingPage() {
   );
 }
 
+function formatDistanceKm(km: number | null | undefined): string | null {
+  if (km == null || Number.isNaN(Number(km))) return null;
+  const value = Number(km);
+  if (value < 1) return `${Math.max(0.1, Math.round(value * 10) / 10)} km`;
+  if (value < 10) return `${Math.round(value * 10) / 10} km`;
+  return `${Math.round(value)} km`;
+}
+
 function ProviderCard({
   provider: p,
   selectable = false,
   selected = false,
   onToggleSelect,
+  showDistance = false,
+  parentCategoriesOnly = false,
+  showChat = false,
+  chatBusy = false,
+  chatUnread = 0,
+  onChat,
 }: {
   provider: ProviderCatalogItem;
   selectable?: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
+  showDistance?: boolean;
+  parentCategoriesOnly?: boolean;
+  showChat?: boolean;
+  chatBusy?: boolean;
+  chatUnread?: number;
+  onChat?: () => void;
 }) {
   const kind = p.offer_kind || "BOTH";
   const kindClass = offerKindClass(kind);
@@ -1166,6 +1495,10 @@ function ProviderCard({
     closing_time: p.closing_time,
     verification_status: p.verification_status,
   });
+  const distanceLabel = showDistance ? formatDistanceKm(p.distance_km) : null;
+  const categoryTags = parentCategoriesOnly
+    ? parentCategoryTags(p.categories)
+    : p.categories || [];
 
   return (
     <article
@@ -1199,7 +1532,12 @@ function ProviderCard({
             {p.full_name && <p className="landing-provider-owner muted">{p.full_name}</p>}
             <div className="landing-provider-chips">
               <span className={`pill ${kindClass}`}>{offerKindLabel(kind)}</span>
-              {(p.categories || []).slice(0, 3).map((cat) => (
+              {distanceLabel && (
+                <span className="landing-provider-chip landing-provider-distance">
+                  {distanceLabel} away
+                </span>
+              )}
+              {categoryTags.slice(0, 3).map((cat) => (
                 <span key={cat} className="landing-provider-chip">
                   {cat}
                 </span>
@@ -1212,7 +1550,7 @@ function ProviderCard({
 
         <div className="landing-provider-meta">
           <span>
-            ★ {p.average_rating.toFixed(1)}
+            ★ {(p.average_rating ?? 0).toFixed(1)}
             <span className="muted"> ({p.rating_count})</span>
           </span>
           {hours && <span className="muted">{hours}</span>}
@@ -1228,9 +1566,56 @@ function ProviderCard({
             maps_url={p.maps_url}
             label="Map"
           />
-          <Link className="btn landing-provider-cta" to={providerPublicPath(p)}>
-            View profile
-          </Link>
+          <div className="landing-provider-footer-actions">
+            {showChat && (
+              <button
+                type="button"
+                className="icon-btn landing-provider-chat provider-quote-chat-btn"
+                title={
+                  chatBusy
+                    ? "Opening chat…"
+                    : chatUnread > 0
+                      ? `Chat with ${p.business_name}, ${chatUnread} unread`
+                      : `Chat with ${p.business_name}`
+                }
+                aria-label={
+                  chatBusy
+                    ? "Opening chat…"
+                    : chatUnread > 0
+                      ? `Chat with ${p.business_name}, ${chatUnread} unread`
+                      : `Chat with ${p.business_name}`
+                }
+                disabled={chatBusy}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onChat?.();
+                }}
+              >
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+                {chatUnread > 0 && (
+                  <span className="nav-badge provider-quote-chat-badge">
+                    {chatUnread > 99 ? "99+" : chatUnread}
+                  </span>
+                )}
+              </button>
+            )}
+            <Link className="btn landing-provider-cta" to={providerPublicPath(p)}>
+              View profile
+            </Link>
+          </div>
         </div>
       </div>
     </article>

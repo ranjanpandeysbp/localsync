@@ -2,7 +2,7 @@ from uuid import UUID
 
 from geoalchemy2 import Geography, WKTElement
 from geoalchemy2.functions import ST_DWithin, ST_Distance
-from sqlalchemy import and_, cast, or_, select, text
+from sqlalchemy import and_, cast, nulls_last, or_, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 
@@ -200,6 +200,70 @@ def find_all_providers_by_pincode(
     if online_only:
         profiles = [p for p in profiles if effective_is_online(p)]
     return [(p, 0.0) for p in profiles]
+
+
+def find_all_providers_by_city(
+    db: Session,
+    *,
+    city: str,
+    longitude: float | None = None,
+    latitude: float | None = None,
+    pincode: str | None = None,
+    online_only: bool = False,
+    verified_only: bool = True,
+) -> list[tuple[ProviderProfile, float | None]]:
+    """Match verified providers whose profile city/label/pincode matches the service city.
+
+    When origin coords are provided, include ST_Distance for those with a base location.
+    """
+    name = (city or "").strip()
+    pin = normalize_pincode(pincode)
+    if not name and not pin:
+        return []
+    like = f"%{name.lower()}%" if name else None
+
+    name_match = (
+        or_(
+            func.lower(func.coalesce(User.city, "")).like(like),
+            func.lower(func.coalesce(User.location_label, "")).like(like),
+        )
+        if like
+        else None
+    )
+    if name_match is not None and pin:
+        filters = [or_(name_match, User.pincode == pin)]
+    elif name_match is not None:
+        filters = [name_match]
+    else:
+        filters = [User.pincode == pin]
+    if online_only or verified_only:
+        filters.append(ProviderProfile.verification_status == VerificationStatus.APPROVED)
+
+    if longitude is not None and latitude is not None:
+        request_point = _request_geog(longitude, latitude)
+        distance_m = ST_Distance(ProviderProfile.base_location, request_point)
+        stmt = (
+            select(ProviderProfile, distance_m.label("distance_m"))
+            .join(User, User.id == ProviderProfile.user_id)
+            .where(and_(*filters, User.is_active.is_(True)))
+            .order_by(nulls_last(distance_m))
+        )
+        rows = db.execute(stmt).all()
+        results: list[tuple[ProviderProfile, float | None]] = [
+            (row[0], float(row[1]) if row[1] is not None else None) for row in rows
+        ]
+    else:
+        stmt = (
+            select(ProviderProfile)
+            .join(User, User.id == ProviderProfile.user_id)
+            .where(and_(*filters, User.is_active.is_(True)))
+            .order_by(ProviderProfile.is_online.desc(), User.average_rating.desc())
+        )
+        results = [(p, None) for p in db.scalars(stmt).all()]
+
+    if online_only:
+        results = [(p, d) for p, d in results if effective_is_online(p)]
+    return results
 
 
 def match_all_nearby_providers(

@@ -254,11 +254,13 @@ export async function startOrOpenChat(
   providerId: string,
   categoryId?: number | null,
   initialMessage?: string,
+  requestId?: string | null,
 ): Promise<Conversation> {
   const { data } = await api.post<Conversation>("/conversations", {
     provider_id: providerId,
     category_id: categoryId || null,
     initial_message: initialMessage || null,
+    request_id: requestId || null,
   });
   return data;
 }
@@ -267,11 +269,13 @@ export async function startProviderChatWithConsumer(
   consumerId: string,
   categoryId?: number | null,
   initialMessage?: string,
+  requestId?: string | null,
 ): Promise<Conversation> {
   const { data } = await api.post<Conversation>("/conversations/with-consumer", {
     consumer_id: consumerId,
     category_id: categoryId || null,
     initial_message: initialMessage || null,
+    request_id: requestId || null,
   });
   return data;
 }

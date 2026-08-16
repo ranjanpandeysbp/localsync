@@ -1,19 +1,34 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { InquiryChatPanel, startOrOpenChat } from "../components/InquiryChat";
 import { MapsLink } from "../components/MapsLink";
+import { PostRequestModal } from "../components/PostRequestModal";
 import { offerKindLabel } from "../components/ProviderTrust";
 import { api } from "../services/api";
 import { useAuth } from "../store/auth";
 import { isProviderOnlineNow } from "../utils/businessHours";
+import { savePostRequestDraft, type PostRequestDraft } from "../utils/postRequestDraft";
 import type { ProviderPublicProfile } from "../types";
 
 export function PublicProviderPage() {
   const { slugOrId } = useParams<{ slugOrId: string }>();
+  const navigate = useNavigate();
   const { user, token } = useAuth();
+  const signedIn = Boolean(token && user);
   const [profile, setProfile] = useState<ProviderPublicProfile | null>(null);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [actionError, setActionError] = useState("");
+  const [openingChat, setOpeningChat] = useState(false);
+  const [postModalOpen, setPostModalOpen] = useState(false);
+  const [postDraft, setPostDraft] = useState<PostRequestDraft | null>(null);
+  const [activeChat, setActiveChat] = useState<{
+    id: string;
+    title: string;
+    ownerName: string;
+    isOnline: boolean;
+  } | null>(null);
 
   useEffect(() => {
     if (!slugOrId) return;
@@ -37,6 +52,15 @@ export function PublicProviderPage() {
       ? `${window.location.origin}${profile.public_url_path}`
       : profile?.public_url_path || "";
 
+  const showConsumerActions = !signedIn || user?.role === "CONSUMER";
+  const online = profile
+    ? isProviderOnlineNow({
+        opening_time: profile.opening_time,
+        closing_time: profile.closing_time,
+        verification_status: profile.verification_status,
+      })
+    : false;
+
   async function copyLink() {
     if (!shareUrl) return;
     try {
@@ -48,12 +72,74 @@ export function PublicProviderPage() {
     }
   }
 
-  const chatCta =
-    token && user?.role === "CONSUMER"
-      ? { to: "/consumer/providers", label: "Open providers & chat" }
-      : token
-        ? { to: "/", label: "Go to dashboard" }
-        : { to: "/?register=1", label: "Register to chat or request" };
+  function buildRequestDraft(): PostRequestDraft | null {
+    if (!profile) return null;
+    const categoryId = profile.category_id ?? profile.category_ids?.[0] ?? null;
+    return {
+      providerIds: [profile.user_id],
+      categoryId,
+      categoryLabels: profile.categories,
+      providers: [
+        {
+          id: profile.user_id,
+          name: profile.business_name || profile.full_name || "Provider",
+          categoryId,
+        },
+      ],
+    };
+  }
+
+  function openSendRequest() {
+    const draft = buildRequestDraft();
+    if (!draft) return;
+    setActionError("");
+    if (!signedIn || !user) {
+      savePostRequestDraft(draft);
+      navigate("/?login=1");
+      return;
+    }
+    if (user.role !== "CONSUMER") {
+      setActionError("Only consumers can send requests. Sign in with a consumer account.");
+      return;
+    }
+    setPostDraft(draft);
+    setPostModalOpen(true);
+  }
+
+  async function openChat() {
+    if (!profile) return;
+    setActionError("");
+    if (!signedIn || !user) {
+      navigate("/?login=1");
+      return;
+    }
+    if (user.role !== "CONSUMER") {
+      setActionError("Only consumers can chat with providers. Sign in with a consumer account.");
+      return;
+    }
+    if (openingChat) return;
+    setOpeningChat(true);
+    try {
+      const conv = await startOrOpenChat(
+        profile.user_id,
+        profile.category_id ?? profile.category_ids?.[0],
+        `Hi, I'm interested in your services.`,
+      );
+      setActiveChat({
+        id: conv.id,
+        title: profile.business_name || profile.full_name || "Provider",
+        ownerName: profile.full_name || "",
+        isOnline: online,
+      });
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        "Cannot start chat";
+      setActionError(String(msg));
+    } finally {
+      setOpeningChat(false);
+    }
+  }
 
   return (
     <div className="landing">
@@ -103,18 +189,9 @@ export function PublicProviderPage() {
                   <h1 className="public-provider-title">{profile.business_name}</h1>
                   {profile.full_name && <p className="muted page-meta">{profile.full_name}</p>}
                 </div>
-                {(() => {
-                  const online = isProviderOnlineNow({
-                    opening_time: profile.opening_time,
-                    closing_time: profile.closing_time,
-                    verification_status: profile.verification_status,
-                  });
-                  return (
-                    <span className={`pill ${online ? "online" : "offline"}`}>
-                      {online ? "Online" : "Offline"}
-                    </span>
-                  );
-                })()}
+                <span className={`pill ${online ? "online" : "offline"}`}>
+                  {online ? "Online" : "Offline"}
+                </span>
               </div>
               <p className="page-lead">
                 {offerKindLabel(profile.offer_kind)} · Rating {profile.average_rating.toFixed(1)} (
@@ -123,6 +200,82 @@ export function PublicProviderPage() {
             </header>
 
             <section className="page-panel">
+              <div className="public-provider-section-head">
+                <h2>Services &amp; categories</h2>
+                {showConsumerActions && (
+                  <div className="public-provider-section-actions">
+                    <button
+                      type="button"
+                      className="icon-btn landing-provider-chat provider-quote-chat-btn"
+                      title={
+                        openingChat
+                          ? "Opening chat…"
+                          : `Chat with ${profile.business_name}`
+                      }
+                      aria-label={
+                        openingChat
+                          ? "Opening chat…"
+                          : `Chat with ${profile.business_name}`
+                      }
+                      disabled={openingChat}
+                      onClick={() => void openChat()}
+                    >
+                      <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                      </svg>
+                    </button>
+                    <button className="btn" type="button" onClick={openSendRequest}>
+                      Send a request
+                    </button>
+                  </div>
+                )}
+              </div>
+              {actionError && <p className="error">{actionError}</p>}
+              {profile.categories.length === 0 ? (
+                <p className="muted">No categories listed yet.</p>
+              ) : (
+                <div className="public-chip-row">
+                  {profile.categories.map((c) => (
+                    <span key={c} className="public-chip">
+                      {c}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="page-panel">
+              <h2>What they offer</h2>
+              {profile.offerings_detail ? (
+                <p style={{ whiteSpace: "pre-wrap" }}>{profile.offerings_detail}</p>
+              ) : (
+                <p className="muted">
+                  Detailed offerings not added yet. Register and chat to ask about services.
+                </p>
+              )}
+            </section>
+
+            <section className="page-panel">
+              <h2>About</h2>
+              {profile.description ? (
+                <p style={{ whiteSpace: "pre-wrap" }}>{profile.description}</p>
+              ) : (
+                <p className="muted">No business description yet.</p>
+              )}
+            </section>
+
+            <section className="page-panel">
+              <h2>Location</h2>
               <div className="public-provider-meta">
                 {(profile.location_label || profile.city || profile.pincode) && (
                   <p className="muted">
@@ -137,6 +290,9 @@ export function PublicProviderPage() {
                   </p>
                 )}
                 {profile.gst_number && <p className="muted">GST {profile.gst_number}</p>}
+                {!profile.location_label && !profile.city && !profile.pincode && (
+                  <p className="muted">No location listed yet.</p>
+                )}
               </div>
 
               <MapsLink
@@ -182,14 +338,6 @@ export function PublicProviderPage() {
               )}
 
               <div className="page-actions" style={{ marginTop: "1rem" }}>
-                <Link className="btn" to={chatCta.to}>
-                  {chatCta.label}
-                </Link>
-                {!token && (
-                  <Link className="btn secondary" to="/?login=1">
-                    Log in
-                  </Link>
-                )}
                 <button className="btn secondary" type="button" onClick={() => void copyLink()}>
                   {copied ? "Link copied" : "Copy public link"}
                 </button>
@@ -198,44 +346,44 @@ export function PublicProviderPage() {
                 {shareUrl}
               </p>
             </section>
-
-            <section className="page-panel">
-              <h2>Services &amp; categories</h2>
-              {profile.categories.length === 0 ? (
-                <p className="muted">No categories listed yet.</p>
-              ) : (
-                <div className="public-chip-row">
-                  {profile.categories.map((c) => (
-                    <span key={c} className="public-chip">
-                      {c}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            <section className="page-panel">
-              <h2>About</h2>
-              {profile.description ? (
-                <p style={{ whiteSpace: "pre-wrap" }}>{profile.description}</p>
-              ) : (
-                <p className="muted">No business description yet.</p>
-              )}
-            </section>
-
-            <section className="page-panel">
-              <h2>What they offer</h2>
-              {profile.offerings_detail ? (
-                <p style={{ whiteSpace: "pre-wrap" }}>{profile.offerings_detail}</p>
-              ) : (
-                <p className="muted">
-                  Detailed offerings not added yet. Register and chat to ask about services.
-                </p>
-              )}
-            </section>
           </div>
         )}
       </section>
+
+      {signedIn && user?.role === "CONSUMER" && (
+        <PostRequestModal
+          open={postModalOpen}
+          draft={postDraft}
+          onClose={() => {
+            setPostModalOpen(false);
+            setPostDraft(null);
+          }}
+          onSuccess={() => {
+            setPostDraft(null);
+            setActiveChat(null);
+          }}
+        />
+      )}
+
+      {activeChat && (
+        <InquiryChatPanel
+          conversationId={activeChat.id}
+          mode="overlay"
+          title={activeChat.title}
+          subtitle={
+            activeChat.ownerName && activeChat.ownerName !== activeChat.title
+              ? activeChat.ownerName
+              : "Inquiry chat"
+          }
+          avatarLabel={activeChat.title}
+          statusLabel={activeChat.isOnline ? "Online" : "Offline"}
+          statusTone={activeChat.isOnline ? "online" : "offline"}
+          autoFocus
+          emptyHint="Say hello and ask about availability, pricing, or timing."
+          placeholder="Write a message…"
+          onClose={() => setActiveChat(null)}
+        />
+      )}
     </div>
   );
 }

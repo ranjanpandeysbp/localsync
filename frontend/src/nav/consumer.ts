@@ -10,7 +10,6 @@ export const CONSUMER_NAV: ConsumerNavItem[] = [
   { to: "/consumer/details", label: "My Account" },
   { to: "/consumer/requests", label: "My requests" },
   { to: "/consumer/post", label: "Broadcast request" },
-  { to: "/consumer/providers", label: "Providers in category" },
   { to: "/consumer/inquiries", label: "Recent inquiries" },
   { to: "/consumer/quotes", label: "Received Quotes" },
   { to: "/consumer/orders", label: "Orders" },

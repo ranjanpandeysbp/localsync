@@ -100,41 +100,43 @@ export function SubmitQuoteModal({ open, request, onClose, onSuccess }: Props) {
         </p>
 
         <form className="page-form submit-quote-form" onSubmit={(e) => void onSubmit(e)}>
-          {error && <p className="error">{error}</p>}
-          <div className="field">
-            <label htmlFor="submit-quote-price">Price (₹)</label>
-            <input
-              id="submit-quote-price"
-              required
-              type="number"
-              min={1}
-              value={priceQuote}
-              onChange={(e) => setPriceQuote(e.target.value)}
-              autoFocus
-            />
+          <div className="post-request-modal-scroll">
+            {error && <p className="error">{error}</p>}
+            <div className="field">
+              <label htmlFor="submit-quote-price">Price (₹)</label>
+              <input
+                id="submit-quote-price"
+                required
+                type="number"
+                min={1}
+                value={priceQuote}
+                onChange={(e) => setPriceQuote(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="submit-quote-eta">ETA (days)</label>
+              <input
+                id="submit-quote-eta"
+                required
+                type="number"
+                min={1}
+                max={365}
+                value={estimatedDays}
+                onChange={(e) => setEstimatedDays(e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="submit-quote-message">Message</label>
+              <textarea
+                id="submit-quote-message"
+                rows={3}
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+              />
+            </div>
+            <FilePicker files={files} onChange={setFiles} disabled={busy} />
           </div>
-          <div className="field">
-            <label htmlFor="submit-quote-eta">ETA (days)</label>
-            <input
-              id="submit-quote-eta"
-              required
-              type="number"
-              min={1}
-              max={365}
-              value={estimatedDays}
-              onChange={(e) => setEstimatedDays(e.target.value)}
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="submit-quote-message">Message</label>
-            <textarea
-              id="submit-quote-message"
-              rows={3}
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-            />
-          </div>
-          <FilePicker files={files} onChange={setFiles} disabled={busy} />
           <div className="page-actions submit-quote-actions">
             <button className="btn secondary" type="button" onClick={onClose} disabled={busy}>
               Cancel

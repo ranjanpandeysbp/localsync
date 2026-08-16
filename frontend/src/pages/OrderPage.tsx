@@ -162,24 +162,19 @@ export function OrderPage() {
           </section>
         )}
 
-        {id && (
+        {id && open && (
           <InquiryChatPanel
             conversationId={id}
             mode="inline"
             title={chatPeer}
             subtitle="Order chat"
             avatarLabel={chatPeer}
-            statusLabel={open ? "Open" : order?.status || "Closed"}
-            statusTone={open ? "online" : "offline"}
+            statusLabel="Open"
+            statusTone="online"
             messagesPath={`/orders/${id}/messages`}
-            emptyHint={
-              open
-                ? "Coordinate delivery, payment, and timing here."
-                : "This order chat is closed."
-            }
+            emptyHint="Coordinate delivery, payment, and timing here."
             placeholder="Write a message…"
-            composeDisabled={!open}
-            autoFocus={!!open}
+            autoFocus
           />
         )}
 
