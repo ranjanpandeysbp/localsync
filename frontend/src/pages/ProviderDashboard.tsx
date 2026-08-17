@@ -289,7 +289,7 @@ export function ProviderDashboard() {
         bumpAdminUnread(1);
         return;
       }
-      setToast("New message from Gharq admin");
+      setToast("New message from SahiLocal admin");
       void loadSupportThreads();
       if (activeSupportId) {
         clearAdminUnread();
@@ -1237,7 +1237,7 @@ export function ProviderDashboard() {
                       {isLimited && (
                         <Link className="provider-overview-shortcut" to="/provider/support">
                           <strong>Admin messages</strong>
-                          <span className="muted">Contact Gharq support</span>
+                          <span className="muted">Contact SahiLocal support</span>
                         </Link>
                       )}
                     </div>
@@ -1376,7 +1376,7 @@ export function ProviderDashboard() {
             <p className="dash-eyebrow">Support</p>
             <h2>Admin messages</h2>
             <p className="page-lead">
-              Messages from Gharq admins about your account or listings.
+              Messages from SahiLocal admins about your account or listings.
             </p>
           </header>
           <section className="page-panel">
@@ -1384,7 +1384,7 @@ export function ProviderDashboard() {
               <InquiryChatPanel
                 conversationId={activeSupportId}
                 mode="inline"
-                title="Gharq admin"
+                title="SahiLocal admin"
                 subtitle="Support chat"
                 avatarLabel="G"
                 autoFocus
@@ -1400,7 +1400,7 @@ export function ProviderDashboard() {
                 )}
                 {supportThreads.map((t) => (
                   <div key={t.id} className="list-item">
-                    <strong>{t.admin_name || "Gharq Admin"}</strong>
+                    <strong>{t.admin_name || "SahiLocal Admin"}</strong>
                     <div className="muted">{t.last_message || "Conversation started"}</div>
                     <p className="muted" style={{ fontSize: "0.85rem" }}>
                       Updated {new Date(t.updated_at).toLocaleString()}

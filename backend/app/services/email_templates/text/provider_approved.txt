@@ -1,8 +1,8 @@
 Hi {{full_name}},
 
-Congratulations! Your Gharq provider account is approved and activated.
+Congratulations! Your SahiLocal provider account is approved and activated.
 
 You can log in, complete your listing, set business hours, and go online to receive nearby requests:
 {{login_url}}
 
-— Gharq Team
+— SahiLocal Team

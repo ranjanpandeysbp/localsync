@@ -1,10 +1,10 @@
 Hi {{full_name}},
 
-Welcome to Gharq — your consumer account is ready.
+Welcome to SahiLocal — your consumer account is ready.
 
 You can sign in and start finding verified local providers near you:
 {{login_url}}
 
 Tip: keep your pincode and profile address up to date so we can match you with nearby help.
 
-— Gharq Team
+— SahiLocal Team

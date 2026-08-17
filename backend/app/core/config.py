@@ -4,9 +4,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    app_name: str = "Gharq"
+    app_name: str = "SahiLocal"
     api_v1_prefix: str = "/api/v1"
-    secret_key: str = "change-me-in-production-gharq-secret"
+    secret_key: str = "change-me-in-production-sahilocal-secret"
     algorithm: str = "HS256"
     frontend_url: str = "http://localhost:5173"
     password_reset_expire_minutes: int = 30

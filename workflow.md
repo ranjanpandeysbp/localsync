@@ -1,8 +1,8 @@
-# Gharq App Workflow
+# SahiLocal App Workflow
 
 ## Overview
 
-Gharq is a hyper-local marketplace that connects **consumers** with nearby **verified providers** for products and services.
+SahiLocal is a hyper-local marketplace that connects **consumers** with nearby **verified providers** for products and services.
 
 **Stack:** React (Vite) · FastAPI · JWT · PostgreSQL/PostGIS · Redis · WebSockets
 
@@ -158,10 +158,10 @@ Templates live in `backend/app/services/email_templates/` (paired `html/` + `tex
 
 | Audience | When | Template key(s) | Subject (approx.) |
 |----------|------|-----------------|-------------------|
-| **Consumer** | Self-register on landing (`POST /auth/register`) if email provided | `registration_consumer` | Welcome to Gharq |
-| **Provider** | Self-register or admin **Add provider** left as Pending | `registration_provider` | Thank you for registering with Gharq |
-| **Customer service** | Admin creates agent (Pending) | `registration_customer_service_pending` | Your Gharq customer service account was created |
-| **Customer service** | Admin creates agent already approved, or later **Approve** / **Re-approve** | `registration_customer_service_approved` | Your Gharq customer service account is ready |
+| **Consumer** | Self-register on landing (`POST /auth/register`) if email provided | `registration_consumer` | Welcome to SahiLocal |
+| **Provider** | Self-register or admin **Add provider** left as Pending | `registration_provider` | Thank you for registering with SahiLocal |
+| **Customer service** | Admin creates agent (Pending) | `registration_customer_service_pending` | Your SahiLocal customer service account was created |
+| **Customer service** | Admin creates agent already approved, or later **Approve** / **Re-approve** | `registration_customer_service_approved` | Your SahiLocal customer service account is ready |
 
 Provider email is required at register. Consumer email is optional (no email → no send). CS agents always have an email.
 

@@ -244,7 +244,7 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
           </>
         ) : (
           <form className="register-modal-form" onSubmit={onSubmit}>
-            <p className="eyebrow">Join Gharq</p>
+            <p className="eyebrow">Join SahiLocal</p>
             <h2 id={titleId} className="login-modal-title">
               Create your account
             </h2>

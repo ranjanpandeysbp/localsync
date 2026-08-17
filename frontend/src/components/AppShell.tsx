@@ -285,7 +285,7 @@ export function AppShell({
       <aside className="sidebar" aria-label="Main navigation">
         <div className="sidebar-brand">
           <Link to={home} className="brand">
-            Gharq
+            SahiLocal
           </Link>
           <p className="muted sidebar-tagline">Hyper-local marketplace</p>
         </div>

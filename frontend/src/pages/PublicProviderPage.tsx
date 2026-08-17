@@ -146,7 +146,7 @@ export function PublicProviderPage() {
       <header className="landing-top">
         <div className="landing-top-inner">
           <Link to="/" className="brand landing-brand">
-            Gharq
+            SahiLocal
           </Link>
           <div className="landing-auth">
             {!token && (

@@ -46,7 +46,7 @@ export function ResetPasswordPage() {
     <div className="auth-wrap">
       <form className="card auth-card" onSubmit={onSubmit}>
         <h1 className="brand">
-          <Link to="/">Gharq</Link>
+          <Link to="/">SahiLocal</Link>
         </h1>
         <h2 style={{ margin: "0.35rem 0 0" }}>Choose a new password</h2>
         <p className="muted">Use at least 6 characters. You&apos;ll sign in with your phone after.</p>

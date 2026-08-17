@@ -1,10 +1,10 @@
 Hi {{full_name}},
 
-Thank you for registering as a provider on Gharq.
+Thank you for registering as a provider on SahiLocal.
 
 Your account is currently under review. Please keep checking email from us in the next 24 hours.
 
 You will be able to log in after an admin or customer service agent approves your account:
 {{login_url}}
 
-— Gharq Team
+— SahiLocal Team

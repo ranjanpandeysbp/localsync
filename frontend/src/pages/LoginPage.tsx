@@ -35,7 +35,7 @@ export function LoginPage() {
     <div className="login-page">
       <aside className="login-visual">
         <div className="login-visual-copy">
-          <p className="login-visual-eyebrow">Gharq</p>
+          <p className="login-visual-eyebrow">SahiLocal</p>
           <h1 className="login-visual-title">Find trusted help around the corner.</h1>
           <p className="login-visual-lead">
             Verified local providers, nearby requests, and quotes — all in one place.
@@ -50,7 +50,7 @@ export function LoginPage() {
         <form className="login-form" onSubmit={onSubmit}>
           <div className="login-form-head">
             <Link to="/" className="login-form-brand">
-              Gharq
+              SahiLocal
             </Link>
             <h2>Welcome back</h2>
             <p className="muted">Sign in with your phone to continue.</p>

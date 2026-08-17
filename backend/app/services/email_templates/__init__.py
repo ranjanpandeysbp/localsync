@@ -1,4 +1,4 @@
-"""Load and render Gharq transactional email templates.
+"""Load and render SahiLocal transactional email templates.
 
 Templates live under ``html/`` and ``text/``. Placeholders use ``{{name}}`` syntax.
 HTML bodies are wrapped with ``_layout.html``.
@@ -58,7 +58,7 @@ def render_template(template_key: str, *, subject: str, **values: str) -> EmailC
 def registration_consumer(*, full_name: str, login_url: str) -> EmailContent:
     return render_template(
         "registration_consumer",
-        subject="Welcome to Gharq",
+        subject="Welcome to SahiLocal",
         full_name=full_name,
         login_url=login_url,
     )
@@ -67,7 +67,7 @@ def registration_consumer(*, full_name: str, login_url: str) -> EmailContent:
 def registration_provider(*, full_name: str, login_url: str) -> EmailContent:
     return render_template(
         "registration_provider",
-        subject="Thank you for registering with Gharq",
+        subject="Thank you for registering with SahiLocal",
         full_name=full_name,
         login_url=login_url,
     )
@@ -82,13 +82,13 @@ def registration_customer_service(
     if approved:
         return render_template(
             "registration_customer_service_approved",
-            subject="Your Gharq customer service account is ready",
+            subject="Your SahiLocal customer service account is ready",
             full_name=full_name,
             login_url=login_url,
         )
     return render_template(
         "registration_customer_service_pending",
-        subject="Your Gharq customer service account was created",
+        subject="Your SahiLocal customer service account was created",
         full_name=full_name,
         login_url=login_url,
     )
@@ -99,7 +99,7 @@ def registration_customer_service(
 def provider_approved(*, full_name: str, login_url: str) -> EmailContent:
     return render_template(
         "provider_approved",
-        subject="Congratulations — your Gharq provider account is approved",
+        subject="Congratulations — your SahiLocal provider account is approved",
         full_name=full_name,
         login_url=login_url,
     )
@@ -108,7 +108,7 @@ def provider_approved(*, full_name: str, login_url: str) -> EmailContent:
 def provider_revoked(*, full_name: str, login_url: str) -> EmailContent:
     return render_template(
         "provider_revoked",
-        subject="Your Gharq provider account has been revoked",
+        subject="Your SahiLocal provider account has been revoked",
         full_name=full_name,
         login_url=login_url,
     )
@@ -117,7 +117,7 @@ def provider_revoked(*, full_name: str, login_url: str) -> EmailContent:
 def provider_reapproved(*, full_name: str, login_url: str) -> EmailContent:
     return render_template(
         "provider_reapproved",
-        subject="Your Gharq provider account has been re-approved",
+        subject="Your SahiLocal provider account has been re-approved",
         full_name=full_name,
         login_url=login_url,
     )
@@ -126,10 +126,10 @@ def provider_reapproved(*, full_name: str, login_url: str) -> EmailContent:
 # --- Password reset (per role) ----------------------------------------------
 
 _PASSWORD_RESET_SUBJECT = {
-    "CONSUMER": "Reset your Gharq password",
-    "PROVIDER": "Reset your Gharq provider password",
-    "CUSTOMER_SERVICE": "Reset your Gharq customer service password",
-    "ADMIN": "Reset your Gharq admin password",
+    "CONSUMER": "Reset your SahiLocal password",
+    "PROVIDER": "Reset your SahiLocal provider password",
+    "CUSTOMER_SERVICE": "Reset your SahiLocal customer service password",
+    "ADMIN": "Reset your SahiLocal admin password",
 }
 
 _PASSWORD_RESET_TEMPLATE = {

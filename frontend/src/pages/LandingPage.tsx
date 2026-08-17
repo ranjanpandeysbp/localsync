@@ -1169,7 +1169,7 @@ export function LandingPage() {
             <div className="landing-sidebar-brand">
               <div className="landing-sidebar-brand-row">
                 <Link to="/" className="brand" onClick={() => setNavOpen(false)}>
-                  Gharq
+                  SahiLocal
                 </Link>
                 <button
                   type="button"
@@ -1259,7 +1259,7 @@ export function LandingPage() {
                 </button>
               )}
               <Link to="/" className="brand landing-brand">
-                Gharq
+                SahiLocal
               </Link>
             </div>
             <nav className="landing-auth">
@@ -1763,7 +1763,7 @@ export function LandingPage() {
         )}
 
         <footer className="landing-footer">
-          <strong>Gharq</strong>
+          <strong>SahiLocal</strong>
           <span className="muted">Verified providers · nearby matching</span>
         </footer>
       </div>

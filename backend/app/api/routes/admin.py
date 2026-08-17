@@ -1055,7 +1055,7 @@ def _smtp_to_out(cfg) -> SmtpConfigOut:
         username=cfg.username,
         password_set=bool(cfg.password),
         from_email=cfg.from_email or "",
-        from_name=cfg.from_name or "Gharq",
+        from_name=cfg.from_name or "SahiLocal",
         use_tls=bool(cfg.use_tls),
         use_ssl=bool(cfg.use_ssl),
         is_enabled=bool(cfg.is_enabled),
@@ -1083,7 +1083,7 @@ def update_smtp_config(
     if payload.password is not None and payload.password != "":
         cfg.password = payload.password
     cfg.from_email = str(payload.from_email).strip()
-    cfg.from_name = payload.from_name.strip() or "Gharq"
+    cfg.from_name = payload.from_name.strip() or "SahiLocal"
     cfg.use_tls = payload.use_tls
     cfg.use_ssl = payload.use_ssl
     cfg.is_enabled = payload.is_enabled
@@ -1105,13 +1105,13 @@ def test_smtp_config(
         send_email(
             db,
             to_email=str(payload.to_email),
-            subject="Gharq SMTP test",
+            subject="SahiLocal SMTP test",
             body_text=(
-                "This is a test email from Gharq.\n\n"
+                "This is a test email from SahiLocal.\n\n"
                 "Your SMTP configuration is working."
             ),
             body_html=(
-                "<p>This is a test email from <strong>Gharq</strong>.</p>"
+                "<p>This is a test email from <strong>SahiLocal</strong>.</p>"
                 "<p>Your SMTP configuration is working.</p>"
             ),
         )

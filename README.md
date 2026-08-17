@@ -1,4 +1,4 @@
-# Gharq — How to Start Frontend & Backend
+# SahiLocal — How to Start Frontend & Backend
 
 ## Prerequisites
 
