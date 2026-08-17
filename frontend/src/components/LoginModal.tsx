@@ -3,6 +3,20 @@ import { Link, useNavigate } from "react-router-dom";
 import { apiErrorMessage } from "../services/api";
 import { useAuth } from "../store/auth";
 import { roleHome } from "../types";
+import {
+  btn,
+  errorText,
+  eyebrow,
+  field,
+  fieldInput,
+  linkBlue,
+  linkBtn,
+  loginModal,
+  loginModalBackdrop,
+  loginModalClose,
+  loginModalTitle,
+  muted,
+} from "../ui";
 
 type Props = {
   open: boolean;
@@ -64,30 +78,26 @@ export function LoginModal({ open, onClose, onCreateAccount }: Props) {
 
   return (
     <div
-      className="login-modal-backdrop"
+      className={loginModalBackdrop}
       role="presentation"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div
-        className="login-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-      >
-        <button type="button" className="login-modal-close" onClick={onClose} aria-label="Close">
+      <div className={loginModal} role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        <button type="button" className={loginModalClose} onClick={onClose} aria-label="Close">
           ×
         </button>
-        <p className="eyebrow">Welcome back</p>
-        <h2 id={titleId} className="login-modal-title">
+        <p className={eyebrow}>Welcome back</p>
+        <h2 id={titleId} className={loginModalTitle}>
           Sign in to KoshalHaat
         </h2>
-        <p className="muted login-modal-lead">Use your phone number and password.</p>
-        <form className="stack" onSubmit={onSubmit}>
-          <label className="field">
+        <p className={`${muted} m-0 mb-[1.1rem]`}>Use your phone number and password.</p>
+        <form className="flex flex-col gap-3" onSubmit={onSubmit}>
+          <label className={field}>
             Phone
             <input
+              className={fieldInput}
               required
               autoFocus
               autoComplete="tel"
@@ -96,9 +106,10 @@ export function LoginModal({ open, onClose, onCreateAccount }: Props) {
               placeholder="10-digit mobile"
             />
           </label>
-          <label className="field">
+          <label className={field}>
             Password
             <input
+              className={fieldInput}
               required
               type="password"
               autoComplete="current-password"
@@ -106,18 +117,18 @@ export function LoginModal({ open, onClose, onCreateAccount }: Props) {
               onChange={(e) => setPassword(e.target.value)}
             />
           </label>
-          {error && <p className="error">{error}</p>}
-          <button className="btn" type="submit" disabled={busy}>
+          {error && <p className={errorText}>{error}</p>}
+          <button className={btn} type="submit" disabled={busy}>
             {busy ? "Signing in…" : "Sign in"}
           </button>
         </form>
-        <p className="muted login-modal-links">
+        <p className={`${muted} mt-4 mb-0 text-center text-[0.92rem]`}>
           <Link to="/forgot-password" onClick={onClose}>
             Forgot password?
           </Link>
           {" · "}
           {onCreateAccount ? (
-            <button type="button" className="link-blue link-btn" onClick={onCreateAccount}>
+            <button type="button" className={`${linkBlue} ${linkBtn}`} onClick={onCreateAccount}>
               Create account
             </button>
           ) : (

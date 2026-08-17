@@ -9,6 +9,7 @@ import { useAuth } from "../store/auth";
 import { isProviderOnlineNow } from "../utils/businessHours";
 import { savePostRequestDraft, type PostRequestDraft } from "../utils/postRequestDraft";
 import type { ProviderPublicProfile } from "../types";
+import { brand, btn, btnSecondary, iconBtn } from "../ui";
 
 export function PublicProviderPage() {
   const { slugOrId } = useParams<{ slugOrId: string }>();
@@ -142,25 +143,25 @@ export function PublicProviderPage() {
   }
 
   return (
-    <div className="landing">
-      <header className="landing-top">
-        <div className="landing-top-inner">
-          <Link to="/" className="brand landing-brand">
+    <div className="min-h-screen max-w-full min-w-0 overflow-x-clip bg-canvas">
+      <header className="sticky top-0 z-30 backdrop-blur-[12px] bg-[rgba(250,249,245,0.92)] border-b border-solid border-line">
+        <div className="w-[min(1120px,calc(100%-2rem))] mx-auto py-4 flex items-center justify-between gap-4 min-w-0">
+          <Link to="/" className={`${brand} text-[1.35rem]`}>
             KoshalHaat
           </Link>
-          <div className="landing-auth">
+          <div className="flex gap-[0.55rem] flex-wrap items-center">
             {!token && (
               <>
-                <Link className="btn secondary" to="/?login=1">
+                <Link className={btnSecondary} to="/?login=1">
                   Log in
                 </Link>
-                <Link className="btn" to="/?register=1">
+                <Link className={btn} to="/?register=1">
                   Register
                 </Link>
               </>
             )}
             {token && (
-              <Link className="btn" to="/">
+              <Link className={btn} to="/">
                 Dashboard
               </Link>
             )}
@@ -168,7 +169,7 @@ export function PublicProviderPage() {
         </div>
       </header>
 
-      <section className="landing-section" style={{ paddingTop: "1.5rem" }}>
+      <section className="w-[min(920px,calc(100%-2rem))] mx-auto mb-10 box-border pt-6">
         {loading && <p className="muted">Loading provider…</p>}
         {error && !loading && (
           <div className="page-panel" style={{ maxWidth: 640 }}>
@@ -206,7 +207,7 @@ export function PublicProviderPage() {
                   <div className="public-provider-section-actions">
                     <button
                       type="button"
-                      className="icon-btn landing-provider-chat provider-quote-chat-btn"
+                      className={`${iconBtn} relative w-[2.35rem] h-[2.35rem] rounded-xl border-primary/18 bg-primary/6 text-primary hover:bg-primary/12 hover:border-primary/35 disabled:opacity-55 disabled:cursor-wait`}
                       title={
                         openingChat
                           ? "Opening chat…"

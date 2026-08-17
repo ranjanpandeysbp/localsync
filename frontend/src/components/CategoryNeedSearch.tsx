@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { CategoryTree } from "../types";
+import { cn, comboEmpty, comboList } from "../ui";
 
 export type CategoryNeedOption = {
   id: number;
@@ -136,9 +137,10 @@ export function CategoryNeedSearch({
   }
 
   return (
-    <div className={`need-search${open ? " is-open" : ""}`} ref={rootRef}>
+    <div className={cn("relative flex-1 min-w-0", open && "z-20")} ref={rootRef}>
       <input
         id={id}
+        className="w-full border-0 bg-transparent py-[0.15rem] px-0 font-inherit text-[1.02rem] font-semibold text-ink outline-none"
         type="search"
         role="combobox"
         aria-expanded={open}
@@ -169,20 +171,23 @@ export function CategoryNeedSearch({
         }}
       />
       {open && (
-        <ul className="need-search-list" id={listId} role="listbox">
+        <ul className={`${comboList} z-50`} id={listId} role="listbox">
           {filtered.length === 0 ? (
-            <li className="need-search-empty">No matching categories</li>
+            <li className={comboEmpty}>No matching categories</li>
           ) : (
             filtered.map((opt, i) => (
               <li key={`${opt.isParent ? "p" : "s"}-${opt.id}`} role="option" aria-selected={i === highlight}>
                 <button
                   type="button"
-                  className={`need-search-option${i === highlight ? " is-active" : ""}`}
+                  className={cn(
+                    "flex flex-col items-start gap-[0.12rem] w-full border-0 rounded-[10px] bg-transparent py-[0.6rem] px-3 text-left cursor-pointer text-inherit hover:bg-primary/8",
+                    i === highlight && "bg-primary/8",
+                  )}
                   onMouseEnter={() => setHighlight(i)}
                   onClick={() => pick(opt)}
                 >
-                  <span className="need-search-option-name">{opt.name}</span>
-                  <span className="need-search-option-meta">
+                  <span className="text-[0.92rem] font-semibold text-ink">{opt.name}</span>
+                  <span className="text-[0.75rem] text-muted">
                     {opt.isParent ? "Category" : opt.parentName}
                   </span>
                 </button>

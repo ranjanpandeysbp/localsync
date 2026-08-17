@@ -416,7 +416,7 @@ export function AdminPage() {
       slug: "",
       description: "",
       parent_id: String(p.id),
-      kind: p.kind,
+      kind: p.kind ?? "BOTH",
     });
     setCategoryView("create");
     setError("");

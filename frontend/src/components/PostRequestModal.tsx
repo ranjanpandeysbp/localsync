@@ -13,6 +13,22 @@ import {
   SAME_CATEGORY_REQUEST_MESSAGE,
 } from "../utils/postRequestDraft";
 import type { CategoryTree, ProviderCatalogItem, PublicSearchResult, ServiceRequest, User } from "../types";
+import {
+  btn,
+  btnSecondary,
+  errorText,
+  eyebrow,
+  field,
+  fieldInput,
+  fieldLabel,
+  fieldTextarea,
+  loginModal,
+  loginModalBackdrop,
+  loginModalClose,
+  loginModalTitle,
+  muted,
+  pageActions,
+} from "../ui";
 
 type FormState = {
   category_id: string;
@@ -264,37 +280,39 @@ export function PostRequestModal({ open, onClose, draft = null, onSuccess }: Pro
     }
   }
 
+  const step = "grid gap-3 pb-[1.1rem] border-b border-solid border-line last:border-b-0 last:pb-0";
+
   return (
     <div
-      className="login-modal-backdrop post-request-modal-backdrop"
+      className={`${loginModalBackdrop} items-start p-5 overflow-auto overscroll-contain`}
       role="presentation"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
-        className="login-modal post-request-modal"
+        className={`${loginModal} flex flex-col w-[min(640px,100%)] max-h-[min(92dvh,920px)] overflow-hidden my-6 text-left`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
       >
-        <button type="button" className="login-modal-close" onClick={onClose} aria-label="Close">
+        <button type="button" className={loginModalClose} onClick={onClose} aria-label="Close">
           ×
         </button>
-        <p className="eyebrow">Requests</p>
-        <h2 id={titleId} className="login-modal-title">
+        <p className={eyebrow}>Requests</p>
+        <h2 id={titleId} className={loginModalTitle}>
           Send a request
         </h2>
-        <p className="muted login-modal-lead">
+        <p className={`${muted} m-0 mb-[1.1rem]`}>
           Choose a category, add providers by name, and describe what you need.
         </p>
 
-        <form className="post-request-form" onSubmit={onSubmit}>
-          <div className="post-request-modal-scroll">
-          <section className="post-request-step">
-            <h3>1. Category</h3>
-            <div className="field">
-              <label>Find a category</label>
+        <form className="flex flex-col flex-1 min-h-0 mt-[0.35rem] gap-5" onSubmit={onSubmit}>
+          <div className="flex-1 min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain">
+          <section className={step}>
+            <h3 className="m-0 text-[1.05rem] text-brand-dark">1. Category</h3>
+            <div className={field}>
+              <label className={fieldLabel}>Find a category</label>
               <CategorySearchBox
                 options={categoryOptions}
                 value={form.category_id}
@@ -304,7 +322,7 @@ export function PostRequestModal({ open, onClose, draft = null, onSuccess }: Pro
               />
             </div>
             {form.category_id && (
-              <p className="post-request-category-pill">
+              <p className="m-0 py-[0.65rem] px-[0.85rem] rounded-xl bg-primary/8 text-brand-dark text-[0.92rem]">
                 Category{" "}
                 <strong>
                   {categoryOptions.find((c) => String(c.id) === form.category_id)?.label ||
@@ -314,20 +332,29 @@ export function PostRequestModal({ open, onClose, draft = null, onSuccess }: Pro
             )}
           </section>
 
-          <section className="post-request-step">
-            <h3>2. Providers</h3>
-            <p className="muted post-request-hint">
+          <section className={step}>
+            <h3 className="m-0 text-[1.05rem] text-brand-dark">2. Providers</h3>
+            <p className={`${muted} m-0 text-[0.9rem]`}>
               Add or remove providers by business or owner name. Type to search, then pick a match.
             </p>
-            <div className="field">
-              <label htmlFor="provider-name-box">Providers</label>
-              <div className="provider-name-box" ref={suggestRef}>
-                <div className="provider-name-chips">
+            <div className={field}>
+              <label className={fieldLabel} htmlFor="provider-name-box">
+                Providers
+              </label>
+              <div
+                className="relative border border-solid border-line rounded-xl bg-card py-[0.45rem] px-[0.55rem] transition-[border-color,box-shadow] focus-within:border-brand focus-within:shadow-[0_0_0_3px_rgba(15,76,67,0.12)]"
+                ref={suggestRef}
+              >
+                <div className="flex flex-wrap gap-[0.4rem] items-center">
                   {providers.map((p) => (
-                    <span key={p.id} className="provider-name-chip">
+                    <span
+                      key={p.id}
+                      className="inline-flex items-center gap-[0.3rem] max-w-full py-[0.3rem] pr-[0.35rem] pl-[0.65rem] rounded-full bg-primary/10 text-brand-dark text-[0.88rem] font-semibold"
+                    >
                       {p.name}
                       <button
                         type="button"
+                        className="w-[1.35rem] h-[1.35rem] border-0 rounded-full bg-transparent text-muted text-base leading-none cursor-pointer hover:bg-[rgba(15,23,42,0.08)] hover:text-ink"
                         aria-label={`Remove ${p.name}`}
                         onClick={() => removeProvider(p.id)}
                       >
@@ -337,6 +364,7 @@ export function PostRequestModal({ open, onClose, draft = null, onSuccess }: Pro
                   ))}
                   <input
                     id="provider-name-box"
+                    className="flex-1 min-w-32 border-0 bg-transparent py-[0.45rem] px-1 font-inherit focus:outline-none"
                     type="text"
                     value={providerQuery}
                     placeholder={
@@ -362,15 +390,19 @@ export function PostRequestModal({ open, onClose, draft = null, onSuccess }: Pro
                   />
                 </div>
                 {suggestOpen && (suggestions.length > 0 || suggestBusy || providerQuery.trim().length >= 2) && (
-                  <ul className="provider-name-suggestions" role="listbox">
-                    {suggestBusy && <li className="muted">Searching…</li>}
+                  <ul
+                    className="absolute z-30 left-0 right-0 top-[calc(100%+0.35rem)] m-0 p-[0.35rem] list-none max-h-[220px] overflow-auto rounded-[14px] border border-solid border-[rgba(29,36,43,0.1)] bg-card shadow-[0_16px_36px_rgba(12,18,28,0.16)]"
+                    role="listbox"
+                  >
+                    {suggestBusy && <li className={`${muted} py-2 px-3`}>Searching…</li>}
                     {!suggestBusy && suggestions.length === 0 && (
-                      <li className="muted">No providers match “{providerQuery.trim()}”</li>
+                      <li className={`${muted} py-2 px-3`}>No providers match “{providerQuery.trim()}”</li>
                     )}
                     {suggestions.map((p) => (
                       <li key={p.user_id}>
                         <button
                           type="button"
+                          className="block w-full border-0 rounded-[10px] bg-transparent py-2 px-3 font-inherit text-left cursor-pointer hover:bg-primary/8"
                           role="option"
                           onClick={() =>
                             addProvider({
@@ -381,9 +413,9 @@ export function PostRequestModal({ open, onClose, draft = null, onSuccess }: Pro
                           }
                         >
                           <strong>{p.business_name}</strong>
-                          {p.full_name && <span className="muted"> · {p.full_name}</span>}
+                          {p.full_name && <span className={muted}> · {p.full_name}</span>}
                           {p.category_name && (
-                            <span className="muted"> · {p.category_name}</span>
+                            <span className={muted}> · {p.category_name}</span>
                           )}
                         </button>
                       </li>
@@ -391,7 +423,7 @@ export function PostRequestModal({ open, onClose, draft = null, onSuccess }: Pro
                   </ul>
                 )}
               </div>
-              <p className="muted" style={{ margin: "0.4rem 0 0", fontSize: "0.85rem" }}>
+              <p className={`${muted} mt-[0.4rem] mb-0 text-[0.85rem]`}>
                 {providers.length === 0
                   ? "No providers added yet."
                   : `${providers.length} provider${providers.length === 1 ? "" : "s"} will receive this request.`}
@@ -399,20 +431,22 @@ export function PostRequestModal({ open, onClose, draft = null, onSuccess }: Pro
             </div>
           </section>
 
-          <section className="post-request-step">
-            <h3>3. Your request</h3>
-            <div className="field">
-              <label>Title</label>
+          <section className={step}>
+            <h3 className="m-0 text-[1.05rem] text-brand-dark">3. Your request</h3>
+            <div className={field}>
+              <label className={fieldLabel}>Title</label>
               <input
+                className={fieldInput}
                 required
                 value={form.title}
                 onChange={(e) => setForm({ ...form, title: e.target.value })}
                 placeholder="e.g. Leaking kitchen sink"
               />
             </div>
-            <div className="field">
-              <label>Details</label>
+            <div className={field}>
+              <label className={fieldLabel}>Details</label>
               <textarea
+                className={fieldTextarea}
                 required
                 rows={4}
                 value={form.description}
@@ -422,15 +456,17 @@ export function PostRequestModal({ open, onClose, draft = null, onSuccess }: Pro
             </div>
           </section>
 
-          {error && <p className="error">{error}</p>}
+          {error && <p className={errorText}>{error}</p>}
           </div>
 
-          <div className="page-actions post-request-actions">
-            <button className="btn secondary" type="button" onClick={onClose} disabled={busy}>
+          <div
+            className={`${pageActions} shrink-0 justify-end m-0 pt-[0.85rem] pb-[calc(0.35rem+env(safe-area-inset-bottom,0px))] bg-[linear-gradient(180deg,rgba(250,249,245,0.72),rgba(250,249,245,0.96)_28%)] border-t border-solid border-[rgba(29,36,43,0.08)]`}
+          >
+            <button className={btnSecondary} type="button" onClick={onClose} disabled={busy}>
               Cancel
             </button>
             <button
-              className="btn"
+              className={btn}
               type="submit"
               disabled={busy || !form.category_id || providers.length === 0}
             >

@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { SERVICE_CITIES, type ServiceCity } from "../utils/serviceCities";
+import { cn, comboEmpty, comboList, comboOption } from "../ui";
 
 export function CitySearchBox({
   value,
@@ -70,28 +71,40 @@ export function CitySearchBox({
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
 
+  const pad = variant === "pad";
+  const inputCls = pad
+    ? "w-full border-0 bg-transparent py-[0.15rem] px-0 font-inherit text-[1.02rem] font-semibold text-ink outline-none"
+    : "w-full border-0 bg-transparent py-[0.35rem] px-[0.2rem] font-inherit text-[0.95rem] font-medium text-ink outline-none";
+
   return (
-    <div
-      className={`city-search city-search-${variant}${className ? ` ${className}` : ""}${
-        open ? " is-open" : ""
-      }`}
-      ref={rootRef}
-    >
-      <div className={`city-search-control${open ? " is-open" : ""}`}>
+    <div className={cn("relative w-full", className, open && "z-20")} ref={rootRef}>
+      <div
+        className={cn(
+          "flex items-center gap-1 min-h-6",
+          !pad && "min-h-[2.6rem] py-[0.15rem] px-[0.55rem] rounded-xl border border-solid border-[rgba(29,36,43,0.12)] bg-card",
+          !pad && open && "border-primary/45 shadow-[0_0_0_3px_rgba(15,76,67,0.12)]",
+        )}
+      >
         {selected && !open ? (
           <button
             type="button"
             id={id}
-            className="city-search-value"
+            className={cn(
+              "flex-1 flex items-center justify-between gap-2 min-w-0 border-0 bg-transparent py-[0.15rem] px-0 font-inherit font-semibold text-ink text-left cursor-pointer",
+              pad ? "text-[1.02rem]" : "text-[0.95rem] font-medium py-[0.35rem] px-[0.2rem]",
+            )}
             onClick={() => setOpen(true)}
           >
-            <span>{selected.name}</span>
-            <span className="city-search-change">Change</span>
+            <span className="overflow-hidden text-ellipsis whitespace-nowrap">{selected.name}</span>
+            <span className="shrink-0 text-[0.72rem] font-bold tracking-[0.04em] uppercase text-brand">
+              Change
+            </span>
           </button>
         ) : (
           <input
             ref={inputRef}
             id={id}
+            className={inputCls}
             type="text"
             role="combobox"
             aria-expanded={open}
@@ -131,7 +144,7 @@ export function CitySearchBox({
         {selected && (
           <button
             type="button"
-            className="city-search-clear"
+            className="shrink-0 w-[1.4rem] h-[1.4rem] grid place-items-center border-0 rounded-full bg-[rgba(29,36,43,0.06)] text-[rgba(29,36,43,0.65)] text-base leading-none cursor-pointer hover:bg-[rgba(29,36,43,0.12)] hover:text-ink"
             aria-label="Clear city"
             onClick={clear}
           >
@@ -140,9 +153,9 @@ export function CitySearchBox({
         )}
       </div>
       {open && (
-        <ul className="city-search-list" id={listId} role="listbox">
+        <ul className={cn(comboList, pad && "min-w-[min(12rem,100%)]")} id={listId} role="listbox">
           {filtered.length === 0 && (
-            <li className="city-search-empty">No cities match “{query.trim()}”</li>
+            <li className={comboEmpty}>No cities match “{query.trim()}”</li>
           )}
           {filtered.map((city, i) => (
             <li key={city.name}>
@@ -150,9 +163,7 @@ export function CitySearchBox({
                 type="button"
                 role="option"
                 aria-selected={city.name === value}
-                className={`city-search-option${i === highlight ? " is-active" : ""}${
-                  city.name === value ? " is-selected" : ""
-                }`}
+                className={cn(comboOption, i === highlight && "bg-primary/8", city.name === value && "text-brand")}
                 onMouseEnter={() => setHighlight(i)}
                 onClick={() => pick(city)}
               >

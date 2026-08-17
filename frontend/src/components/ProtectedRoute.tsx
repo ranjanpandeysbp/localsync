@@ -2,6 +2,7 @@ import { Navigate, Outlet } from "react-router-dom";
 import { useAuth } from "../store/auth";
 import { isLogoutNavigation } from "../utils/logoutNav";
 import { isStaffRole, roleHome, type UserRole } from "../types";
+import { authWrap, muted } from "../ui";
 
 /** Blocks unauthenticated users; optionally restricts by role. */
 export function ProtectedRoute({ roles }: { roles?: UserRole[] }) {
@@ -9,8 +10,8 @@ export function ProtectedRoute({ roles }: { roles?: UserRole[] }) {
 
   if (loading) {
     return (
-      <div className="auth-wrap">
-        <p className="muted">Loading…</p>
+      <div className={authWrap}>
+        <p className={muted}>Loading…</p>
       </div>
     );
   }
@@ -33,8 +34,8 @@ export function GuestRoute() {
 
   if (loading) {
     return (
-      <div className="auth-wrap">
-        <p className="muted">Loading…</p>
+      <div className={authWrap}>
+        <p className={muted}>Loading…</p>
       </div>
     );
   }

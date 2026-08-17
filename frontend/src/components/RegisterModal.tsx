@@ -5,6 +5,24 @@ import { reverseGeocodeDetails } from "../services/geo";
 import { useAuth } from "../store/auth";
 import type { UserRole } from "../types";
 import { roleHome } from "../types";
+import {
+  btn,
+  btnSecondary,
+  cn,
+  errorText,
+  eyebrow,
+  field,
+  fieldInput,
+  fieldLabel,
+  fieldSelect,
+  linkBlue,
+  linkBtn,
+  loginModal,
+  loginModalBackdrop,
+  loginModalClose,
+  loginModalTitle,
+  muted,
+} from "../ui";
 
 const PROVIDER_PENDING_MSG =
   "Thank you for registration, your account is being currently reviewed. Please keep checking email from us in next 24hrs.";
@@ -210,53 +228,63 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
 
   if (!open) return null;
 
+  const hint = `${muted} mt-[0.35rem] mb-0 text-[0.85rem]`;
+  const twoCol = "grid gap-4 grid-cols-[repeat(auto-fit,minmax(260px,1fr))]";
+  const section =
+    "bg-bg border border-solid border-line rounded-xl py-4 px-[1.1rem]";
+
   return (
     <div
-      className="login-modal-backdrop"
+      className={loginModalBackdrop}
       role="presentation"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
-        className={`login-modal register-modal${isProvider ? " register-modal-wide" : ""}`}
+        className={cn(
+          loginModal,
+          "w-[min(560px,100%)] max-h-[min(90dvh,920px)] overflow-auto pt-6",
+          isProvider && "w-[min(920px,100%)]",
+        )}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
       >
-        <button type="button" className="login-modal-close" onClick={onClose} aria-label="Close">
+        <button type="button" className={loginModalClose} onClick={onClose} aria-label="Close">
           ×
         </button>
 
         {providerPending ? (
           <>
-            <p className="eyebrow">Almost there</p>
-            <h2 id={titleId} className="login-modal-title">
+            <p className={eyebrow}>Almost there</p>
+            <h2 id={titleId} className={loginModalTitle}>
               Registration received
             </h2>
             <p>{PROVIDER_PENDING_MSG}</p>
-            <p className="muted">You will be able to sign in after an admin approves your account.</p>
-            <div className="register-modal-actions">
-              <button type="button" className="btn secondary" onClick={onSignIn}>
+            <p className={muted}>You will be able to sign in after an admin approves your account.</p>
+            <div className="flex gap-3 mt-[1.1rem]">
+              <button type="button" className={btnSecondary} onClick={onSignIn}>
                 Sign in later
               </button>
             </div>
           </>
         ) : (
-          <form className="register-modal-form" onSubmit={onSubmit}>
-            <p className="eyebrow">Join KoshalHaat</p>
-            <h2 id={titleId} className="login-modal-title">
+          <form className="flex flex-col gap-[0.85rem]" onSubmit={onSubmit}>
+            <p className={eyebrow}>Join KoshalHaat</p>
+            <h2 id={titleId} className={loginModalTitle}>
               Create your account
             </h2>
-            <p className="muted login-modal-lead">
+            <p className={`${muted} m-0 mb-[1.1rem]`}>
               {isProvider
                 ? "All fields are required. Login opens after admin approval."
                 : "All fields are required."}
             </p>
 
-            <div className="field" style={{ maxWidth: 320 }}>
-              <label>I am a</label>
+            <div className={field} style={{ maxWidth: 320 }}>
+              <label className={fieldLabel}>I am a</label>
               <select
+                className={fieldSelect}
                 value={role}
                 onChange={(e) => {
                   setRole(e.target.value as UserRole);
@@ -267,22 +295,24 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
               </select>
             </div>
 
-            <div className={isProvider ? "register-grid" : undefined}>
-              <section className="register-section">
-                <h2>Account details</h2>
-                <div className={isProvider ? undefined : "grid grid-2"}>
-                  <div className="field">
-                    <label>Full name</label>
+            <div className={isProvider ? "grid grid-cols-1 min-[901px]:grid-cols-2 gap-x-6 gap-y-5 mt-2" : undefined}>
+              <section className={section}>
+                <h2 className="m-0 mb-[0.35rem] text-[1.05rem]">Account details</h2>
+                <div className={isProvider ? undefined : twoCol}>
+                  <div className={field}>
+                    <label className={fieldLabel}>Full name</label>
                     <input
+                      className={fieldInput}
                       required
                       value={form.full_name}
                       onChange={(e) => setForm({ ...form, full_name: e.target.value })}
                     />
                   </div>
                   {isProvider && (
-                    <div className="field">
-                      <label>Business / shop name</label>
+                    <div className={field}>
+                      <label className={fieldLabel}>Business / shop name</label>
                       <input
+                        className={fieldInput}
                         required
                         value={form.business_name}
                         onChange={(e) => setForm({ ...form, business_name: e.target.value })}
@@ -290,9 +320,10 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
                       />
                     </div>
                   )}
-                  <div className="field">
-                    <label>Mobile number</label>
+                  <div className={field}>
+                    <label className={fieldLabel}>Mobile number</label>
                     <input
+                      className={fieldInput}
                       required
                       inputMode="tel"
                       value={form.phone_number}
@@ -300,12 +331,10 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
                       placeholder="10-digit mobile"
                     />
                   </div>
-                  <div
-                    className="field"
-                    style={!isProvider ? { gridColumn: "1 / -1" } : undefined}
-                  >
-                    <label>Email</label>
+                  <div className={cn(field, !isProvider && "col-span-full")}>
+                    <label className={fieldLabel}>Email</label>
                     <input
+                      className={fieldInput}
                       type="email"
                       required
                       value={form.email}
@@ -313,16 +342,15 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
                       placeholder="you@example.com"
                     />
                     {isProvider && (
-                      <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
-                        Used to email you within 24 hours about approval.
-                      </p>
+                      <p className={hint}>Used to email you within 24 hours about approval.</p>
                     )}
                   </div>
                   {isProvider ? (
-                    <div className="grid grid-2">
-                      <div className="field">
-                        <label>Password</label>
+                    <div className={twoCol}>
+                      <div className={field}>
+                        <label className={fieldLabel}>Password</label>
                         <input
+                          className={fieldInput}
                           type="password"
                           required
                           minLength={6}
@@ -330,9 +358,10 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
                           onChange={(e) => setForm({ ...form, password: e.target.value })}
                         />
                       </div>
-                      <div className="field">
-                        <label>Confirm password</label>
+                      <div className={field}>
+                        <label className={fieldLabel}>Confirm password</label>
                         <input
+                          className={fieldInput}
                           type="password"
                           required
                           minLength={6}
@@ -343,9 +372,10 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
                     </div>
                   ) : (
                     <>
-                      <div className="field">
-                        <label>Password</label>
+                      <div className={field}>
+                        <label className={fieldLabel}>Password</label>
                         <input
+                          className={fieldInput}
                           type="password"
                           required
                           minLength={6}
@@ -353,9 +383,10 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
                           onChange={(e) => setForm({ ...form, password: e.target.value })}
                         />
                       </div>
-                      <div className="field">
-                        <label>Confirm password</label>
+                      <div className={field}>
+                        <label className={fieldLabel}>Confirm password</label>
                         <input
+                          className={fieldInput}
                           type="password"
                           required
                           minLength={6}
@@ -366,22 +397,22 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
                     </>
                   )}
                   {isProvider ? (
-                    <div className="grid grid-2">
-                      <div className="field">
-                        <label>City / locality</label>
+                    <div className={twoCol}>
+                      <div className={field}>
+                        <label className={fieldLabel}>City / locality</label>
                         <input
+                          className={fieldInput}
                           required
                           value={form.city}
                           onChange={(e) => setForm({ ...form, city: e.target.value })}
                           placeholder="e.g. Indiranagar"
                         />
-                        <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
-                          Auto-filled from GPS — edit if needed.
-                        </p>
+                        <p className={hint}>Auto-filled from GPS — edit if needed.</p>
                       </div>
-                      <div className="field">
-                        <label>Pincode</label>
+                      <div className={field}>
+                        <label className={fieldLabel}>Pincode</label>
                         <input
+                          className={fieldInput}
                           required
                           inputMode="numeric"
                           pattern="\d{6}"
@@ -395,28 +426,26 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
                           }
                           placeholder="6-digit pincode"
                         />
-                        <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
-                          Auto-filled from GPS — edit if needed.
-                        </p>
+                        <p className={hint}>Auto-filled from GPS — edit if needed.</p>
                       </div>
                     </div>
                   ) : (
                     <>
-                      <div className="field">
-                        <label>City / locality</label>
+                      <div className={field}>
+                        <label className={fieldLabel}>City / locality</label>
                         <input
+                          className={fieldInput}
                           required
                           value={form.city}
                           onChange={(e) => setForm({ ...form, city: e.target.value })}
                           placeholder="e.g. Indiranagar"
                         />
-                        <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
-                          Auto-filled from GPS — edit if needed.
-                        </p>
+                        <p className={hint}>Auto-filled from GPS — edit if needed.</p>
                       </div>
-                      <div className="field">
-                        <label>Pincode</label>
+                      <div className={field}>
+                        <label className={fieldLabel}>Pincode</label>
                         <input
+                          className={fieldInput}
                           required
                           inputMode="numeric"
                           pattern="\d{6}"
@@ -430,26 +459,14 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
                           }
                           placeholder="6-digit pincode"
                         />
-                        <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
-                          Auto-filled from GPS — edit if needed.
-                        </p>
+                        <p className={hint}>Auto-filled from GPS — edit if needed.</p>
                       </div>
                     </>
                   )}
-                  <div
-                    className="field"
-                    style={!isProvider ? { gridColumn: "1 / -1" } : undefined}
-                  >
-                    <label>Location</label>
-                    <p className="muted" style={{ margin: 0 }}>
-                      {locStatus}
-                    </p>
-                    <button
-                      className="btn secondary"
-                      type="button"
-                      style={{ marginTop: "0.5rem" }}
-                      onClick={requestLocation}
-                    >
+                  <div className={cn(field, !isProvider && "col-span-full")}>
+                    <label className={fieldLabel}>Location</label>
+                    <p className={`${muted} m-0`}>{locStatus}</p>
+                    <button className={`${btnSecondary} mt-2`} type="button" onClick={requestLocation}>
                       Retry location
                     </button>
                   </div>
@@ -457,11 +474,12 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
               </section>
 
               {isProvider && (
-                <section className="register-section">
-                  <h2>Verification</h2>
-                  <div className="field">
-                    <label>GSTIN</label>
+                <section className={section}>
+                  <h2 className="m-0 mb-[0.35rem] text-[1.05rem]">Verification</h2>
+                  <div className={field}>
+                    <label className={fieldLabel}>GSTIN</label>
                     <input
+                      className={fieldInput}
                       required
                       value={form.gst_number}
                       onChange={(e) =>
@@ -475,7 +493,7 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
                       autoComplete="off"
                       spellCheck={false}
                     />
-                    <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
+                    <p className={hint}>
                       Required 15-character GSTIN for admin review before your account is activated.
                     </p>
                   </div>
@@ -483,14 +501,14 @@ export function RegisterModal({ open, onClose, onSignIn }: Props) {
               )}
             </div>
 
-            {error && <p className="error">{error}</p>}
-            <div className="register-actions">
-              <button className="btn" disabled={busy} type="submit">
+            {error && <p className={errorText}>{error}</p>}
+            <div className="flex flex-wrap items-center gap-4 mt-5 pt-3 border-t border-solid border-line">
+              <button className={btn} disabled={busy} type="submit">
                 {busy ? "Creating…" : "Create account"}
               </button>
-              <p className="muted" style={{ margin: 0 }}>
+              <p className={`${muted} m-0`}>
                 Already registered?{" "}
-                <button type="button" className="link-blue link-btn" onClick={onSignIn}>
+                <button type="button" className={`${linkBlue} ${linkBtn}`} onClick={onSignIn}>
                   Sign in
                 </button>
               </p>

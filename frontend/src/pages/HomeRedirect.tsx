@@ -1,14 +1,15 @@
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../store/auth";
 import { LandingPage } from "./LandingPage";
+import { authWrap, muted } from "../ui";
 
 export function HomeRedirect() {
   const { user, loading, token } = useAuth();
 
   if (loading) {
     return (
-      <div className="auth-wrap">
-        <p className="muted">Loading…</p>
+      <div className={authWrap}>
+        <p className={muted}>Loading…</p>
       </div>
     );
   }

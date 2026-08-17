@@ -4,6 +4,22 @@ import { api, apiErrorMessage } from "../services/api";
 import type { ServiceRequest } from "../types";
 import type { BroadcastRequestDraft } from "../utils/broadcastDraft";
 import { clearBroadcastDraft } from "../utils/broadcastDraft";
+import {
+  btn,
+  btnSecondary,
+  errorText,
+  eyebrow,
+  field,
+  fieldInput,
+  fieldLabel,
+  fieldTextarea,
+  loginModal,
+  loginModalBackdrop,
+  loginModalClose,
+  loginModalTitle,
+  muted,
+  pageActions,
+} from "../ui";
 
 type Props = {
   open: boolean;
@@ -111,35 +127,38 @@ export function BroadcastRequestModal({
 
   return (
     <div
-      className="login-modal-backdrop post-request-modal-backdrop"
+      className={`${loginModalBackdrop} items-start p-5 overflow-auto overscroll-contain`}
       role="presentation"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
-        className="login-modal post-request-modal broadcast-request-modal"
+        className={`${loginModal} flex flex-col w-[min(640px,100%)] max-h-[min(92dvh,920px)] overflow-hidden my-6 text-left`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
       >
-        <button type="button" className="login-modal-close" onClick={onClose} aria-label="Close">
+        <button type="button" className={loginModalClose} onClick={onClose} aria-label="Close">
           ×
         </button>
-        <p className="eyebrow">Broadcast</p>
-        <h2 id={titleId} className="login-modal-title">
+        <p className={eyebrow}>Broadcast</p>
+        <h2 id={titleId} className={loginModalTitle}>
           Ask nearby
         </h2>
-        <p className="muted login-modal-lead">
+        <p className={`${muted} m-0 mb-[1.1rem]`}>
           This will notify {countLabel} for{" "}
           <strong>{draft.categoryLabel || "this category"}</strong> near {place}.
         </p>
 
-        <form className="post-request-form" onSubmit={onSubmit}>
-          <div className="post-request-modal-scroll">
-            <div className="field">
-              <label htmlFor="broadcast-title">Title</label>
+        <form className="flex flex-col flex-1 min-h-0 mt-[0.35rem] gap-5" onSubmit={onSubmit}>
+          <div className="flex-1 min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain">
+            <div className={field}>
+              <label className={fieldLabel} htmlFor="broadcast-title">
+                Title
+              </label>
               <input
+                className={fieldInput}
                 id="broadcast-title"
                 required
                 minLength={3}
@@ -150,9 +169,12 @@ export function BroadcastRequestModal({
                 placeholder="e.g. Leaking kitchen tap"
               />
             </div>
-            <div className="field">
-              <label htmlFor="broadcast-details">Details</label>
+            <div className={field}>
+              <label className={fieldLabel} htmlFor="broadcast-details">
+                Details
+              </label>
               <textarea
+                className={fieldTextarea}
                 id="broadcast-details"
                 required
                 minLength={5}
@@ -163,16 +185,18 @@ export function BroadcastRequestModal({
               />
             </div>
             {error && (
-              <p className="error" role="alert">
+              <p className={errorText} role="alert">
                 {error}
               </p>
             )}
           </div>
-          <div className="page-actions post-request-actions">
-            <button className="btn secondary" type="button" onClick={onClose} disabled={busy}>
+          <div
+            className={`${pageActions} shrink-0 justify-end m-0 pt-[0.85rem] pb-[calc(0.35rem+env(safe-area-inset-bottom,0px))] bg-[linear-gradient(180deg,rgba(250,249,245,0.72),rgba(250,249,245,0.96)_28%)] border-t border-solid border-[rgba(29,36,43,0.08)]`}
+          >
+            <button className={btnSecondary} type="button" onClick={onClose} disabled={busy}>
               Cancel
             </button>
-            <button className="btn" type="submit" disabled={busy}>
+            <button className={btn} type="submit" disabled={busy}>
               {busy ? "Sending…" : "Broadcast request"}
             </button>
           </div>

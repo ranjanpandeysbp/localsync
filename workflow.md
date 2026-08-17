@@ -698,10 +698,61 @@ Seeded provider public page example: `/p/quickfix-plumbing`.
 
 ---
 
+## Database dump / restore
+
+PostgreSQL 16 + PostGIS (`postgis/postgis:16-3.4` in `docker-compose.yml`). Default connection (also in `backend/app/core/config.py`):
+
+| Item | Value |
+|------|-------|
+| Host / port | `localhost:5432` |
+| Database | `localsync` |
+| User / password | `localsync` / `localsync` |
+
+A schema + data snapshot of the **public** app tables lives at **`backend/scripts/koshalhaat.sql`**. It includes current local/dev rows (users, categories, providers, requests, quotes, orders, chats). PostGIS `spatial_ref_sys` and **SMTP config row data** are excluded so the file stays small and does not contain SMTP credentials. User password hashes are included so demo logins still work after restore. Re-enter SMTP in Admin → Config after restore if you need mail.
+
+**Prerequisite:** Docker Desktop running, then from repo root wait until `db` is healthy:
+
+```powershell
+docker compose up -d
+docker compose ps
+```
+
+### Export a fresh dump
+
+Do **not** redirect `pg_dump` with PowerShell `>` (that writes UTF-16 and corrupts the file). Dump inside the container, then copy out.
+
+**Windows (PowerShell)** — preferred; writes a restore-ready file (PostGIS `CREATE EXTENSION`, and it strips `DROP SCHEMA public` so PostGIS objects stay):
+
+```powershell
+.\backend\scripts\dump_db.ps1
+```
+
+**Equivalent** (any OS). After copy, keep `CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA public;` near the top, and **remove** `DROP SCHEMA IF EXISTS public` / `CREATE SCHEMA public` if `pg_dump` added them:
+
+```bash
+docker compose exec -T db pg_dump -U localsync -d localsync --schema=public --exclude-table=spatial_ref_sys --exclude-table-data=app_smtp_config --no-owner --no-acl --clean --if-exists -f /tmp/koshalhaat.sql
+docker compose cp db:/tmp/koshalhaat.sql ./backend/scripts/koshalhaat.sql
+docker compose exec -T db rm -f /tmp/koshalhaat.sql
+```
+
+### Restore / import
+
+`--clean --if-exists` in the dump **drops existing public app tables** in `localsync` (not the PostGIS schema). Use only on a local/dev database.
+
+```powershell
+docker compose up -d
+docker compose cp .\backend\scripts\koshalhaat.sql db:/tmp/koshalhaat.sql
+docker compose exec -T db psql -U localsync -d localsync -v ON_ERROR_STOP=1 -f /tmp/koshalhaat.sql
+```
+
+Then start the API as usual (`uvicorn …`). You do **not** need `python -m scripts.seed` after a successful restore unless you want seed.py to add any accounts/categories missing from the snapshot.
+
+---
+
 ## Notes for operators
 
 - Restart backend after schema updates so startup migrations apply (`public_slug`, `target_mode`, `request_targets`, `payment_mode`, social URL columns, SMTP table, admin support conversations, `REVOKED` verification status, `CUSTOMER_SERVICE` user role, etc.).
-- Re-run `python -m scripts.seed` after role/enum changes to ensure demo accounts exist (including CS `9000000004` / `support123`).
+- Re-run `python -m scripts.seed` after role/enum changes to ensure demo accounts exist (including CS `9000000004` / `support123`), **or** restore `backend/scripts/koshalhaat.sql` (see **Database dump / restore**) if you want the saved local snapshot instead of a seed-only database.
 - Existing providers without a slug are backfilled on startup from business name.
 - Provider / consumer / CS registration emails and provider approve·revoke·re-approve emails need **Admin → Config** SMTP enabled with a valid from-address.
 - Password reset emails also need SMTP enabled; set `frontend_url` so reset links point at the correct app host. Role-specific templates are under `backend/app/services/email_templates/`.

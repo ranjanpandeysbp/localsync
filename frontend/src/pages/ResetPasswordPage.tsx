@@ -1,6 +1,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../services/api";
+import { authWrap, brand, btn, card, errorText, field, fieldInput, fieldLabel, muted, pillOnline } from "../ui";
 
 export function ResetPasswordPage() {
   const [params] = useSearchParams();
@@ -43,22 +44,23 @@ export function ResetPasswordPage() {
   }
 
   return (
-    <div className="auth-wrap">
-      <form className="card auth-card" onSubmit={onSubmit}>
-        <h1 className="brand">
+    <div className={authWrap}>
+      <form className={`${card} w-[min(420px,100%)]`} onSubmit={onSubmit}>
+        <h1 className={brand}>
           <Link to="/">KoshalHaat</Link>
         </h1>
-        <h2 style={{ margin: "0.35rem 0 0" }}>Choose a new password</h2>
-        <p className="muted">Use at least 6 characters. You&apos;ll sign in with your phone after.</p>
+        <h2 className="mt-[0.35rem] mb-0">Choose a new password</h2>
+        <p className={muted}>Use at least 6 characters. You&apos;ll sign in with your phone after.</p>
         {!token && (
-          <p className="error">
+          <p className={errorText}>
             This reset link is invalid. Request a new one from{" "}
             <Link to="/forgot-password">Forgot password</Link>.
           </p>
         )}
-        <div className="field">
-          <label>New password</label>
+        <div className={field}>
+          <label className={fieldLabel}>New password</label>
           <input
+            className={fieldInput}
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -68,9 +70,10 @@ export function ResetPasswordPage() {
             disabled={!token}
           />
         </div>
-        <div className="field">
-          <label>Confirm password</label>
+        <div className={field}>
+          <label className={fieldLabel}>Confirm password</label>
           <input
+            className={fieldInput}
             type="password"
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
@@ -80,12 +83,12 @@ export function ResetPasswordPage() {
             disabled={!token}
           />
         </div>
-        {error && <p className="error">{error}</p>}
-        {note && <p className="pill online">{note}</p>}
-        <button className="btn" disabled={busy || !token} type="submit">
+        {error && <p className={errorText}>{error}</p>}
+        {note && <p className={pillOnline}>{note}</p>}
+        <button className={btn} disabled={busy || !token} type="submit">
           {busy ? "Updating…" : "Update password"}
         </button>
-        <p className="muted" style={{ marginTop: "1rem" }}>
+        <p className={`${muted} mt-4`}>
           <Link to="/?login=1">← Back to sign in</Link>
         </p>
       </form>

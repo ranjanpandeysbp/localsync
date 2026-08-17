@@ -17,7 +17,7 @@ import { BroadcastRequestModal } from "../components/BroadcastRequestModal";
 import { InquiryChatPanel, startOrOpenChat } from "../components/InquiryChat";
 import { MapsLink } from "../components/MapsLink";
 import { MarketplaceScene } from "../components/MarketplaceScene";
-import { offerKindClass, offerKindLabel } from "../components/ProviderTrust";
+import { offerKindLabel } from "../components/ProviderTrust";
 import { CONSUMER_NAV } from "../nav/consumer";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { api } from "../services/api";
@@ -66,6 +66,24 @@ import type {
   PublicSearchCategory,
   PublicSearchResult,
 } from "../types";
+import {
+  btn,
+  btnSecondary,
+  card,
+  cn,
+  errorText,
+  field,
+  fieldLabel,
+  iconBtn,
+  modalBackdrop,
+  muted,
+  navBadge,
+  pillKindBoth,
+  pillKindProduct,
+  pillKindService,
+  pillOffline,
+  pillOnline,
+} from "../ui";
 
 type LocState = {
   latitude: number | null;
@@ -1069,6 +1087,7 @@ export function LandingPage() {
   }
 
   const showChat = !signedIn || user?.role === "CONSUMER";
+  const homeFit = !searchDone && !browsing;
 
   useEffect(() => {
     if (!signedIn || user?.role !== "CONSUMER") return;
@@ -1132,9 +1151,11 @@ export function LandingPage() {
 
   return (
     <div
-      className={`landing landing-booking${signedIn ? " landing-with-nav" : ""}${
-        navOpen ? " landing-nav-open" : " landing-nav-collapsed"
-      }${!searchDone && !browsing ? " landing-home-fit" : ""}`}
+      className={cn(
+        "min-h-screen max-w-full min-w-0 overflow-x-clip bg-canvas",
+        signedIn && "block min-h-screen [--landing-sidebar-w:260px]",
+        homeFit && "min-h-dvh",
+      )}
     >
       {!signedIn && (
         <>
@@ -1173,19 +1194,32 @@ export function LandingPage() {
         <>
           <button
             type="button"
-            className="landing-nav-backdrop"
+            className={cn(
+              "block fixed inset-0 border-0 p-0 m-0 bg-[rgba(28,42,36,0.45)] z-[35] transition-opacity duration-[320ms] ease-[cubic-bezier(0.22,1,0.36,1)] min-[961px]:hidden",
+              navOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none",
+            )}
             aria-label="Close menu"
             onClick={() => setNavOpen(false)}
           />
-          <aside className="landing-sidebar" aria-label="Consumer navigation">
-            <div className="landing-sidebar-brand">
-              <div className="landing-sidebar-brand-row">
-                <Link to="/" className="brand" onClick={() => setNavOpen(false)}>
+          <aside
+            className={cn(
+              "flex flex-col gap-4 px-4 pt-[1.15rem] pb-5 bg-[linear-gradient(180deg,#0f4c43_0%,#0a3530_100%)] text-[#f4faf7] fixed left-0 top-0 bottom-0 w-[var(--landing-sidebar-w)] max-h-dvh overflow-auto z-40 -translate-x-[105%] transition-transform duration-[320ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform shadow-[8px_0_28px_rgba(12,28,24,0.18)] max-[960px]:w-[min(86vw,300px)]",
+              navOpen && "translate-x-0",
+            )}
+            aria-label="Consumer navigation"
+          >
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <Link
+                  to="/"
+                  className="font-display text-[1.45rem] font-bold tracking-[-0.04em] text-white"
+                  onClick={() => setNavOpen(false)}
+                >
                   KoshalHaat
                 </Link>
                 <button
                   type="button"
-                  className="landing-sidebar-close"
+                  className="inline-flex items-center justify-center w-9 h-9 shrink-0 rounded-[10px] border border-solid border-white/28 bg-white/10 text-[#f7f3ea] cursor-pointer hover:bg-white/20 hover:text-white"
                   aria-label="Hide menu"
                   title="Hide menu"
                   onClick={() => setNavOpen(false)}
@@ -1193,9 +1227,11 @@ export function LandingPage() {
                   <LandingCloseIcon />
                 </button>
               </div>
-              <p className="muted sidebar-tagline">Hyper-local marketplace</p>
+              <p className="text-[rgba(244,250,247,0.72)] mt-[0.2rem] mb-0 text-[0.8rem] font-medium tracking-[0.01em]">
+                Hyper-local marketplace
+              </p>
             </div>
-            <nav className="landing-sidebar-nav">
+            <nav className="flex flex-col gap-1 flex-1">
               {CONSUMER_NAV.map((item) => {
                 const badge =
                   item.to === "/consumer/quotes"
@@ -1209,13 +1245,16 @@ export function LandingPage() {
                     to={item.to}
                     end={item.end}
                     className={({ isActive }) =>
-                      `landing-sidebar-link${isActive ? " active" : ""}`
+                      cn(
+                        "flex items-center justify-between gap-2 px-[0.8rem] py-[0.65rem] rounded-xl text-[rgba(244,250,247,0.88)] no-underline text-[0.95rem] font-medium hover:bg-white/8 hover:text-white",
+                        isActive && "bg-accent/22 text-white",
+                      )
                     }
                     onClick={() => setNavOpen(false)}
                   >
-                    <span className="landing-sidebar-link-label">{item.label}</span>
+                    <span className="min-w-0 flex-1">{item.label}</span>
                     {badge > 0 && (
-                      <span className="nav-badge" aria-label={`${badge} unread`}>
+                      <span className={navBadge} aria-label={`${badge} unread`}>
                         {badge > 99 ? "99+" : badge}
                       </span>
                     )}
@@ -1223,16 +1262,16 @@ export function LandingPage() {
                 );
               })}
             </nav>
-            <div className="landing-sidebar-footer">
-              <div className="sidebar-user">
+            <div className="flex flex-col gap-3 mt-auto pt-3 border-t border-solid border-white/12">
+              <div className="flex flex-col gap-[0.15rem] text-[0.9rem]">
                 <strong>{user.full_name}</strong>
-                <span className="muted">
+                <span className="text-[rgba(244,250,247,0.65)] text-[0.78rem] font-medium">
                   {user.role}
                   {user.phone_number ? ` · ${user.phone_number}` : ""}
                 </span>
               </div>
               <button
-                className="btn secondary sidebar-logout"
+                className={`${btnSecondary} w-full justify-center bg-transparent text-white border-[rgba(234,161,29,0.55)] hover:bg-accent/16 hover:text-white hover:border-[rgba(234,161,29,0.55)]`}
                 type="button"
                 onClick={onLogout}
               >
@@ -1244,18 +1283,30 @@ export function LandingPage() {
       )}
 
       <div
-        className="landing-main"
+        className={cn(
+          "min-w-0 relative transition-[margin-left] duration-[320ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+          signedIn && navOpen && "ml-[var(--landing-sidebar-w)] max-[960px]:ml-0",
+          homeFit && "min-h-dvh flex flex-col",
+        )}
         onClick={() => {
           if (navOpen) setNavOpen(false);
         }}
       >
-        <header className="landing-top landing-top-over">
-          <div className="landing-top-inner">
-            <div className="landing-top-start">
+        <header className="absolute left-0 right-0 z-30 bg-transparent border-b-0">
+          <div
+            className={cn(
+              "w-[min(1120px,calc(100%-2rem))] mx-auto py-4 flex items-center justify-between gap-4 min-w-0",
+              signedIn && "max-[960px]:w-auto max-[960px]:max-w-none max-[960px]:mx-[0.65rem]",
+            )}
+          >
+            <div className="flex items-center gap-[0.65rem] min-w-0">
               {signedIn && (
                 <button
                   type="button"
-                  className="menu-toggle landing-menu-toggle"
+                  className={cn(
+                    "w-[42px] h-[42px] rounded-xl border border-solid border-white/35 bg-white/14 p-[0.65rem] flex-col justify-between cursor-pointer shrink-0",
+                    navOpen ? "hidden max-[960px]:flex" : "flex",
+                  )}
                   aria-label="Open menu"
                   aria-expanded={navOpen}
                   aria-hidden={navOpen ? true : undefined}
@@ -1265,24 +1316,30 @@ export function LandingPage() {
                     setNavOpen(true);
                   }}
                 >
-                  <span />
-                  <span />
-                  <span />
+                  <span className="block h-0.5 w-full bg-white rounded-sm" />
+                  <span className="block h-0.5 w-full bg-white rounded-sm" />
+                  <span className="block h-0.5 w-full bg-white rounded-sm" />
                 </button>
               )}
-              <Link to="/" className="brand landing-brand">
+              <Link
+                to="/"
+                className="font-display text-[1.35rem] font-bold tracking-[-0.04em] text-white [text-shadow:0_1px_8px_rgba(0,0,0,0.25)]"
+              >
                 KoshalHaat
               </Link>
             </div>
-            <nav className="landing-auth">
+            <nav className="flex gap-[0.55rem] flex-wrap items-center">
               {signedIn && user ? (
                 <>
-                  <span className="landing-user-chip" title={user.phone_number || undefined}>
+                  <span
+                    className="max-w-40 overflow-hidden text-ellipsis whitespace-nowrap text-[0.92rem] font-semibold text-[#f7f3ea]"
+                    title={user.phone_number || undefined}
+                  >
                     {user.full_name}
                   </span>
                   <button
                     type="button"
-                    className="topbar-logout landing-logout"
+                    className="inline-flex items-center justify-center w-10 h-10 shrink-0 rounded-xl border border-solid border-[rgba(255,252,247,0.35)] bg-[rgba(255,252,247,0.14)] text-[#f7f3ea] cursor-pointer hover:bg-[rgba(255,252,247,0.24)] hover:border-[rgba(255,252,247,0.55)] hover:text-white"
                     aria-label="Log out"
                     title="Log out"
                     onClick={onLogout}
@@ -1294,12 +1351,12 @@ export function LandingPage() {
                 <>
                   <button
                     type="button"
-                    className="btn secondary landing-btn-ghost"
+                    className={`${btnSecondary} bg-white/14 border-white/35 text-white hover:bg-white/24 hover:text-white hover:border-white/35`}
                     onClick={openLogin}
                   >
                     Log in
                   </button>
-                  <button type="button" className="btn" onClick={openRegister}>
+                  <button type="button" className={btn} onClick={openRegister}>
                     Register
                   </button>
                 </>
@@ -1308,43 +1365,77 @@ export function LandingPage() {
           </div>
         </header>
 
-      <section className="landing-hero-bleed">
-        <div className="landing-hero-media" aria-hidden="true">
-          <MarketplaceScene className="landing-hero-scene marketplace-scene" idPrefix="landing" />
+      <section
+        className={cn(
+          "relative min-h-[clamp(420px,68vh,620px)] grid items-end text-white overflow-visible min-[821px]:items-center min-[821px]:min-h-[clamp(400px,60vh,560px)]",
+          homeFit && "min-h-0 flex-[0_0_auto] items-end min-[821px]:items-end min-[821px]:min-h-0",
+        )}
+      >
+        <div className="absolute inset-0 bg-primary overflow-hidden" aria-hidden="true">
+          <MarketplaceScene className="marketplace-scene absolute inset-0 w-full h-full max-h-none scale-[1.04] animate-landing-scene-drift" idPrefix="landing" />
         </div>
-        <div className="landing-hero-veil" aria-hidden="true" />
-        <div className="landing-hero-inner">
-          <p className="landing-lead">
+        <div
+          className="absolute inset-0 bg-[linear-gradient(105deg,rgba(10,58,52,0.72)_0%,rgba(10,58,52,0.28)_48%,rgba(10,58,52,0.55)_100%),linear-gradient(180deg,rgba(10,58,52,0.2)_0%,rgba(10,58,52,0.08)_42%,rgba(10,58,52,0.78)_100%)]"
+          aria-hidden="true"
+        />
+        <div
+          className={cn(
+            "relative z-[4] w-[min(920px,calc(100%-2rem))] mx-auto pt-[5.5rem] pb-[4.5rem] min-[821px]:pt-[3.25rem] min-[821px]:pb-[3.75rem] min-[821px]:-translate-y-7 max-[820px]:pt-20 max-[820px]:pb-14 max-[560px]:w-[min(920px,calc(100%-1.25rem))]",
+            homeFit &&
+              "pt-[4.35rem] pb-5 translate-y-0 min-[821px]:pt-[4.5rem] min-[821px]:pb-[1.35rem] min-[821px]:translate-y-0 max-[820px]:pt-[4.1rem] max-[820px]:pb-[1.1rem]",
+          )}
+        >
+          <p
+            className={cn(
+              "m-0 mb-[1.35rem] max-w-[34rem] text-[1.08rem] font-medium tracking-[-0.01em] leading-normal text-white/92 min-[821px]:mb-[1.15rem]",
+              homeFit && "mb-[0.65rem] text-base",
+            )}
+          >
             Every Store. Every Service. Nearby.
           </p>
 
-          <div className="landing-search-shell">
-            <div className="landing-search-shell-head">
-              <p className="landing-search-kicker">Find nearby help</p>
-              <p className="landing-search-sub">
+          <div
+            className={cn(
+              "w-full box-border relative z-[5] py-4 px-4 rounded-3xl overflow-visible bg-[linear-gradient(180deg,rgba(255,254,251,0.98),rgba(247,245,239,0.96))] border border-solid border-white/55 shadow-[0_1px_0_rgba(255,255,255,0.7)_inset,0_22px_48px_rgba(12,18,28,0.26)] animate-landing-rise max-[820px]:py-[0.9rem] max-[820px]:px-[0.85rem] max-[820px]:pb-3",
+              homeFit && "py-[0.7rem] px-[0.8rem] pb-2 rounded-[18px]",
+            )}
+          >
+            <div className={cn("mx-[0.35rem] mb-3", homeFit && "mb-[0.4rem] mx-1")}>
+              <p className="m-0 mb-[0.2rem] text-[0.72rem] font-bold tracking-[0.08em] uppercase text-primary/85">
+                Find nearby help
+              </p>
+              <p className={cn("m-0 text-[0.92rem] leading-[1.45] text-[rgba(29,36,43,0.58)]", homeFit && "hidden")}>
                 City, area, then category.
               </p>
             </div>
             <form
-              className="landing-booking-pad landing-booking-pad-3"
+              className="flex flex-col flex-nowrap gap-0 w-full relative overflow-visible bg-card rounded-2xl border border-solid border-[rgba(29,36,43,0.08)] p-[0.35rem] text-ink max-[820px]:p-[0.45rem]"
               onSubmit={onSearch}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !canSearch) e.preventDefault();
               }}
             >
-              <div className="landing-pad-row">
-                <div className="landing-pad-field landing-pad-city">
-                  <label htmlFor="landing-city-field">City</label>
-                  <div className="landing-pad-city-row">
+              <div
+                className={cn(
+                  "flex items-stretch min-w-0",
+                  homeFit ? "max-sm:flex-col" : "max-[820px]:flex-col",
+                )}
+              >
+                <div className={cn("relative min-w-0 flex-[1_1_50%] z-5 flex flex-col justify-center gap-[0.2rem] py-[0.55rem] px-4 overflow-visible", homeFit && "py-[0.4rem] px-[0.8rem]", "has-[.z-20]:z-20")}>
+                  <label htmlFor="landing-city-field" className="text-[0.72rem] font-bold tracking-[0.04em] uppercase text-muted">
+                    City
+                  </label>
+                  <div className="flex items-center gap-[0.35rem]">
                     <CitySearchBox
                       id="landing-city-field"
                       variant="pad"
                       value={selectedCity?.name || ""}
                       onChange={onCitySelectChange}
                       placeholder="Select city…"
+                      className="flex-1 min-w-0"
                     />
                     <button
-                      className="icon-btn landing-area-icon-btn"
+                      className={`${iconBtn} w-[1.85rem] h-[1.85rem] rounded-lg shrink-0`}
                       type="button"
                       title="Detect my location"
                       aria-label="Detect my location"
@@ -1358,9 +1449,19 @@ export function LandingPage() {
                     </button>
                   </div>
                 </div>
-                <div className="landing-pad-divider" aria-hidden="true" />
-                <div className="landing-pad-field landing-pad-area">
-                  <label htmlFor="landing-area-field">Area / pincode</label>
+                <div
+                  className={cn(
+                    "w-px bg-line my-[0.55rem] self-stretch",
+                    homeFit
+                      ? "max-sm:w-auto max-sm:h-px max-sm:my-[0.15rem] max-sm:mx-[0.35rem]"
+                      : "max-[820px]:w-auto max-[820px]:h-px max-[820px]:my-[0.15rem] max-[820px]:mx-[0.35rem]",
+                  )}
+                  aria-hidden="true"
+                />
+                <div className={cn("relative min-w-0 flex-[1_1_50%] z-[4] flex flex-col justify-center gap-[0.2rem] py-[0.55rem] px-4 overflow-visible", homeFit && "py-[0.4rem] px-[0.8rem]", "has-[.z-20]:z-20")}>
+                  <label htmlFor="landing-area-field" className="text-[0.72rem] font-bold tracking-[0.04em] uppercase text-muted">
+                    Area / pincode
+                  </label>
                   <AreaSearchBox
                     id="landing-area-field"
                     city={selectedCity?.name || null}
@@ -1371,9 +1472,16 @@ export function LandingPage() {
                   />
                 </div>
               </div>
-              <div className="landing-pad-row landing-pad-row-need">
-                <div className="landing-pad-field landing-pad-grow">
-                  <label htmlFor="landing-search-q">Category / need</label>
+              <div
+                className={cn(
+                  "flex items-stretch min-w-0 border-t border-solid border-line",
+                  homeFit ? "max-[560px]:flex-wrap" : "max-[820px]:flex-col",
+                )}
+              >
+                <div className="flex-1 min-w-0 z-3 flex flex-col justify-center gap-[0.2rem] py-[0.55rem] px-4 overflow-visible has-[.z-20]:z-20">
+                  <label htmlFor="landing-search-q" className="text-[0.72rem] font-bold tracking-[0.04em] uppercase text-muted">
+                    Category / need
+                  </label>
                   <CategoryNeedSearch
                     id="landing-search-q"
                     tree={tree}
@@ -1392,7 +1500,13 @@ export function LandingPage() {
                   />
                 </div>
                 <button
-                  className="btn landing-pad-submit"
+                  className={cn(
+                    btn,
+                    "self-center m-[0.3rem_0.3rem_0.3rem_0.4rem] rounded-xl py-[0.9rem] px-[1.4rem] whitespace-nowrap min-w-[7.5rem] disabled:opacity-45 disabled:cursor-not-allowed disabled:bg-[#9aa8a3] disabled:text-white disabled:shadow-none",
+                    homeFit
+                      ? "py-[0.7rem] px-[1.15rem] max-[560px]:w-full max-[560px]:mt-[0.2rem] max-[560px]:mx-0"
+                      : "max-[820px]:w-full max-[820px]:mt-[0.35rem] max-[820px]:mx-0",
+                  )}
                   type="submit"
                   disabled={!canSearch || searchBusy}
                   title={
@@ -1405,7 +1519,13 @@ export function LandingPage() {
                 </button>
               </div>
             </form>
-            <p className="landing-search-status" aria-live="polite">
+            <p
+              className={cn(
+                "mt-[0.7rem] mx-[0.4rem] mb-[0.15rem] text-[0.82rem] text-[rgba(29,36,43,0.55)]",
+                homeFit && "mt-[0.35rem] mx-[0.3rem] mb-0 text-[0.78rem]",
+              )}
+              aria-live="polite"
+            >
               {loc.status === "locating"
                 ? "Detecting your area…"
                 : selectedArea && selectedCity
@@ -1419,33 +1539,63 @@ export function LandingPage() {
                         : "Choose a city and area to begin"}
             </p>
           </div>
-          <div className="landing-broadcast-card">
+          <div
+            className={cn(
+              "flex items-center justify-between gap-x-[1.15rem] gap-y-[0.85rem] w-full box-border mt-3 py-[0.85rem] px-4 rounded-2xl bg-[rgba(255,254,251,0.95)] border border-solid border-white/50 shadow-[0_10px_24px_rgba(12,18,28,0.16)] text-ink",
+              homeFit
+                ? "mt-2 py-2 px-[0.8rem] max-[560px]:flex-col max-[560px]:items-stretch"
+                : "max-[820px]:flex-col max-[820px]:items-stretch max-[820px]:py-[0.9rem] max-[820px]:px-[0.9rem]",
+            )}
+          >
             <div>
-              <p className="landing-broadcast-kicker">Can’t find the right shop?</p>
-              <p className="landing-broadcast-copy" id="landing-broadcast-copy">
+              <p className={cn("m-0 text-[0.98rem] font-bold tracking-[-0.01em] text-ink", homeFit && "text-[0.9rem]")}>
+                Can’t find the right shop?
+              </p>
+              <p
+                className={cn(
+                  "mt-[0.2rem] mb-0 text-[0.84rem] leading-snug text-[rgba(29,36,43,0.62)]",
+                  homeFit && "hidden",
+                )}
+                id="landing-broadcast-copy"
+              >
                 Broadcast your need if you don’t see the right shop.
               </p>
             </div>
             <button
               type="button"
-              className="btn landing-broadcast-btn"
+              className={cn(
+                btn,
+                "shrink-0 whitespace-nowrap rounded-xl py-3 px-[1.15rem]",
+                homeFit
+                  ? "py-2 px-[0.9rem] max-[560px]:w-full max-[560px]:justify-center"
+                  : "max-[820px]:w-full max-[820px]:justify-center",
+              )}
               onClick={onBroadcastNearby}
               aria-describedby="landing-broadcast-copy"
             >
               Ask nearby
             </button>
           </div>
-          {error && <p className="error landing-hero-error">{error}</p>}
+          {error && <p className={`${errorText} mt-3 mb-0`}>{error}</p>}
         </div>
       </section>
 
-      <div className="landing-sheet">
+      <div
+        className={cn(
+          "relative z-[2] -mt-6 pt-[2.35rem] pb-4 bg-[radial-gradient(ellipse_70%_40%_at_50%_0%,rgba(15,76,67,0.05),transparent_55%),var(--color-canvas)] rounded-t-[28px] shadow-[0_-12px_40px_rgba(29,36,43,0.08)]",
+          homeFit && "flex-1 flex flex-col -mt-4 pt-[1.1rem] pb-[0.4rem] min-h-0",
+        )}
+      >
         {searchDone && (
-          <section className="landing-section landing-section-pad landing-results" ref={searchRef} id="search-results">
-            <div className="landing-section-head landing-search-head">
+          <section
+            className="w-[min(920px,calc(100%-2rem))] mx-auto mb-10 box-border max-[560px]:w-[min(920px,calc(100%-1.25rem))]"
+            ref={searchRef}
+            id="search-results"
+          >
+            <div className="flex items-end justify-between gap-4 flex-wrap pb-[0.85rem] border-b border-solid border-[rgba(29,36,43,0.07)] mb-[1.15rem]">
               <div>
-                <p className="landing-section-kicker">Results</p>
-                <h2>
+                <p className="m-0 mb-[0.2rem] text-[0.72rem] font-bold tracking-[0.08em] uppercase text-primary/78">Results</p>
+                <h2 className="m-0 mb-[0.35rem] font-display text-[clamp(1.45rem,2.4vw,1.75rem)] font-bold tracking-[-0.03em] text-brand-dark">
                   {searchQ.trim()
                     ? `Matches for “${searchQ.trim()}”`
                     : selectedArea && selectedCity
@@ -1456,14 +1606,14 @@ export function LandingPage() {
                           ? `Providers in ${selectedCity.name}`
                           : "Providers near you"}
                 </h2>
-                <p className="landing-section-lead">{matchHint}</p>
+                <p className="m-0 text-[0.92rem] leading-[1.45] text-[rgba(29,36,43,0.62)]">{matchHint}</p>
                 {searchCategories.length > 0 && (
-                  <div className="landing-search-cats" aria-label="Matching categories">
+                  <div className="flex flex-wrap gap-[0.4rem] mt-3" aria-label="Matching categories">
                     {searchCategories.slice(0, 8).map((cat) => (
                       <button
                         key={cat.id}
                         type="button"
-                        className="landing-search-cat"
+                        className="border border-solid border-primary/18 bg-primary/6 text-brand rounded-full py-[0.28rem] px-[0.7rem] text-[0.78rem] font-semibold cursor-pointer hover:bg-primary/12"
                         onClick={() => {
                           const parent = tree.find((p) => p.id === cat.id);
                           const subParent = tree.find((p) =>
@@ -1479,22 +1629,22 @@ export function LandingPage() {
                   </div>
                 )}
                 {searchProviders.length > 0 && (
-                  <p className="muted landing-search-page-meta">
+                  <p className={`${muted} mt-[0.35rem] mb-0 text-[0.86rem]`}>
                     {searchProviders.length} provider{searchProviders.length === 1 ? "" : "s"} · page{" "}
                     {currentSearchPage} of {searchPageCount}
                   </p>
                 )}
               </div>
               {searchProviders.length > 0 && (
-                <div className="landing-search-actions">
-                  <p className="landing-search-selected">
+                <div className="flex flex-wrap items-center justify-end gap-x-[0.85rem] gap-y-[0.65rem] py-[0.65rem] px-[0.85rem] rounded-[14px] bg-primary/6 border border-solid border-primary/12 max-[820px]:items-stretch max-[820px]:w-full max-[820px]:flex-col">
+                  <p className="m-0 text-[0.88rem] font-semibold text-brand-dark">
                     {selectedSearchIds.length === 0
                       ? "Select providers to request"
                       : `${selectedSearchIds.length} selected`}
                   </p>
                   <button
                     type="button"
-                    className="btn"
+                    className={`${btn} max-[820px]:w-full`}
                     onClick={goSendRequest}
                     disabled={selectedSearchIds.length === 0}
                   >
@@ -1503,17 +1653,17 @@ export function LandingPage() {
                 </div>
               )}
             </div>
-            {searchActionError && <p className="error">{searchActionError}</p>}
+            {searchActionError && <p className={errorText}>{searchActionError}</p>}
             {chatError && (
-              <p className="error" onClick={() => setChatError("")}>
+              <p className={errorText} onClick={() => setChatError("")}>
                 {chatError}
               </p>
             )}
-            <div className="landing-provider-list">
+            <div className="grid gap-3 animate-landing-rise">
               {searchProviders.length === 0 ? (
-                <div className="landing-empty">
-                  <strong>No providers found</strong>
-                  <p>
+                <div className="py-7 px-5 text-center rounded-2xl border border-dashed border-[rgba(29,36,43,0.14)] bg-[rgba(255,254,251,0.7)]">
+                  <strong className="block mb-[0.35rem] text-[1.02rem] text-ink">No providers found</strong>
+                  <p className="m-0 text-[0.92rem] text-[rgba(29,36,43,0.58)] leading-[1.45]">
                     Try another keyword, or browse popular categories below after a new search.
                   </p>
                 </div>
@@ -1536,10 +1686,10 @@ export function LandingPage() {
               )}
             </div>
             {searchProviders.length > SEARCH_PAGE_SIZE && (
-              <nav className="landing-search-pager" aria-label="Search results pages">
+              <nav className="flex items-center justify-center gap-[0.65rem] mt-[1.15rem] flex-wrap" aria-label="Search results pages">
                 <button
                   type="button"
-                  className="btn secondary"
+                  className={btnSecondary}
                   disabled={currentSearchPage <= 1}
                   onClick={() => {
                     setSearchPage((p) => Math.max(1, p - 1));
@@ -1548,12 +1698,15 @@ export function LandingPage() {
                 >
                   Previous
                 </button>
-                <div className="landing-search-pager-pages">
+                <div className="flex items-center gap-[0.3rem]">
                   {Array.from({ length: searchPageCount }, (_, i) => i + 1).map((page) => (
                     <button
                       key={page}
                       type="button"
-                      className={`landing-search-pager-page${page === currentSearchPage ? " is-active" : ""}`}
+                      className={cn(
+                        "min-w-[2.15rem] h-[2.15rem] px-[0.45rem] rounded-[10px] border border-solid border-[rgba(29,36,43,0.12)] bg-[rgba(255,254,251,0.95)] text-ink font-inherit text-[0.88rem] font-semibold cursor-pointer hover:border-primary/28",
+                        page === currentSearchPage && "bg-brand border-brand text-on-brand hover:border-brand",
+                      )}
                       aria-current={page === currentSearchPage ? "page" : undefined}
                       onClick={() => {
                         setSearchPage(page);
@@ -1566,7 +1719,7 @@ export function LandingPage() {
                 </div>
                 <button
                   type="button"
-                  className="btn secondary"
+                  className={btnSecondary}
                   disabled={currentSearchPage >= searchPageCount}
                   onClick={() => {
                     setSearchPage((p) => Math.min(searchPageCount, p + 1));
@@ -1581,16 +1734,34 @@ export function LandingPage() {
         )}
 
         {!searchDone && (
-          <section className="landing-section landing-section-pad landing-categories" id="categories">
-            <div className="landing-section-head landing-cat-wrap-head">
+          <section
+            className={cn(
+              "w-[min(920px,calc(100%-2rem))] mx-auto mb-10 box-border max-[560px]:w-[min(920px,calc(100%-1.25rem))]",
+              homeFit && "flex flex-col flex-1 min-h-0 mb-2",
+            )}
+            id="categories"
+          >
+            <div
+              className={cn(
+                "flex items-end justify-between gap-4 pb-[0.85rem] border-b border-solid border-[rgba(29,36,43,0.07)] mb-[1.15rem] max-[820px]:items-start max-[820px]:flex-wrap",
+                homeFit && "pb-[0.4rem] mb-[0.55rem]",
+              )}
+            >
               <div>
-                <p className="landing-section-kicker">{browsing ? "Category" : "Browse"}</p>
-                <h2>
+                <p className="m-0 mb-[0.2rem] text-[0.72rem] font-bold tracking-[0.08em] uppercase text-primary/78">
+                  {browsing ? "Category" : "Browse"}
+                </p>
+                <h2
+                  className={cn(
+                    "m-0 mb-[0.35rem] font-display text-[clamp(1.45rem,2.4vw,1.75rem)] font-bold tracking-[-0.03em] text-brand-dark",
+                    homeFit && "text-[1.28rem] mb-[0.12rem]",
+                  )}
+                >
                   {browsing
                     ? selectedParentCat?.name || selected?.name || "Category"
                     : "Popular categories"}
                 </h2>
-                <p className="landing-section-lead">
+                <p className={cn("m-0 text-[0.92rem] leading-[1.45] text-[rgba(29,36,43,0.62)]", homeFit && "text-[0.84rem]")}>
                   {browsing
                     ? hasLocation
                       ? `${matchHint}${
@@ -1607,17 +1778,13 @@ export function LandingPage() {
                 </p>
               </div>
               {browsing ? (
-                <button
-                  type="button"
-                  className="btn secondary landing-browse-back"
-                  onClick={clearCategoryBrowse}
-                >
+                <button type="button" className={`${btnSecondary} shrink-0 whitespace-nowrap`} onClick={clearCategoryBrowse}>
                   All categories
                 </button>
               ) : popularTree.length > POPULAR_PREVIEW ? (
                 <button
                   type="button"
-                  className="landing-cat-more"
+                  className="shrink-0 mb-[0.15rem] py-[0.35rem] px-[0.15rem] border-0 bg-transparent text-brand font-inherit text-[0.88rem] font-bold cursor-pointer hover:text-brand-dark hover:underline"
                   onClick={() => setCatsExpanded((v) => !v)}
                 >
                   {catsExpanded ? "Show less" : `See all (${popularTree.length})`}
@@ -1625,9 +1792,15 @@ export function LandingPage() {
               ) : null}
             </div>
 
-            {tree.length === 0 && <p className="muted">Loading categories…</p>}
+            {tree.length === 0 && <p className={muted}>Loading categories…</p>}
             <div
-              className={`landing-cat-wrap${browsing ? " is-collapsed" : ""}`}
+              className={cn(
+                browsing
+                  ? "flex flex-wrap gap-[0.65rem]"
+                  : homeFit
+                    ? "grid grid-cols-[repeat(auto-fill,minmax(9.75rem,1fr))] gap-2 flex-1 min-h-0 overflow-y-auto content-start"
+                    : "grid grid-cols-[repeat(auto-fill,minmax(10.75rem,1fr))] gap-[0.65rem] max-[900px]:grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))]",
+              )}
               role="list"
               aria-label={browsing ? "Selected category" : "Popular categories"}
             >
@@ -1649,34 +1822,58 @@ export function LandingPage() {
                   <button
                     key={cat.id}
                     type="button"
-                    className={`landing-cat${isActive ? " active" : ""}`}
+                    className={cn(
+                      "flex flex-row items-center gap-3 text-left min-h-[4.4rem] min-w-0 py-[0.8rem] px-[0.9rem] rounded-2xl border border-solid border-[rgba(29,36,43,0.08)] bg-[rgba(255,254,251,0.92)] cursor-pointer transition-[border-color,transform,background,box-shadow] hover:border-primary/35 hover:bg-card hover:-translate-y-0.5 hover:shadow-[0_10px_24px_rgba(15,76,67,0.08)] focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-2",
+                      browsing && "flex-[0_1_17rem] max-w-80",
+                      homeFit && "min-h-14 py-2 px-[0.65rem] gap-[0.55rem]",
+                      isActive && "border-brand bg-primary/6 hover:border-brand",
+                    )}
                     role="listitem"
                     aria-pressed={isActive}
                     onClick={() => onSelectCategory(cat)}
                   >
-                    <span className="landing-cat-mark" aria-hidden="true">
+                    <span
+                      className={cn(
+                        "grid place-items-center shrink-0 w-[2.4rem] h-[2.4rem] rounded-xl bg-[linear-gradient(145deg,rgba(26,107,95,0.14),rgba(15,76,67,0.1))] text-brand-dark font-bold text-[0.95rem]",
+                        homeFit && "w-8 h-8 rounded-[10px]",
+                      )}
+                      aria-hidden="true"
+                    >
                       <CategoryChipIcon name={cat.name} slug={cat.slug} />
                     </span>
-                    <span className="landing-cat-copy">
-                      <strong>{cat.name}</strong>
-                      <span className="landing-cat-meta">{meta}</span>
+                    <span className="flex flex-col gap-[0.15rem] min-w-0">
+                      <strong className="text-[0.98rem] font-semibold tracking-[-0.02em] text-ink [overflow-wrap:anywhere]">
+                        {cat.name}
+                      </strong>
+                      <span className="text-[0.8rem] text-[rgba(29,36,43,0.55)]">{meta}</span>
                     </span>
                   </button>
                 );
               })}
             </div>
             {selectedParentCat && rankedSubcats.length > 0 && (
-              <div className="landing-cat-subs" role="tablist" aria-label={`${selectedParentCat.name} types`}>
+              <div
+                className={cn(
+                  "flex flex-wrap items-stretch gap-0 mt-[0.55rem] border-b border-solid border-[rgba(29,36,43,0.1)]",
+                  homeFit && "mt-[0.35rem] shrink-0",
+                )}
+                role="tablist"
+                aria-label={`${selectedParentCat.name} types`}
+              >
                 <button
                   type="button"
                   role="tab"
-                  className={`landing-cat-sub${selected?.id === selectedParentCat.id ? " is-active" : ""}`}
+                  className={cn(
+                    "inline-flex items-center gap-[0.3rem] m-0 mb-[-1px] pt-[0.7rem] px-[0.85rem] pb-[0.6rem] min-h-10 border-0 border-b-2 border-solid border-transparent rounded-none bg-transparent text-[rgba(29,36,43,0.62)] font-inherit text-[0.9rem] font-medium leading-tight cursor-pointer whitespace-nowrap hover:text-ink",
+                    homeFit && "py-[0.55rem] px-[0.7rem] pb-[0.45rem] min-h-[2.4rem] text-[0.86rem]",
+                    selected?.id === selectedParentCat.id && "text-brand-dark font-bold border-b-brand",
+                  )}
                   aria-selected={selected?.id === selectedParentCat.id}
                   onClick={() => onSelectCategory(selectedParentCat)}
                 >
                   All {selectedParentCat.name}
                   {hasLocation && countsReady ? (
-                    <span className="landing-cat-sub-count">
+                    <span className="text-[0.78rem] font-medium text-[rgba(29,36,43,0.45)]">
                       · {nearbyCounts[selectedParentCat.id] || 0}
                     </span>
                   ) : null}
@@ -1686,22 +1883,31 @@ export function LandingPage() {
                     key={sub.id}
                     type="button"
                     role="tab"
-                    className={`landing-cat-sub${selected?.id === sub.id ? " is-active" : ""}`}
+                    className={cn(
+                      "inline-flex items-center gap-[0.3rem] m-0 mb-[-1px] pt-[0.7rem] px-[0.85rem] pb-[0.6rem] min-h-10 border-0 border-b-2 border-solid border-transparent rounded-none bg-transparent text-[rgba(29,36,43,0.62)] font-inherit text-[0.9rem] font-medium leading-tight cursor-pointer whitespace-nowrap hover:text-ink",
+                      homeFit && "py-[0.55rem] px-[0.7rem] pb-[0.45rem] min-h-[2.4rem] text-[0.86rem]",
+                      selected?.id === sub.id && "text-brand-dark font-bold border-b-brand",
+                    )}
                     aria-selected={selected?.id === sub.id}
                     title={sub.description || undefined}
                     onClick={() => onSelectCategory(sub, selectedParentCat)}
                   >
                     {sub.name}
                     {hasLocation && countsReady ? (
-                      <span className="landing-cat-sub-count">· {nearbyCounts[sub.id] || 0}</span>
+                      <span className="text-[0.78rem] font-medium text-[rgba(29,36,43,0.45)]">
+                        · {nearbyCounts[sub.id] || 0}
+                      </span>
                     ) : null}
                   </button>
                 ))}
                 {overflowSubcats.length > 0 && (
-                  <div className="landing-cat-sub-more-wrap" ref={subMoreRef}>
+                  <div className="relative shrink-0" ref={subMoreRef}>
                     <button
                       type="button"
-                      className={`landing-cat-sub landing-cat-sub-more${subMoreOpen ? " is-open" : ""}`}
+                      className={cn(
+                        "inline-flex items-center gap-[0.3rem] m-0 mb-[-1px] pt-[0.7rem] px-[0.85rem] pb-[0.6rem] min-h-10 border-0 border-b-2 border-solid border-transparent rounded-none bg-transparent text-brand font-inherit text-[0.9rem] font-bold leading-tight cursor-pointer whitespace-nowrap hover:text-brand-dark",
+                        subMoreOpen && "text-brand-dark",
+                      )}
                       aria-expanded={subMoreOpen}
                       aria-haspopup="listbox"
                       aria-controls="landing-cat-sub-more-list"
@@ -1712,7 +1918,7 @@ export function LandingPage() {
                     {subMoreOpen && (
                       <ul
                         id="landing-cat-sub-more-list"
-                        className="landing-cat-sub-menu"
+                        className="absolute top-[calc(100%+0.35rem)] right-0 z-[12] min-w-56 max-w-[min(18rem,80vw)] max-h-56 overflow-auto m-0 p-[0.35rem] list-none rounded-xl border border-solid border-[rgba(29,36,43,0.1)] bg-card shadow-[0_14px_32px_rgba(12,18,28,0.16)]"
                         role="listbox"
                         aria-label="More types"
                       >
@@ -1720,7 +1926,10 @@ export function LandingPage() {
                           <li key={sub.id} role="option" aria-selected={selected?.id === sub.id}>
                             <button
                               type="button"
-                              className={selected?.id === sub.id ? "is-active" : ""}
+                              className={cn(
+                                "flex items-center justify-between gap-3 w-full m-0 py-[0.55rem] px-[0.7rem] border-0 rounded-lg bg-transparent text-ink font-inherit text-[0.9rem] font-semibold text-left cursor-pointer hover:bg-primary/8",
+                                selected?.id === sub.id && "bg-primary/8 text-brand-dark",
+                              )}
                               title={sub.description || undefined}
                               onClick={() => {
                                 onSelectCategory(sub, selectedParentCat);
@@ -1729,7 +1938,9 @@ export function LandingPage() {
                             >
                               <span>{sub.name}</span>
                               {hasLocation && countsReady ? (
-                                <span className="landing-cat-sub-count">{nearbyCounts[sub.id] || 0}</span>
+                                <span className="text-[0.78rem] text-[rgba(29,36,43,0.45)]">
+                                  {nearbyCounts[sub.id] || 0}
+                                </span>
                               ) : null}
                             </button>
                           </li>
@@ -1742,36 +1953,36 @@ export function LandingPage() {
             )}
 
             {browsing && selected && (
-              <div className="landing-cat-results" ref={browseRef} id="category-browse">
+              <div className="mt-[1.15rem]" ref={browseRef} id="category-browse">
                 {selectedParentCat && selected.id !== selectedParentCat.id && (
-                  <p className="landing-cat-results-label">
+                  <p className="m-0 mb-3 text-[0.9rem] text-[rgba(29,36,43,0.62)]">
                     Showing <strong>{selected.name}</strong>
                   </p>
                 )}
-                {error && <p className="error">{error}</p>}
+                {error && <p className={errorText}>{error}</p>}
                 {!hasLocation && (
-                  <p className="muted">
+                  <p className={muted}>
                     Choose a city or allow location above to see providers in this category.
                   </p>
                 )}
                 {hasLocation && categoryBusy && !zeroNearbySelected && (
-                  <p className="muted">Loading providers…</p>
+                  <p className={muted}>Loading providers…</p>
                 )}
                 {showBroadcastEmpty && (
-                  <div className="landing-empty landing-empty-broadcast">
-                    <strong>No verified providers nearby</strong>
-                    <p>
+                  <div className="py-7 px-5 text-left rounded-2xl border border-solid border-primary/14 bg-primary/4">
+                    <strong className="block mb-[0.35rem] text-[1.02rem] text-ink">No verified providers nearby</strong>
+                    <p className="m-0 mb-[0.85rem] text-[0.92rem] text-[rgba(29,36,43,0.58)] leading-[1.45]">
                       Nobody listed for {selected.name}
                       {selectedCity ? ` in ${selectedArea?.name || selectedCity.name}` : ""}. Broadcast
                       this need and nearby providers can send quotes.
                     </p>
-                    <button type="button" className="btn" onClick={onBroadcastNearby}>
+                    <button type="button" className={btn} onClick={onBroadcastNearby}>
                       Ask nearby
                     </button>
                   </div>
                 )}
                 {hasLocation && !showBroadcastEmpty && !categoryBusy && (
-                  <div className="landing-provider-list">
+                  <div className="grid gap-3">
                     {categoryProviders.map((p) => (
                       <ProviderCard
                         key={p.user_id}
@@ -1789,9 +2000,14 @@ export function LandingPage() {
           </section>
         )}
 
-        <footer className="landing-footer">
+        <footer
+          className={cn(
+            "w-[min(1120px,calc(100%-2rem))] mx-auto pt-6 pb-10 flex flex-wrap gap-3 items-baseline justify-between border-t border-solid border-line",
+            homeFit && "mt-auto pt-[0.55rem] pb-[0.85rem]",
+          )}
+        >
           <strong>KoshalHaat</strong>
-          <span className="muted">Verified providers · nearby matching</span>
+          <span className={muted}>Verified providers · nearby matching</span>
         </footer>
       </div>
 
@@ -1820,25 +2036,27 @@ export function LandingPage() {
       )}
 
       {cityPopupOpen && (
-        <div className="modal-backdrop landing-city-popup-backdrop" role="presentation">
+        <div className={`${modalBackdrop} z-[120]`} role="presentation">
           <div
-            className="modal-dialog card landing-city-popup"
+            className={`${card} w-[min(420px,100%)] text-left py-[1.35rem] px-[1.35rem] pb-[1.2rem] overflow-visible shadow-[0_18px_40px_rgba(15,23,42,0.2)]`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="landing-city-popup-title"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="dash-eyebrow">Service area</p>
-            <h3 id="landing-city-popup-title">
+            <p className="m-0 mb-1 text-[0.72rem] font-bold tracking-[0.08em] uppercase text-brand">Service area</p>
+            <h3 id="landing-city-popup-title" className="m-0 mb-[0.45rem] tracking-[-0.02em]">
               {cityPopupReason === "out_of_area" ? "Choose a supported city" : "Select your city"}
             </h3>
-            <p className="muted landing-city-popup-copy">
+            <p className={`${muted} m-0 mb-4 leading-[1.45]`}>
               {cityPopupReason === "out_of_area"
                 ? "Your current location is outside our service cities. Pick one of the cities below to continue."
                 : "Location isn’t available. Choose a city to browse nearby providers."}
             </p>
-            <div className="field">
-              <label htmlFor="landing-city-popup-select">City</label>
+            <div className={`${field} mb-4`}>
+              <label className={fieldLabel} htmlFor="landing-city-popup-select">
+                City
+              </label>
               <CitySearchBox
                 id="landing-city-popup-select"
                 value={cityDraft}
@@ -1847,10 +2065,10 @@ export function LandingPage() {
                 autoFocus
               />
             </div>
-            <div className="landing-city-popup-actions">
+            <div className="flex flex-wrap justify-end gap-[0.55rem]">
               {selectedCity && (
                 <button
-                  className="btn secondary"
+                  className={btnSecondary}
                   type="button"
                   onClick={() => setCityPopupReason(null)}
                 >
@@ -1858,7 +2076,7 @@ export function LandingPage() {
                 </button>
               )}
               <button
-                className="btn"
+                className={btn}
                 type="button"
                 disabled={!cityDraft}
                 onClick={confirmCityPopup}
@@ -1872,24 +2090,24 @@ export function LandingPage() {
 
       {categoryMismatchPopup && (
         <div
-          className="modal-backdrop"
+          className={modalBackdrop}
           role="presentation"
           onClick={() => setCategoryMismatchPopup(false)}
         >
           <div
-            className="modal-dialog card"
+            className={`${card} w-[min(400px,100%)] text-center shadow-[0_18px_40px_rgba(15,23,42,0.2)]`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="landing-category-mismatch-title"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 id="landing-category-mismatch-title" style={{ margin: "0 0 0.5rem" }}>
+            <h3 id="landing-category-mismatch-title" className="m-0 mb-2">
               Same category required
             </h3>
-            <p className="muted" style={{ margin: "0 0 1rem" }}>
+            <p className={`${muted} m-0 mb-4`}>
               {SAME_CATEGORY_REQUEST_MESSAGE}
             </p>
-            <button className="btn" type="button" onClick={() => setCategoryMismatchPopup(false)}>
+            <button className={btn} type="button" onClick={() => setCategoryMismatchPopup(false)}>
               OK
             </button>
           </div>
@@ -1932,7 +2150,6 @@ function ProviderCard({
   onChat?: () => void;
 }) {
   const kind = p.offer_kind || "BOTH";
-  const kindClass = offerKindClass(kind);
   const blurb = p.offerings_detail || p.description;
   const initial = (p.business_name || "?").trim().slice(0, 1).toUpperCase();
   const hours =
@@ -1947,16 +2164,38 @@ function ProviderCard({
     ? parentCategoryTags(p.categories)
     : p.categories || [];
 
+  const kindPill =
+    kind === "SERVICE" ? pillKindService : kind === "PRODUCT" ? pillKindProduct : pillKindBoth;
+  const accent =
+    kind === "SERVICE" ? "bg-blue-600" : kind === "PRODUCT" ? "bg-accent" : "bg-primary";
+  const mark =
+    kind === "SERVICE"
+      ? "bg-blue-600/12 text-blue-700"
+      : kind === "PRODUCT"
+        ? "bg-accent/18 text-[#9a6a0a]"
+        : "bg-primary/14 text-primary";
+  const cardBg =
+    kind === "SERVICE"
+      ? "bg-[linear-gradient(180deg,rgba(37,99,235,0.04),var(--color-card)_42%)]"
+      : kind === "PRODUCT"
+        ? "bg-[linear-gradient(180deg,rgba(234,161,29,0.08),var(--color-card)_42%)]"
+        : "bg-[linear-gradient(180deg,rgba(15,76,67,0.05),var(--color-card)_42%)]";
+
   return (
     <article
-      className={`landing-provider ${kindClass}${selected ? " is-selected" : ""}`}
+      className={cn(
+        "relative grid grid-cols-[4px_1fr] overflow-hidden rounded-2xl border border-solid border-[rgba(29,36,43,0.08)] shadow-none transition-[border-color,box-shadow] hover:border-primary/22 hover:shadow-[0_10px_24px_rgba(28,42,36,0.06)]",
+        cardBg,
+        selected && "border-primary/45 shadow-[0_0_0_1px_rgba(15,76,67,0.25),0_12px_28px_rgba(15,76,67,0.1)]",
+      )}
     >
-      <div className="landing-provider-accent" aria-hidden="true" />
-      <div className="landing-provider-body">
-        <div className="landing-provider-top">
+      <div className={accent} aria-hidden="true" />
+      <div className="flex flex-col gap-[0.7rem] pt-4 pr-[1.05rem] pb-4 pl-4 min-w-0">
+        <div className="flex gap-[0.85rem] items-start min-w-0">
           {selectable && (
-            <label className="landing-provider-select">
+            <label className="grid place-items-center shrink-0 mt-[0.35rem] cursor-pointer">
               <input
+                className="w-[1.15rem] h-[1.15rem] accent-brand cursor-pointer"
                 type="checkbox"
                 checked={selected}
                 onChange={() => onToggleSelect?.()}
@@ -1964,28 +2203,39 @@ function ProviderCard({
               />
             </label>
           )}
-          <span className={`landing-provider-mark ${kindClass}`} aria-hidden="true">
+          <span
+            className={cn(
+              "shrink-0 grid place-items-center w-[2.65rem] h-[2.65rem] rounded-[14px] font-bold text-[1.05rem]",
+              mark,
+            )}
+            aria-hidden="true"
+          >
             {initial}
           </span>
-          <div className="landing-provider-identity">
-            <div className="landing-provider-title-row">
-              <strong className="landing-provider-name">
-                <Link to={providerPublicPath(p)}>{p.business_name}</Link>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-start justify-between gap-[0.65rem]">
+              <strong className="m-0 text-[1.05rem] leading-tight text-brand-dark">
+                <Link className="text-inherit no-underline hover:text-brand" to={providerPublicPath(p)}>
+                  {p.business_name}
+                </Link>
               </strong>
-              <span className={`pill ${online ? "online" : "offline"}`}>
+              <span className={online ? pillOnline : pillOffline}>
                 {online ? "Online" : "Offline"}
               </span>
             </div>
-            {p.full_name && <p className="landing-provider-owner muted">{p.full_name}</p>}
-            <div className="landing-provider-chips">
-              <span className={`pill ${kindClass}`}>{offerKindLabel(kind)}</span>
+            {p.full_name && <p className={`${muted} mt-[0.15rem] mb-0 text-[0.88rem]`}>{p.full_name}</p>}
+            <div className="flex flex-wrap gap-[0.35rem] mt-[0.55rem]">
+              <span className={kindPill}>{offerKindLabel(kind)}</span>
               {distanceLabel && (
-                <span className="landing-provider-chip landing-provider-distance">
+                <span className="inline-flex items-center max-w-full py-[0.2rem] px-[0.65rem] rounded-full border border-solid border-primary/20 bg-primary/8 text-primary text-[0.78rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
                   {distanceLabel} away
                 </span>
               )}
               {categoryTags.slice(0, 3).map((cat) => (
-                <span key={cat} className="landing-provider-chip">
+                <span
+                  key={cat}
+                  className="inline-flex items-center max-w-full py-[0.2rem] px-[0.65rem] rounded-full border border-solid border-[rgba(29,36,43,0.08)] bg-[rgba(29,36,43,0.03)] text-muted text-[0.78rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis"
+                >
                   {cat}
                 </span>
               ))}
@@ -1993,31 +2243,35 @@ function ProviderCard({
           </div>
         </div>
 
-        {blurb && <p className="landing-provider-blurb">{blurb}</p>}
+        {blurb && (
+          <p className="m-0 text-ink text-[0.92rem] leading-[1.45] line-clamp-2 overflow-hidden">
+            {blurb}
+          </p>
+        )}
 
-        <div className="landing-provider-meta">
+        <div className="flex flex-wrap gap-x-[0.85rem] gap-y-[0.35rem] text-[0.86rem] text-ink">
           <span>
             ★ {(p.average_rating ?? 0).toFixed(1)}
-            <span className="muted"> ({p.rating_count})</span>
+            <span className={muted}> ({p.rating_count})</span>
           </span>
-          {hours && <span className="muted">{hours}</span>}
+          {hours && <span className={muted}>{hours}</span>}
           {isMeaningfulLocationLabel(p.location_label) && (
-            <span className="muted">{p.location_label}</span>
+            <span className={muted}>{p.location_label}</span>
           )}
         </div>
 
-        <div className="landing-provider-footer">
+        <div className="flex flex-wrap items-center justify-between gap-[0.65rem] pt-[0.15rem]">
           <MapsLink
             latitude={p.latitude}
             longitude={p.longitude}
             maps_url={p.maps_url}
             label="Map"
           />
-          <div className="landing-provider-footer-actions">
+          <div className="flex flex-wrap items-center justify-end gap-2 ml-auto min-w-0">
             {showChat && (
               <button
                 type="button"
-                className="icon-btn landing-provider-chat provider-quote-chat-btn"
+                className={`${iconBtn} relative w-[2.35rem] h-[2.35rem] rounded-xl border-primary/18 bg-primary/6 text-primary hover:bg-primary/12 hover:border-primary/35 disabled:opacity-55 disabled:cursor-wait`}
                 title={
                   chatBusy
                     ? "Opening chat…"
@@ -2053,13 +2307,13 @@ function ProviderCard({
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                 </svg>
                 {chatUnread > 0 && (
-                  <span className="nav-badge provider-quote-chat-badge">
+                  <span className={`${navBadge} absolute -top-[0.3rem] -right-[0.3rem]`}>
                     {chatUnread > 99 ? "99+" : chatUnread}
                   </span>
                 )}
               </button>
             )}
-            <Link className="btn landing-provider-cta" to={providerPublicPath(p)}>
+            <Link className={btn} to={providerPublicPath(p)}>
               View profile
             </Link>
           </div>

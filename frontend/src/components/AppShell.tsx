@@ -8,6 +8,14 @@ import { useProviderNav } from "../store/providerNav";
 import { unlockNotificationSound } from "../services/sounds";
 import { isStaffRole, roleHome, type UserRole } from "../types";
 import { CONSUMER_NAV } from "../nav/consumer";
+import {
+  btnSecondary,
+  cn,
+  navBadge,
+  pill,
+  pillOffline,
+  pillOnline,
+} from "../ui";
 
 type NavItem = { to: string; label: string; end?: boolean; badge?: number };
 
@@ -273,34 +281,60 @@ export function AppShell({
     }
   }
 
+  const sidebarLink = (active: boolean, subtle = false) =>
+    cn(
+      "flex items-center justify-between gap-[0.55rem] px-[0.9rem] py-[0.7rem] rounded-xl text-[rgba(244,250,247,0.9)] font-semibold text-[0.92rem] tracking-[-0.015em] transition-[background,color] duration-150",
+      !subtle && "hover:bg-white/10",
+      active && "bg-accent/18 text-white shadow-[inset_3px_0_0_#eaa11d]",
+      subtle && "text-[0.85rem] font-medium opacity-90 pointer-events-none",
+    );
+
+  const sidebarLogout = cn(
+    btnSecondary,
+    "w-full justify-center bg-transparent text-white border-[rgba(234,161,29,0.55)] hover:bg-accent/16 hover:text-white hover:border-[rgba(234,161,29,0.55)]",
+  );
+
   return (
-    <div className={`app-layout ${open ? "nav-open" : ""}`}>
+    <div
+      className={cn(
+        "min-h-screen min-w-0 max-w-full grid grid-cols-[260px_minmax(0,1fr)] max-[900px]:grid-cols-1",
+      )}
+    >
       <button
         type="button"
-        className="sidebar-backdrop"
+        className={cn(
+          "hidden max-[900px]:block max-[900px]:fixed max-[900px]:inset-0 max-[900px]:z-30 max-[900px]:border-0 max-[900px]:p-0 max-[900px]:m-0 max-[900px]:bg-[rgba(28,42,36,0.45)] max-[900px]:transition-opacity max-[900px]:duration-[320ms] max-[900px]:ease-[cubic-bezier(0.22,1,0.36,1)]",
+          open
+            ? "max-[900px]:opacity-100 max-[900px]:pointer-events-auto"
+            : "max-[900px]:opacity-0 max-[900px]:pointer-events-none",
+        )}
         aria-label="Close menu"
         onClick={() => setOpen(false)}
       />
 
-      <aside className="sidebar" aria-label="Main navigation">
-        <div className="sidebar-brand">
-          <Link to={home} className="brand">
+      <aside
+        className={cn(
+          "sticky top-0 h-screen flex flex-col gap-4 px-4 py-5 bg-[linear-gradient(180deg,#0a3a34_0%,#0f4c43_55%,#136057_100%)] text-bg z-40 overflow-auto",
+          "max-[900px]:fixed max-[900px]:left-0 max-[900px]:top-0 max-[900px]:w-[min(86vw,300px)] max-[900px]:-translate-x-[105%] max-[900px]:transition-transform max-[900px]:duration-[320ms] max-[900px]:ease-[cubic-bezier(0.22,1,0.36,1)] max-[900px]:will-change-transform max-[900px]:shadow-soft",
+          open && "max-[900px]:translate-x-0",
+        )}
+        aria-label="Main navigation"
+      >
+        <div>
+          <Link to={home} className="font-display text-[1.45rem] font-bold tracking-[-0.04em] text-white">
             KoshalHaat
           </Link>
-          <p className="muted sidebar-tagline">Hyper-local marketplace</p>
+          <p className="text-[rgba(244,250,247,0.72)] mt-[0.2rem] mb-0 text-[0.8rem] font-medium tracking-[0.01em]">
+            Hyper-local marketplace
+          </p>
         </div>
 
-        <nav className="sidebar-nav">
+        <nav className="flex flex-col gap-[0.35rem] flex-1">
           {items.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={() => `sidebar-link ${isActive(item) ? "active" : ""}`}
-            >
-              <span className="sidebar-link-label">{item.label}</span>
+            <NavLink key={item.to} to={item.to} end={item.end} className={() => sidebarLink(isActive(item))}>
+              <span className="min-w-0 flex-1">{item.label}</span>
               {!!item.badge && item.badge > 0 && (
-                <span className="nav-badge" aria-label={`${item.badge} unread`}>
+                <span className={navBadge} aria-label={`${item.badge} unread`}>
                   {item.badge > 99 ? "99+" : item.badge}
                 </span>
               )}
@@ -308,14 +342,14 @@ export function AppShell({
           ))}
           {(location.pathname.startsWith("/orders/") ||
             location.pathname.startsWith("/consumer/requests/")) && (
-            <div className="sidebar-link active subtle">
+            <div className={sidebarLink(true, true)}>
               {location.pathname.startsWith("/orders/") ? (
                 "Order detail"
               ) : (
                 <>
-                  <span className="sidebar-link-label">Request quotes</span>
+                  <span className="min-w-0 flex-1">Request quotes</span>
                   {quotesChatUnread > 0 && (
-                    <span className="nav-badge" aria-label={`${quotesChatUnread} unread`}>
+                    <span className={navBadge} aria-label={`${quotesChatUnread} unread`}>
                       {quotesChatUnread > 99 ? "99+" : quotesChatUnread}
                     </span>
                   )}
@@ -325,10 +359,10 @@ export function AppShell({
           )}
         </nav>
 
-        <div className="sidebar-footer">
+        <div className="mt-auto pt-4 border-t border-solid border-white/15 flex flex-col gap-3">
           {(isStaffRole(user?.role) || user?.role === "PROVIDER" || onRefresh) && (
             <button
-              className="btn secondary sidebar-logout"
+              className={sidebarLogout}
               type="button"
               disabled={countsLoading}
               onClick={() => void handleRefresh()}
@@ -336,15 +370,15 @@ export function AppShell({
               Refresh
             </button>
           )}
-          <div className="sidebar-user">
+          <div className="flex flex-col gap-[0.15rem] text-[0.9rem]">
             <strong>{user?.full_name}</strong>
-            <span className="muted">
+            <span className="text-[rgba(244,250,247,0.65)] text-[0.78rem] font-medium">
               {user?.role}
               {user?.phone_number ? ` · ${user.phone_number}` : ""}
             </span>
           </div>
           <button
-            className="btn secondary sidebar-logout"
+            className={sidebarLogout}
             type="button"
             onClick={() => {
               logout();
@@ -356,34 +390,36 @@ export function AppShell({
         </div>
       </aside>
 
-      <div className="main-pane">
-        <header className="main-topbar">
-          <div className="main-topbar-left">
+      <div className="min-w-0 flex flex-col min-h-screen">
+        <header className="flex items-center justify-between gap-4 px-5 py-4 sticky top-0 z-20 bg-[rgba(247,250,248,0.9)] backdrop-blur-[10px] border-b border-solid border-line max-[560px]:px-[0.9rem] max-[560px]:py-[0.85rem]">
+          <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
-              className="menu-toggle"
+              className="hidden max-[900px]:flex w-[42px] h-[42px] rounded-xl border border-solid border-line bg-card p-[0.65rem] flex-col justify-between cursor-pointer shrink-0"
               aria-label="Open menu"
               aria-expanded={open}
               onClick={() => setOpen(true)}
             >
-              <span />
-              <span />
-              <span />
+              <span className="block h-0.5 w-full bg-ink rounded-sm" />
+              <span className="block h-0.5 w-full bg-ink rounded-sm" />
+              <span className="block h-0.5 w-full bg-ink rounded-sm" />
             </button>
             <div>
-              <h1 className="page-title">{title}</h1>
+              <h1 className="m-0 font-display text-[1.2rem] font-bold tracking-[-0.03em] text-brand-dark max-[560px]:text-[1.1rem]">
+                {title}
+              </h1>
             </div>
           </div>
-          <div className="nav-actions">
+          <div className="flex gap-[0.6rem] items-center flex-wrap">
             {typeof connected === "boolean" && (
-              <span className={`pill ${connected ? "online" : "offline"}`}>
+              <span className={connected ? pillOnline : pillOffline}>
                 {connected ? "Live" : "Reconnecting"}
               </span>
             )}
-            <span className="pill hide-sm">{user?.full_name}</span>
+            <span className={cn(pill, "max-[900px]:hidden")}>{user?.full_name}</span>
             <button
               type="button"
-              className="topbar-logout"
+              className="inline-flex items-center justify-center w-10 h-10 shrink-0 rounded-xl border border-solid border-line bg-card text-brand-dark cursor-pointer transition-colors hover:bg-primary/8 hover:border-primary/28 hover:text-brand focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-2"
               aria-label="Log out"
               title="Log out"
               onClick={() => {
@@ -396,7 +432,7 @@ export function AppShell({
           </div>
         </header>
 
-        <main className="main-content">{children}</main>
+        <main className="p-5 w-[min(1100px,100%)] mx-auto max-[900px]:p-4">{children}</main>
       </div>
     </div>
   );

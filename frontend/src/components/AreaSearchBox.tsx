@@ -3,6 +3,7 @@ import {
   areasForCity,
   type ServiceArea,
 } from "../utils/serviceAreas";
+import { cn, comboEmpty, comboList } from "../ui";
 
 export type AreaPick =
   | { kind: "area"; area: ServiceArea }
@@ -122,30 +123,31 @@ export function AreaSearchBox({
 
   return (
     <div
-      className={`area-search${className ? ` ${className}` : ""}${open ? " is-open" : ""}${
-        disabled ? " is-disabled" : ""
-      }`}
+      className={cn("relative w-full", className, open && "z-20", disabled && "opacity-55")}
       ref={rootRef}
     >
-      <div className={`area-search-control${open ? " is-open" : ""}`}>
+      <div className="flex items-center gap-1 min-h-6">
         {selected && !open ? (
           <button
             type="button"
             id={id}
-            className="area-search-value"
+            className="flex items-baseline gap-[0.4rem] flex-1 min-w-0 m-0 p-0 border-0 bg-transparent font-inherit text-[1.02rem] font-semibold text-ink text-left cursor-pointer"
             disabled={disabled}
             onClick={() => !disabled && setOpen(true)}
           >
-            <span className="area-search-value-main">{displayValue}</span>
+            <span className="overflow-hidden text-ellipsis whitespace-nowrap">{displayValue}</span>
             {selected.kind === "area" && (
-              <span className="area-search-value-pin">{selected.area.pincode}</span>
+              <span className="shrink-0 text-[0.75rem] font-semibold text-muted">{selected.area.pincode}</span>
             )}
-            <span className="area-search-change">Change</span>
+            <span className="shrink-0 ml-auto text-[0.72rem] font-bold tracking-[0.04em] uppercase text-brand max-[560px]:hidden">
+              Change
+            </span>
           </button>
         ) : (
           <input
             ref={inputRef}
             id={id}
+            className="w-full border-0 bg-transparent py-[0.15rem] px-0 font-inherit text-[1.02rem] font-semibold text-ink outline-none"
             type="search"
             role="combobox"
             aria-expanded={open}
@@ -191,15 +193,20 @@ export function AreaSearchBox({
           />
         )}
         {selected && !disabled && (
-          <button type="button" className="area-search-clear" aria-label="Clear area" onClick={clear}>
+          <button
+            type="button"
+            className="shrink-0 w-[1.4rem] h-[1.4rem] border-0 rounded-full bg-[rgba(29,36,43,0.06)] text-muted cursor-pointer leading-none hover:bg-[rgba(29,36,43,0.12)] hover:text-ink"
+            aria-label="Clear area"
+            onClick={clear}
+          >
             ×
           </button>
         )}
       </div>
       {open && !disabled && (
-        <ul className="area-search-list" id={listId} role="listbox">
+        <ul className={`${comboList} z-50 min-w-56 max-[820px]:min-w-0`} id={listId} role="listbox">
           {options.length === 0 ? (
-            <li className="area-search-empty">
+            <li className={comboEmpty}>
               {query.trim()
                 ? `No areas match “${query.trim()}”. Try a 6-digit pincode.`
                 : "Type an area name or pincode"}
@@ -211,12 +218,15 @@ export function AreaSearchBox({
                   type="button"
                   role="option"
                   aria-selected={optionLabel(opt) === value}
-                  className={`area-search-option${i === highlight ? " is-active" : ""}`}
+                  className={cn(
+                    "flex items-baseline justify-between gap-[0.65rem] w-full border-0 rounded-[10px] bg-transparent py-[0.6rem] px-3 font-inherit text-left cursor-pointer text-inherit hover:bg-primary/8",
+                    i === highlight && "bg-primary/8",
+                  )}
                   onMouseEnter={() => setHighlight(i)}
                   onClick={() => pick(opt)}
                 >
-                  <span className="area-search-option-name">{optionLabel(opt)}</span>
-                  <span className="area-search-option-meta">{optionMeta(opt)}</span>
+                  <span className="text-[0.92rem] font-semibold text-ink">{optionLabel(opt)}</span>
+                  <span className="shrink-0 text-[0.75rem] text-muted">{optionMeta(opt)}</span>
                 </button>
               </li>
             ))
