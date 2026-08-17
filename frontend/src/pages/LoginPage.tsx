@@ -2,6 +2,7 @@ import { FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { MarketplaceScene } from "../components/MarketplaceScene";
 import { useAuth } from "../store/auth";
+import { roleHome } from "../types";
 
 export function LoginPage() {
   const login = useAuth((s) => s.login);
@@ -19,13 +20,7 @@ export function LoginPage() {
     setError("");
     try {
       const user = await login(phoneTrimmed, password);
-      navigate(
-        user.role === "PROVIDER"
-          ? "/provider/overview"
-          : user.role === "ADMIN" || user.role === "CUSTOMER_SERVICE"
-            ? "/admin/providers"
-            : "/",
-      );
+      navigate(roleHome(user.role));
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||

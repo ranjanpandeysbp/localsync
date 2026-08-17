@@ -15,7 +15,7 @@ import { isMeaningfulLocationLabel } from "../services/geo";
 import { useProviderNav } from "../store/providerNav";
 import { useAuth } from "../store/auth";
 import { isProviderOnlineNow } from "../utils/businessHours";
-import type { AdminSupportConversation, Conversation, Order, ProviderProfile, Quote, ServiceRequest } from "../types";
+import type { AdminSupportConversation, CategoryTree, Conversation, Order, ProviderProfile, Quote, ServiceRequest } from "../types";
 
 type ProviderSection =
   | "overview"
@@ -88,6 +88,60 @@ const TITLES: Record<ProviderSection, string> = {
   orders: "Orders",
 };
 
+const EXPIRING_HOURS = 6;
+
+function formatInr(amount: number): string {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
+function hoursUntil(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime() - Date.now();
+  if (Number.isNaN(ms)) return null;
+  return ms / 3_600_000;
+}
+
+function formatEta(iso: string | null | undefined): string {
+  const hours = hoursUntil(iso);
+  if (hours == null) return "";
+  if (hours <= 0) return "Expired";
+  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))} min left`;
+  if (hours < 24) return `${Math.round(hours)} hr left`;
+  return `${Math.round(hours / 24)} d left`;
+}
+
+function isSameLocalDay(iso: string | null | undefined, now = new Date()): boolean {
+  if (!iso) return false;
+  const d = new Date(iso);
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+
+function startOfMonth(now = new Date()): Date {
+  return new Date(now.getFullYear(), now.getMonth(), 1);
+}
+
+function daysAgo(n: number, now = new Date()): Date {
+  return new Date(now.getTime() - n * 24 * 60 * 60 * 1000);
+}
+
+function categoryLabel(tree: CategoryTree[], id: number | null | undefined): string {
+  if (id == null) return "Other";
+  for (const parent of tree) {
+    if (parent.id === id) return parent.name;
+    const sub = (parent.subcategories || []).find((s) => s.id === id);
+    if (sub) return `${parent.name} › ${sub.name}`;
+  }
+  return "Other";
+}
+
 export function ProviderDashboard() {
   const { section } = useParams<{ section?: string }>();
   const isLegacyQuoteRoute = section === "quote";
@@ -103,6 +157,7 @@ export function ProviderDashboard() {
   const [feed, setFeed] = useState<ServiceRequest[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [sentQuotes, setSentQuotes] = useState<Quote[]>([]);
+  const [categoryTree, setCategoryTree] = useState<CategoryTree[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [activeChatTitle, setActiveChatTitle] = useState("");
@@ -266,16 +321,18 @@ export function ProviderDashboard() {
 
   async function refresh() {
     try {
-      const [p, f, o, q] = await Promise.all([
+      const [p, f, o, q, cats] = await Promise.all([
         api.get<ProviderProfile>("/providers/me"),
         api.get<ServiceRequest[]>("/requests/feed"),
         api.get<Order[]>("/orders/mine"),
         api.get<Quote[]>("/quotes/sent"),
+        api.get<CategoryTree[]>("/categories/tree").catch(() => ({ data: [] as CategoryTree[] })),
       ]);
       setProfile(p.data);
       setFeed(f.data);
       setOrders(o.data);
       setSentQuotes(q.data);
+      setCategoryTree(cats.data || []);
       if (p.data.longitude != null) {
         setLoc({
           longitude: String(p.data.longitude),
@@ -515,6 +572,122 @@ export function ProviderDashboard() {
     }
   }
 
+  const overviewDash = useMemo(() => {
+    const quotedIds = new Set(sentQuotes.map((q) => q.request_id));
+    const quoteThese = [...feed]
+      .filter((r) => r.status === "ACTIVE" && !quotedIds.has(r.id))
+      .sort((a, b) => {
+        const ae = a.expires_at ? new Date(a.expires_at).getTime() : Number.POSITIVE_INFINITY;
+        const be = b.expires_at ? new Date(b.expires_at).getTime() : Number.POSITIVE_INFINITY;
+        return ae - be;
+      });
+    const waitingQuotes = sentQuotes.filter((q) => q.status === "PENDING");
+    const activeJobs = orders.filter(
+      (o) => o.status === "CONFIRMED" || o.status === "IN_PROGRESS",
+    );
+    const unreadChats = conversations.filter((c) => (c.unread_count || 0) > 0);
+    const expiringLeads = quoteThese.filter((r) => {
+      const h = hoursUntil(r.expires_at);
+      return h != null && h > 0 && h <= EXPIRING_HOURS;
+    });
+    const leadsToday = feed.filter((r) => isSameLocalDay(r.created_at)).length;
+    const pending = sentQuotes.filter((q) => q.status === "PENDING").length;
+    const accepted = sentQuotes.filter((q) => q.status === "ACCEPTED").length;
+    const rejected = sentQuotes.filter((q) => q.status === "REJECTED").length;
+    const decided = accepted + rejected;
+    const winRate = decided > 0 ? Math.round((accepted / decided) * 100) : null;
+    const weekStart = daysAgo(7);
+    const monthStart = startOfMonth();
+    const completed = orders.filter((o) => o.status === "COMPLETED");
+    const sumSince = (since: Date) =>
+      completed.reduce((sum, o) => {
+        const stamp = o.completed_at || o.created_at;
+        return new Date(stamp).getTime() >= since.getTime() ? sum + (o.agreed_price || 0) : sum;
+      }, 0);
+    const checks = [
+      {
+        id: "hours",
+        label: "Business hours",
+        ok: Boolean(profile?.opening_time && profile?.closing_time),
+        to: "/profile",
+      },
+      {
+        id: "location",
+        label: "Map location",
+        ok: profile?.latitude != null && profile?.longitude != null,
+        to: "/profile",
+      },
+      {
+        id: "radius",
+        label: "Service radius",
+        ok: (profile?.max_radius_km || 0) > 0,
+        to: "/profile",
+      },
+      {
+        id: "categories",
+        label: "Categories",
+        ok: (profile?.categories || []).length > 0,
+        to: "/profile",
+      },
+      {
+        id: "description",
+        label: "Business description",
+        ok: Boolean(profile?.description?.trim()),
+        to: "/profile",
+      },
+      {
+        id: "public",
+        label: "Public page",
+        ok:
+          profile?.verification_status === "APPROVED" &&
+          Boolean(profile.public_url_path || profile.public_slug || profile.user_id),
+        to: profile?.public_url_path || `/p/${profile?.public_slug || profile?.user_id || ""}`,
+      },
+    ];
+    const mixMap = new Map<string, number>();
+    const bump = (id: number | null | undefined) => {
+      const label = categoryLabel(categoryTree, id);
+      mixMap.set(label, (mixMap.get(label) || 0) + 1);
+    };
+    const since30 = daysAgo(30).getTime();
+    for (const r of feed) {
+      if (new Date(r.created_at).getTime() >= since30) bump(r.category_id);
+    }
+    for (const q of sentQuotes) {
+      if (new Date(q.created_at).getTime() >= since30) bump(q.category_id);
+    }
+    for (const o of orders) {
+      const stamp = o.completed_at || o.created_at;
+      if (new Date(stamp).getTime() < since30) continue;
+      const quote = sentQuotes.find((q) => q.id === o.quote_id);
+      bump(quote?.category_id ?? null);
+    }
+    const mix = [...mixMap.entries()]
+      .filter(([label]) => label !== "Other" || mixMap.size === 1)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+    const mixTotal = mix.reduce((s, [, n]) => s + n, 0) || 1;
+    return {
+      quoteThese,
+      waitingQuotes,
+      activeJobs,
+      unreadChats,
+      expiringLeads,
+      leadsToday,
+      pending,
+      accepted,
+      rejected,
+      winRate,
+      weekEarn: sumSince(weekStart),
+      monthEarn: sumSince(monthStart),
+      completedCount: completed.length,
+      checks,
+      checksDone: checks.filter((c) => c.ok).length,
+      mix,
+      mixTotal,
+    };
+  }, [feed, sentQuotes, orders, conversations, profile, categoryTree]);
+
   const isLimited =
     profile?.verification_status === "REVOKED" ||
     profile?.verification_status === "REJECTED";
@@ -683,61 +856,242 @@ export function ProviderDashboard() {
             </p>
           )}
 
-          <section className="provider-overview-kpis">
-            {(() => {
-              const openOrders = orders.filter(
-                (o) =>
-                  o.status !== "COMPLETED" &&
-                  o.status !== "CANCELLED" &&
-                  o.status !== "REJECTED",
-              ).length;
-              const kpiItems = [
-                {
-                  key: "requests",
-                  label: "Incoming requests",
-                  value: feed.length,
-                  to: "/provider/requests",
-                  accent: true,
-                },
-                {
-                  key: "orders",
-                  label: "Open orders",
-                  value: openOrders,
-                  to: "/provider/orders",
-                  accent: false,
-                },
-                {
-                  key: "quotes",
-                  label: "Quotes sent",
-                  value: sentQuotes.length,
-                  to: "/provider/quotes",
-                  accent: false,
-                },
-              ] as const;
-              return kpiItems.map((kpi) => {
-                const className = `dash-surface provider-overview-kpi ${
-                  kpi.accent ? "accent" : ""
-                }`;
-                const body = (
-                  <>
-                    <span className="dash-kpi-label">{kpi.label}</span>
-                    <strong>{kpi.value}</strong>
-                  </>
-                );
-                if (isLimited) {
-                  return (
-                    <div key={kpi.key} className={className}>
-                      {body}
-                    </div>
-                  );
-                }
-                return (
-                  <Link key={kpi.key} className={`${className} is-link`} to={kpi.to}>
-                    {body}
+          <section className="provider-today" aria-label="Today">
+            <div className="provider-today-item">
+              <span className="provider-today-label">Status</span>
+              <strong className={openNow ? "is-on" : ""}>{openNow ? "Online now" : "Offline"}</strong>
+            </div>
+            <div className="provider-today-item">
+              <span className="provider-today-label">Hours</span>
+              <strong>
+                {profile?.opening_time && profile?.closing_time
+                  ? `${profile.opening_time}–${profile.closing_time}`
+                  : "Not set"}
+              </strong>
+            </div>
+            <div className="provider-today-item">
+              <span className="provider-today-label">New leads today</span>
+              <strong>{overviewDash.leadsToday}</strong>
+            </div>
+            <div className="provider-today-item">
+              <span className="provider-today-label">Jobs in progress</span>
+              <strong>{overviewDash.activeJobs.length}</strong>
+            </div>
+          </section>
+
+          {!isLimited && (
+            <section className="provider-board" aria-label="Needs attention">
+              <div className="provider-board-head">
+                <div>
+                  <p className="dash-eyebrow">Work</p>
+                  <h3>Needs attention</h3>
+                </div>
+              </div>
+              <div className="provider-board-grid">
+                <article className="dash-surface provider-board-col">
+                  <div className="provider-board-col-head">
+                    <h4>Quote these</h4>
+                    <span>{overviewDash.quoteThese.length}</span>
+                  </div>
+                  {overviewDash.quoteThese.length === 0 ? (
+                    <p className="muted provider-board-empty">No new leads to quote.</p>
+                  ) : (
+                    <ul>
+                      {overviewDash.quoteThese.slice(0, 4).map((r) => (
+                        <li key={r.id}>
+                          <Link to="/provider/requests">
+                            <strong>{r.title}</strong>
+                            <span className="muted">
+                              {formatEta(r.expires_at) || "Open"}
+                              {r.target_mode === "TARGETED" ? " · Sent to you" : ""}
+                            </span>
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <Link className="provider-board-more" to="/provider/requests">
+                    All requests
                   </Link>
-                );
-              });
-            })()}
+                </article>
+                <article className="dash-surface provider-board-col">
+                  <div className="provider-board-col-head">
+                    <h4>Waiting on customer</h4>
+                    <span>{overviewDash.waitingQuotes.length}</span>
+                  </div>
+                  {overviewDash.waitingQuotes.length === 0 ? (
+                    <p className="muted provider-board-empty">No pending quotes.</p>
+                  ) : (
+                    <ul>
+                      {overviewDash.waitingQuotes.slice(0, 4).map((q) => (
+                        <li key={q.id}>
+                          <Link to="/provider/quotes">
+                            <strong>{q.request_title || "Quote"}</strong>
+                            <span className="muted">{formatInr(q.price_quote)}</span>
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <Link className="provider-board-more" to="/provider/quotes">
+                    All quotes
+                  </Link>
+                </article>
+                <article className="dash-surface provider-board-col">
+                  <div className="provider-board-col-head">
+                    <h4>Do the job</h4>
+                    <span>{overviewDash.activeJobs.length}</span>
+                  </div>
+                  {overviewDash.activeJobs.length === 0 ? (
+                    <p className="muted provider-board-empty">No active jobs.</p>
+                  ) : (
+                    <ul>
+                      {overviewDash.activeJobs.slice(0, 4).map((o) => (
+                        <li key={o.id}>
+                          <Link to="/provider/orders">
+                            <strong>{o.request_title || "Order"}</strong>
+                            <span className="muted">
+                              {o.status === "IN_PROGRESS" ? "In progress" : "Confirmed"} ·{" "}
+                              {formatInr(o.agreed_price)}
+                            </span>
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <Link className="provider-board-more" to="/provider/orders">
+                    All orders
+                  </Link>
+                </article>
+                <article className="dash-surface provider-board-col">
+                  <div className="provider-board-col-head">
+                    <h4>Unread chats</h4>
+                    <span>{overviewDash.unreadChats.length}</span>
+                  </div>
+                  {overviewDash.unreadChats.length === 0 ? (
+                    <p className="muted provider-board-empty">No unread messages.</p>
+                  ) : (
+                    <ul>
+                      {overviewDash.unreadChats.slice(0, 4).map((c) => (
+                        <li key={c.id}>
+                          <button type="button" onClick={() => {
+                            setActiveChatId(c.id);
+                            setActiveChatTitle(c.consumer_name || "Inquiry");
+                          }}>
+                            <strong>{c.consumer_name || "Customer"}</strong>
+                            <span className="muted">
+                              {c.unread_count} new
+                              {c.last_message ? ` · ${c.last_message}` : ""}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </article>
+              </div>
+            </section>
+          )}
+
+          {!isLimited && overviewDash.expiringLeads.length > 0 && (
+            <section className="dash-surface provider-expire" aria-label="Leads about to expire">
+              <div className="provider-expire-head">
+                <div>
+                  <p className="dash-eyebrow">Urgent</p>
+                  <h3>Leads expiring soon</h3>
+                </div>
+                <Link to="/provider/requests">Open requests</Link>
+              </div>
+              <ul>
+                {overviewDash.expiringLeads.slice(0, 4).map((r) => (
+                  <li key={r.id}>
+                    <strong>{r.title}</strong>
+                    <span>{formatEta(r.expires_at)}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {!isLimited && (
+            <section className="provider-overview-kpis provider-overview-kpis-4" aria-label="Quote and earnings">
+              <Link className="dash-surface provider-overview-kpi is-link" to="/provider/quotes">
+                <span className="dash-kpi-label">Quote health</span>
+                <strong>
+                  {overviewDash.winRate != null ? `${overviewDash.winRate}%` : "—"}
+                </strong>
+                <span className="provider-overview-kpi-sub">
+                  {overviewDash.pending} pending · {overviewDash.accepted} won · {overviewDash.rejected} lost
+                </span>
+              </Link>
+              <div className="dash-surface provider-overview-kpi">
+                <span className="dash-kpi-label">Earned this week</span>
+                <strong>{formatInr(overviewDash.weekEarn)}</strong>
+                <span className="provider-overview-kpi-sub">Completed jobs, last 7 days</span>
+              </div>
+              <div className="dash-surface provider-overview-kpi">
+                <span className="dash-kpi-label">Earned this month</span>
+                <strong>{formatInr(overviewDash.monthEarn)}</strong>
+                <span className="provider-overview-kpi-sub">
+                  {overviewDash.completedCount} completed all time
+                </span>
+              </div>
+              <Link className="dash-surface provider-overview-kpi is-link accent" to="/provider/requests">
+                <span className="dash-kpi-label">Open leads</span>
+                <strong>{overviewDash.quoteThese.length}</strong>
+                <span className="provider-overview-kpi-sub">Requests still to quote</span>
+              </Link>
+            </section>
+          )}
+
+          <section className="provider-overview-split">
+            <article className="dash-surface provider-complete">
+              <div className="provider-complete-head">
+                <div>
+                  <p className="dash-eyebrow">Profile</p>
+                  <h3>Completeness</h3>
+                </div>
+                <strong>
+                  {overviewDash.checksDone}/{overviewDash.checks.length}
+                </strong>
+              </div>
+              <ul className="provider-check-list">
+                {overviewDash.checks.map((item) => (
+                  <li key={item.id} className={item.ok ? "is-done" : ""}>
+                    <Link to={item.ok && item.id === "public" ? item.to : "/profile"}>
+                      <span className="provider-check-mark" aria-hidden="true">
+                        {item.ok ? "✓" : "○"}
+                      </span>
+                      <span>{item.label}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </article>
+            {!isLimited && (
+              <article className="dash-surface provider-mix">
+                <p className="dash-eyebrow">Last 30 days</p>
+                <h3>Category mix</h3>
+                {overviewDash.mix.length === 0 ? (
+                  <p className="muted">No recent requests or jobs in your categories yet.</p>
+                ) : (
+                  <ul>
+                    {overviewDash.mix.map(([label, count]) => (
+                      <li key={label}>
+                        <div className="provider-mix-row">
+                          <span>{label}</span>
+                          <strong>{count}</strong>
+                        </div>
+                        <span
+                          className="provider-mix-bar"
+                          style={{ width: `${Math.max(8, (count / overviewDash.mixTotal) * 100)}%` }}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </article>
+            )}
           </section>
 
           <div className="profile-sections provider-overview-accordions">
@@ -996,6 +1350,23 @@ export function ProviderDashboard() {
               )}
             </section>
           </div>
+          {activeChatId && (
+            <InquiryChatPanel
+              conversationId={activeChatId}
+              mode="overlay"
+              title={activeChatTitle}
+              subtitle="Inquiry chat"
+              avatarLabel={activeChatTitle}
+              autoFocus
+              emptyHint="Reply to the customer."
+              placeholder="Write a message…"
+              onClose={() => setActiveChatId(null)}
+              onMessagesLoaded={() => {
+                void loadConversations();
+                void refreshInquiryUnread();
+              }}
+            />
+          )}
         </div>
       )}
 

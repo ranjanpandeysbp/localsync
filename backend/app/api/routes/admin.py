@@ -38,6 +38,7 @@ from app.schemas import (
     AdminAnalyticsTimelinePoint,
     AdminCustomerServiceCreate,
     AdminCustomerServiceOut,
+    AdminCustomerServiceUpdate,
     AdminOrderOut,
     AdminProviderCreate,
     AdminProviderDetailOut,
@@ -201,6 +202,7 @@ def _admin_provider_base(
         longitude=lon,
         location_label=user.location_label,
         pincode=user.pincode,
+        city=user.city,
         maps_url=google_maps_url(lat, lon),
         created_at=user.created_at,
     )
@@ -300,6 +302,51 @@ def create_customer_service_agent(
         full_name=user.full_name,
         approved=approved,
     )
+    return _cs_agent_out(user)
+
+
+@router.get("/customer-service-agents/{user_id}", response_model=AdminCustomerServiceOut)
+def get_customer_service_agent(
+    user_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    return _cs_agent_out(_load_cs_agent(db, user_id))
+
+
+@router.patch("/customer-service-agents/{user_id}", response_model=AdminCustomerServiceOut)
+def update_customer_service_agent(
+    user_id: UUID,
+    payload: AdminCustomerServiceUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    user = _load_cs_agent(db, user_id)
+    data = payload.model_dump(exclude_unset=True)
+
+    if "full_name" in data and data["full_name"]:
+        user.full_name = data["full_name"].strip()
+
+    if "phone_number" in data and data["phone_number"]:
+        phone = data["phone_number"].strip()
+        clash = db.scalar(select(User).where(User.phone_number == phone, User.id != user.id))
+        if clash:
+            raise HTTPException(status_code=400, detail="Phone number already registered")
+        user.phone_number = phone
+
+    if "email" in data:
+        email = str(data["email"]).strip().lower() if data["email"] else None
+        if email:
+            clash = db.scalar(select(User).where(User.email == email, User.id != user.id))
+            if clash:
+                raise HTTPException(status_code=400, detail="Email already in use")
+        user.email = email
+
+    if data.get("password"):
+        user.hashed_password = get_password_hash(data["password"])
+
+    db.commit()
+    db.refresh(user)
     return _cs_agent_out(user)
 
 
@@ -517,7 +564,6 @@ def _admin_provider_detail_out(
         alternate_phone=user.alternate_phone,
         address_line1=user.address_line1,
         address_line2=user.address_line2,
-        city=user.city,
         state=user.state,
         government_id_url=profile.government_id_url,
         business_reg_url=profile.business_reg_url,

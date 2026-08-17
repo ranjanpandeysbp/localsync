@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { AdminOrdersDashboard } from "../components/AdminOrdersDashboard";
+import { AdminOverviewDashboard } from "../components/AdminOverviewDashboard";
 import { AppShell } from "../components/AppShell";
 import { mediaSrc } from "../components/Attachments";
 import { CategoryMultiSelect } from "../components/CategoryMultiSelect";
@@ -24,6 +25,7 @@ import type {
 } from "../types";
 
 type AdminTab =
+  | "overview"
   | "providers"
   | "consumers"
   | "orders"
@@ -33,6 +35,7 @@ type AdminTab =
   | "config";
 
 const TITLES: Record<AdminTab, string> = {
+  overview: "Overview",
   providers: "Providers",
   consumers: "Consumers",
   orders: "Order dashboard",
@@ -42,7 +45,14 @@ const TITLES: Record<AdminTab, string> = {
   config: "Config",
 };
 
-const STAFF_SECTIONS = ["providers", "consumers", "orders", "categories", "messages"] as const;
+const STAFF_SECTIONS = [
+  "overview",
+  "providers",
+  "consumers",
+  "orders",
+  "categories",
+  "messages",
+] as const;
 const ADMIN_ONLY_SECTIONS = ["customer-service", "config"] as const;
 
 export function AdminPage() {
@@ -55,7 +65,7 @@ export function AdminPage() {
   const tab = (
     section && allowedSections.includes(section as (typeof allowedSections)[number])
       ? section
-      : "providers"
+      : "overview"
   ) as AdminTab;
   const refreshCounts = useAdminNav((s) => s.refreshCounts);
   const navigate = useNavigate();
@@ -136,6 +146,7 @@ export function AdminPage() {
   const [smtpBusy, setSmtpBusy] = useState(false);
   const [categoryView, setCategoryView] = useState<"manage" | "create">("manage");
   const [categorySearch, setCategorySearch] = useState("");
+  const [overviewRefresh, setOverviewRefresh] = useState(0);
 
   const invalidSection =
     !!section && !allowedSections.includes(section as (typeof allowedSections)[number]);
@@ -171,7 +182,7 @@ export function AdminPage() {
         setSupportThreads(data);
         return;
       }
-      if (tab === "orders") {
+      if (tab === "orders" || tab === "overview") {
         await refreshCounts();
         return;
       }
@@ -354,7 +365,7 @@ export function AdminPage() {
   }, [parents, categorySearch]);
 
   if (invalidSection || ((section === "config" || section === "customer-service") && !isAdmin)) {
-    return <Navigate to="/admin/providers" replace />;
+    return <Navigate to="/admin/overview" replace />;
   }
 
   function slugify(name: string) {
@@ -597,17 +608,18 @@ export function AdminPage() {
     setError("");
     setNote("");
     try {
-      await api.post<AdminCustomerServiceAgent>("/admin/customer-service-agents", {
-        phone_number: csCreate.phone_number.trim(),
-        full_name: csCreate.full_name.trim(),
-        email: csCreate.email.trim(),
-        password: csCreate.password,
-        approve: csCreate.approve,
-      });
+      const { data } = await api.post<AdminCustomerServiceAgent>(
+        "/admin/customer-service-agents",
+        {
+          phone_number: csCreate.phone_number.trim(),
+          full_name: csCreate.full_name.trim(),
+          email: csCreate.email.trim(),
+          password: csCreate.password,
+          approve: csCreate.approve,
+        },
+      );
       resetCsCreate();
-      setCsView("list");
-      setNote("Customer service agent created");
-      await load();
+      navigate(`/admin/customer-service/${data.id}`);
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
@@ -705,9 +717,21 @@ export function AdminPage() {
   }
 
   return (
-    <AppShell title={TITLES[tab] || "Admin"} onRefresh={load}>
+    <AppShell
+      title={TITLES[tab] || "Admin"}
+      onRefresh={async () => {
+        await load();
+        if (tab === "overview") setOverviewRefresh((n) => n + 1);
+      }}
+    >
       {note && <p className="pill online" style={{ marginBottom: "1rem" }}>{note}</p>}
-      {error && <p className="error" style={{ marginBottom: "1rem" }}>{error}</p>}
+      {tab !== "overview" && error && (
+        <p className="error" style={{ marginBottom: "1rem" }}>{error}</p>
+      )}
+
+      {tab === "overview" && (
+        <AdminOverviewDashboard isAdmin={isAdmin} refreshNonce={overviewRefresh} />
+      )}
 
       {tab === "providers" && (
         <div className="page-stack">
@@ -1981,7 +2005,9 @@ export function AdminPage() {
                       >
                         <header className="admin-provider-card-head">
                           <div className="admin-provider-card-title">
-                            <h3>{a.full_name}</h3>
+                            <h3>
+                              <Link to={`/admin/customer-service/${a.id}`}>{a.full_name}</Link>
+                            </h3>
                             <p className="admin-provider-card-owner">
                               Joined {new Date(a.created_at).toLocaleString()}
                             </p>
@@ -2002,6 +2028,9 @@ export function AdminPage() {
                         </dl>
                         <footer className="admin-provider-card-actions">
                           <div className="admin-provider-card-actions-main">
+                            <Link className="btn" to={`/admin/customer-service/${a.id}`}>
+                              Details
+                            </Link>
                             {a.status === "PENDING" && (
                               <button
                                 className="btn"

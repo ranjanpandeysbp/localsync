@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { ProtectedRoute, GuestRoute } from "./components/ProtectedRoute";
+import { AdminCsAgentDetailPage } from "./pages/AdminCsAgentDetailPage";
 import { AdminPage } from "./pages/AdminPage";
 import { AdminProviderDetailPage } from "./pages/AdminProviderDetailPage";
 import { ConsumerDashboard } from "./pages/ConsumerDashboard";
@@ -51,8 +52,9 @@ export default function App() {
         </Route>
 
         <Route element={<ProtectedRoute roles={["ADMIN", "CUSTOMER_SERVICE"]} />}>
-          <Route path="/admin" element={<Navigate to="/admin/providers" replace />} />
+          <Route path="/admin" element={<Navigate to="/admin/overview" replace />} />
           <Route path="/admin/providers/:userId" element={<AdminProviderDetailPage />} />
+          <Route path="/admin/customer-service/:userId" element={<AdminCsAgentDetailPage />} />
           <Route path="/admin/:section" element={<AdminPage />} />
         </Route>
 

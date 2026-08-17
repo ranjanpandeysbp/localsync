@@ -16,7 +16,7 @@ export function HomeRedirect() {
   if (!token || !user) return <LandingPage />;
   if (user.role === "PROVIDER") return <Navigate to="/provider/overview" replace />;
   if (user.role === "ADMIN" || user.role === "CUSTOMER_SERVICE") {
-    return <Navigate to="/admin/providers" replace />;
+    return <Navigate to="/admin/overview" replace />;
   }
   // Consumers stay on the public landing while signed in.
   return <LandingPage />;

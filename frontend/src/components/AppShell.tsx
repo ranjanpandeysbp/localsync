@@ -60,6 +60,7 @@ function navForRole(
   }
   if (isStaffRole(role)) {
     const items: NavItem[] = [
+      { to: "/admin/overview", label: "Overview" },
       { to: "/admin/providers", label: adminLabels?.providers || "Providers" },
       { to: "/admin/consumers", label: adminLabels?.consumers || "Consumers" },
       { to: "/admin/orders", label: adminLabels?.orders || "Order dashboard" },

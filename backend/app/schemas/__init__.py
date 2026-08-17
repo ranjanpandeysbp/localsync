@@ -553,6 +553,7 @@ class AdminProviderOut(BaseModel):
     longitude: float | None = None
     location_label: str | None = None
     pincode: str | None = None
+    city: str | None = None
     maps_url: str | None = None
     created_at: datetime
 
@@ -571,7 +572,6 @@ class AdminProviderDetailOut(AdminProviderOut):
     alternate_phone: str | None = None
     address_line1: str | None = None
     address_line2: str | None = None
-    city: str | None = None
     state: str | None = None
     government_id_url: str | None = None
     business_reg_url: str | None = None
@@ -642,6 +642,13 @@ class AdminCustomerServiceCreate(BaseModel):
     password: str = Field(min_length=6, max_length=128)
     email: EmailStr
     approve: bool = False
+
+
+class AdminCustomerServiceUpdate(BaseModel):
+    full_name: str | None = Field(default=None, min_length=2, max_length=255)
+    phone_number: str | None = Field(default=None, min_length=8, max_length=20)
+    email: EmailStr | None = None
+    password: str | None = Field(default=None, min_length=6, max_length=128)
 
 
 class AdminCustomerServiceOut(BaseModel):

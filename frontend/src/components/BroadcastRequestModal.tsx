@@ -1,0 +1,190 @@
+import { FormEvent, useEffect, useId, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { FilePicker } from "./Attachments";
+import { api, apiErrorMessage } from "../services/api";
+import { uploadFiles } from "../services/uploads";
+import type { ServiceRequest } from "../types";
+import type { BroadcastRequestDraft } from "../utils/broadcastDraft";
+import { clearBroadcastDraft } from "../utils/broadcastDraft";
+
+type Props = {
+  open: boolean;
+  onClose: () => void;
+  draft: BroadcastRequestDraft | null;
+  nearbyCount?: number | null;
+  onSuccess?: () => void;
+};
+
+export function BroadcastRequestModal({
+  open,
+  onClose,
+  draft,
+  nearbyCount,
+  onSuccess,
+}: Props) {
+  const navigate = useNavigate();
+  const titleId = useId();
+  const onCloseRef = useRef(onClose);
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCloseRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      setTitle("");
+      setDescription("");
+      setFiles([]);
+      setError("");
+      setBusy(false);
+      return;
+    }
+    clearBroadcastDraft();
+  }, [open]);
+
+  if (!open || !draft) return null;
+
+  const place = draft.areaName
+    ? `${draft.areaName}, ${draft.city}`
+    : draft.pincode
+      ? `pincode ${draft.pincode} in ${draft.city}`
+      : draft.city;
+  const countLabel =
+    nearbyCount != null
+      ? nearbyCount === 1
+        ? "1 nearby verified provider"
+        : `${nearbyCount} nearby verified providers`
+      : "nearby verified providers";
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!draft) return;
+    setError("");
+    const nextTitle = title.trim();
+    const nextDetails = description.trim();
+    if (nextTitle.length < 3) {
+      setError("Add a short title (at least 3 characters).");
+      return;
+    }
+    if (nextDetails.length < 5) {
+      setError("Add a few details so providers know what you need.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const uploaded = await uploadFiles(files);
+      const { data } = await api.post<ServiceRequest>("/requests", {
+        category_id: draft.categoryId,
+        title: nextTitle,
+        description: nextDetails,
+        longitude: draft.longitude,
+        latitude: draft.latitude,
+        pincode: draft.pincode || null,
+        attachment_ids: uploaded.map((a) => a.id),
+        target_provider_ids: [],
+      });
+      onClose();
+      onSuccess?.();
+      const matched = data.matched_provider_count ?? nearbyCount ?? 0;
+      navigate("/consumer/requests", {
+        state: {
+          toast: `Request broadcast to ${matched} nearby provider${matched === 1 ? "" : "s"} in ${draft.city}`,
+        },
+      });
+    } catch (err) {
+      setError(apiErrorMessage(err, "Could not broadcast this request"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className="login-modal-backdrop post-request-modal-backdrop"
+      role="presentation"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="login-modal post-request-modal broadcast-request-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
+        <button type="button" className="login-modal-close" onClick={onClose} aria-label="Close">
+          ×
+        </button>
+        <p className="eyebrow">Broadcast</p>
+        <h2 id={titleId} className="login-modal-title">
+          Ask nearby
+        </h2>
+        <p className="muted login-modal-lead">
+          This will notify {countLabel} for{" "}
+          <strong>{draft.categoryLabel || "this category"}</strong> near {place}.
+        </p>
+
+        <form className="post-request-form" onSubmit={onSubmit}>
+          <div className="post-request-modal-scroll">
+            <div className="field">
+              <label htmlFor="broadcast-title">Title</label>
+              <input
+                id="broadcast-title"
+                required
+                minLength={3}
+                maxLength={255}
+                value={title}
+                autoFocus
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="e.g. Leaking kitchen tap"
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="broadcast-details">Details</label>
+              <textarea
+                id="broadcast-details"
+                required
+                minLength={5}
+                rows={4}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="What do you need, when, and any extra notes…"
+              />
+            </div>
+            <FilePicker files={files} onChange={setFiles} disabled={busy} />
+            {error && (
+              <p className="error" role="alert">
+                {error}
+              </p>
+            )}
+          </div>
+          <div className="page-actions post-request-actions">
+            <button className="btn secondary" type="button" onClick={onClose} disabled={busy}>
+              Cancel
+            </button>
+            <button className="btn" type="submit" disabled={busy}>
+              {busy ? "Sending…" : "Broadcast request"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}

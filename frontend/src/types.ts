@@ -6,7 +6,7 @@ export function isStaffRole(role?: UserRole | null): boolean {
 
 export function roleHome(role: UserRole): string {
   if (role === "PROVIDER") return "/provider/overview";
-  if (isStaffRole(role)) return "/admin/providers";
+  if (isStaffRole(role)) return "/admin/overview";
   return "/";
 }
 export type OfferKind = "PRODUCT" | "SERVICE" | "BOTH";
@@ -303,6 +303,7 @@ export interface AdminProvider {
   longitude: number | null;
   location_label: string | null;
   pincode?: string | null;
+  city?: string | null;
   maps_url: string | null;
   created_at: string;
 }

@@ -35,6 +35,35 @@ export function categoryNeedOptions(tree: CategoryTree[]): CategoryNeedOption[] 
   return opts;
 }
 
+export function resolveCategoryNeed(
+  tree: CategoryTree[],
+  query: string,
+  preferred?: CategoryNeedOption | null,
+): CategoryNeedOption | null {
+  const opts = categoryNeedOptions(tree);
+  const q = query.trim().toLowerCase();
+  if (preferred && opts.some((o) => o.id === preferred.id)) {
+    if (
+      !q ||
+      preferred.name.toLowerCase() === q ||
+      preferred.label.toLowerCase() === q ||
+      preferred.haystack.includes(q)
+    ) {
+      return opts.find((o) => o.id === preferred.id) || preferred;
+    }
+  }
+  if (!q) return null;
+  const exact = opts.find((o) => o.name.toLowerCase() === q || o.label.toLowerCase() === q);
+  if (exact) return exact;
+  const hits = opts.filter(
+    (o) => o.name.toLowerCase().includes(q) || o.haystack.includes(q),
+  );
+  if (hits.length === 1) return hits[0];
+  const parents = hits.filter((o) => o.isParent);
+  if (parents.length === 1) return parents[0];
+  return null;
+}
+
 function matchesQuery(opt: CategoryNeedOption, query: string): boolean {
   const tokens = query
     .toLowerCase()
