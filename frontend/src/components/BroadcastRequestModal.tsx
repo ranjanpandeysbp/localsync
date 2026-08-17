@@ -1,8 +1,6 @@
 import { FormEvent, useEffect, useId, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { FilePicker } from "./Attachments";
 import { api, apiErrorMessage } from "../services/api";
-import { uploadFiles } from "../services/uploads";
 import type { ServiceRequest } from "../types";
 import type { BroadcastRequestDraft } from "../utils/broadcastDraft";
 import { clearBroadcastDraft } from "../utils/broadcastDraft";
@@ -27,7 +25,6 @@ export function BroadcastRequestModal({
   const onCloseRef = useRef(onClose);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -51,7 +48,6 @@ export function BroadcastRequestModal({
     if (!open) {
       setTitle("");
       setDescription("");
-      setFiles([]);
       setError("");
       setBusy(false);
       return;
@@ -89,7 +85,6 @@ export function BroadcastRequestModal({
     }
     setBusy(true);
     try {
-      const uploaded = await uploadFiles(files);
       const { data } = await api.post<ServiceRequest>("/requests", {
         category_id: draft.categoryId,
         title: nextTitle,
@@ -97,7 +92,6 @@ export function BroadcastRequestModal({
         longitude: draft.longitude,
         latitude: draft.latitude,
         pincode: draft.pincode || null,
-        attachment_ids: uploaded.map((a) => a.id),
         target_provider_ids: [],
       });
       onClose();
@@ -168,7 +162,6 @@ export function BroadcastRequestModal({
                 placeholder="What do you need, when, and any extra notes…"
               />
             </div>
-            <FilePicker files={files} onChange={setFiles} disabled={busy} />
             {error && (
               <p className="error" role="alert">
                 {error}

@@ -34,7 +34,7 @@ export function ForgotPasswordPage() {
     <div className="auth-wrap">
       <form className="card auth-card" onSubmit={onSubmit}>
         <h1 className="brand">
-          <Link to="/">SahiLocal</Link>
+          <Link to="/">KoshalHaat</Link>
         </h1>
         <h2 style={{ margin: "0.35rem 0 0" }}>Forgot password</h2>
         <p className="muted">

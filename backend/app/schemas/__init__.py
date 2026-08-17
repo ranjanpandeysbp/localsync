@@ -754,7 +754,7 @@ class SmtpConfigUpdate(BaseModel):
     username: str | None = Field(default=None, max_length=255)
     password: str | None = Field(default=None, max_length=255)
     from_email: EmailStr
-    from_name: str = Field(default="SahiLocal", max_length=255)
+    from_name: str = Field(default="KoshalHaat", max_length=255)
     use_tls: bool = True
     use_ssl: bool = False
     is_enabled: bool = False

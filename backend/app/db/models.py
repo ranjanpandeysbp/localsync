@@ -470,7 +470,7 @@ class InquiryMessage(Base):
 
 
 class AdminConversation(Base):
-    """Support thread between SahiLocal admins and a provider (one per provider)."""
+    """Support thread between KoshalHaat admins and a provider (one per provider)."""
 
     __tablename__ = "admin_conversations"
 
@@ -531,7 +531,7 @@ class AppSmtpConfig(Base):
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     from_email: Mapped[str] = mapped_column(String(255), nullable=False, default="")
-    from_name: Mapped[str] = mapped_column(String(255), nullable=False, default="SahiLocal")
+    from_name: Mapped[str] = mapped_column(String(255), nullable=False, default="KoshalHaat")
     use_tls: Mapped[bool] = mapped_column(Boolean, default=True)
     use_ssl: Mapped[bool] = mapped_column(Boolean, default=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

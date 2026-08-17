@@ -324,7 +324,7 @@ def _seed_service_cities(db, consumer_hash: str, provider_hash: str) -> None:
             _ensure_consumer(
                 db,
                 phone=phone,
-                email=f"consumer.{city['code']}.{seq}@sahilocal.app",
+                email=f"consumer.{city['code']}.{seq}@koshalhaat.app",
                 full_name=full_name,
                 password_hash=consumer_hash,
                 label=f"{area}, {city['name']}",
@@ -345,7 +345,7 @@ def _seed_service_cities(db, consumer_hash: str, provider_hash: str) -> None:
             _ensure_provider(
                 db,
                 phone=phone,
-                email=f"provider.{city['code']}.{template['key']}@sahilocal.app",
+                email=f"provider.{city['code']}.{template['key']}@koshalhaat.app",
                 full_name=f"{city['name']} {template['person']}",
                 password_hash=provider_hash,
                 business_name=business,
@@ -386,8 +386,8 @@ def seed() -> None:
             admin = User(
                 role=UserRole.ADMIN,
                 phone_number="9000000001",
-                email="admin@sahilocal.app",
-                full_name="SahiLocal Admin",
+                email="admin@koshalhaat.app",
+                full_name="KoshalHaat Admin",
                 hashed_password=get_password_hash("admin123"),
                 is_verified=True,
             )
@@ -398,8 +398,8 @@ def seed() -> None:
             cs = User(
                 role=UserRole.CUSTOMER_SERVICE,
                 phone_number="9000000004",
-                email="support@sahilocal.app",
-                full_name="SahiLocal Customer Service",
+                email="support@koshalhaat.app",
+                full_name="KoshalHaat Customer Service",
                 hashed_password=get_password_hash("support123"),
                 is_verified=True,
             )
@@ -410,7 +410,7 @@ def seed() -> None:
             consumer = User(
                 role=UserRole.CONSUMER,
                 phone_number="9000000002",
-                email="consumer@sahilocal.app",
+                email="consumer@koshalhaat.app",
                 full_name="Demo Consumer",
                 hashed_password=consumer_hash,
                 is_verified=True,
@@ -444,7 +444,7 @@ def seed() -> None:
             provider = User(
                 role=UserRole.PROVIDER,
                 phone_number="9000000003",
-                email="provider@sahilocal.app",
+                email="provider@koshalhaat.app",
                 full_name="Demo Provider",
                 hashed_password=provider_hash,
                 is_verified=True,

@@ -1,12 +1,9 @@
 import { FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { CategorySearchBox } from "./CategorySearchBox";
-import { FilePicker } from "./Attachments";
-import { MapsLink } from "./MapsLink";
 import { flattenCategoryOptions } from "./ProviderTrust";
 import { api, apiErrorMessage } from "../services/api";
 import { useAuth } from "../store/auth";
-import { uploadFiles } from "../services/uploads";
 import type { PostRequestDraft, PostRequestProvider } from "../utils/postRequestDraft";
 import {
   clearPostRequestDraft,
@@ -67,16 +64,12 @@ export function PostRequestModal({ open, onClose, draft = null, onSuccess }: Pro
   const [suggestions, setSuggestions] = useState<ProviderCatalogItem[]>([]);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestBusy, setSuggestBusy] = useState(false);
-  const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   onCloseRef.current = onClose;
 
   const categoryOptions = flattenCategoryOptions(tree);
-  const hasCoords =
-    (form.latitude && form.longitude) ||
-    (user?.latitude != null && user?.longitude != null);
   const selectedIds = useMemo(() => new Set(providers.map((p) => p.id)), [providers]);
 
   useEffect(() => {
@@ -97,7 +90,6 @@ export function PostRequestModal({ open, onClose, draft = null, onSuccess }: Pro
     if (!open) {
       setError("");
       setBusy(false);
-      setFiles([]);
       setProviderQuery("");
       setSuggestions([]);
       setSuggestOpen(false);
@@ -247,7 +239,6 @@ export function PostRequestModal({ open, onClose, draft = null, onSuccess }: Pro
         return;
       }
 
-      const uploaded = await uploadFiles(files);
       const { data } = await api.post<ServiceRequest>("/requests", {
         category_id: Number(form.category_id),
         title: form.title,
@@ -256,7 +247,6 @@ export function PostRequestModal({ open, onClose, draft = null, onSuccess }: Pro
         latitude: lat,
         pincode: user?.pincode || null,
         search_radius_km: Number(form.search_radius_km) || 5,
-        attachment_ids: uploaded.map((a) => a.id),
         target_provider_ids: providers.map((p) => p.id),
       });
 
@@ -429,37 +419,6 @@ export function PostRequestModal({ open, onClose, draft = null, onSuccess }: Pro
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
                 placeholder="Describe the work, timing, and anything providers should know…"
               />
-            </div>
-            <FilePicker files={files} onChange={setFiles} disabled={busy} />
-          </section>
-
-          <section className="post-request-step post-request-location">
-            <h3>4. Location</h3>
-            <div className="post-request-location-card">
-              {hasCoords ? (
-                <>
-                  <p>
-                    Using your profile location
-                    {user?.location_label ? `: ${user.location_label}` : ""}.
-                  </p>
-                  <MapsLink
-                    latitude={Number(form.latitude || user?.latitude)}
-                    longitude={Number(form.longitude || user?.longitude)}
-                  />
-                </>
-              ) : user?.pincode ? (
-                <p>
-                  Your pincode <strong>{user.pincode}</strong> is on file.
-                </p>
-              ) : (
-                <p className="muted">
-                  Add GPS or a pincode in{" "}
-                  <Link to="/profile" onClick={onClose}>
-                    My profile
-                  </Link>
-                  .
-                </p>
-              )}
             </div>
           </section>
 

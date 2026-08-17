@@ -4209,6 +4209,15 @@ label {
   min-width: 7.5rem;
 }
 
+.landing-pad-submit:disabled,
+.landing-pad-submit:disabled:hover {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: #9aa8a3;
+  color: #fff;
+  box-shadow: none;
+}
+
 .landing-broadcast-card {
   display: flex;
   align-items: center;
@@ -5240,6 +5249,24 @@ label {
 
   .landing-home-fit .landing-broadcast-btn {
     width: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .landing-home-fit .landing-pad-row:not(.landing-pad-row-need) {
+    flex-direction: column;
+  }
+
+  .landing-home-fit .landing-pad-row:not(.landing-pad-row-need) .landing-pad-divider {
+    width: auto;
+    height: 1px;
+    margin: 0.15rem 0.35rem;
+  }
+
+  .landing-home-fit .landing-pad-city,
+  .landing-home-fit .landing-pad-area {
+    width: 100%;
+    flex: 1 1 auto;
   }
 }
 

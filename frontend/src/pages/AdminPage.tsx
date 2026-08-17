@@ -136,7 +136,7 @@ export function AdminPage() {
     username: "",
     password: "",
     from_email: "",
-    from_name: "SahiLocal",
+    from_name: "KoshalHaat",
     use_tls: true,
     use_ssl: false,
     is_enabled: false,
@@ -162,7 +162,7 @@ export function AdminPage() {
           username: data.username || "",
           password: "",
           from_email: data.from_email || "",
-          from_name: data.from_name || "SahiLocal",
+          from_name: data.from_name || "KoshalHaat",
           use_tls: data.use_tls,
           use_ssl: data.use_ssl,
           is_enabled: data.is_enabled,
@@ -471,7 +471,7 @@ export function AdminPage() {
         username: data.username || "",
         password: "",
         from_email: data.from_email || "",
-        from_name: data.from_name || "SahiLocal",
+        from_name: data.from_name || "KoshalHaat",
         use_tls: data.use_tls,
         use_ssl: data.use_ssl,
         is_enabled: data.is_enabled,
@@ -2148,7 +2148,7 @@ export function AdminPage() {
                 type="email"
                 value={smtp.from_email}
                 onChange={(e) => setSmtp({ ...smtp, from_email: e.target.value })}
-                placeholder="noreply@sahilocal.app"
+                placeholder="noreply@koshalhaat.app"
               />
             </div>
             <div className="field">

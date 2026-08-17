@@ -5,7 +5,13 @@ import { PostRequestModal } from "../components/PostRequestModal";
 import { RegisterModal } from "../components/RegisterModal";
 import { CitySearchBox } from "../components/CitySearchBox";
 import { AreaSearchBox, type AreaPick } from "../components/AreaSearchBox";
-import { CategoryNeedSearch, categoryNeedOptions, resolveCategoryNeed, type CategoryNeedOption } from "../components/CategoryNeedSearch";
+import {
+  CategoryNeedSearch,
+  categoryNeedOptions,
+  defaultCategoryNeed,
+  resolveCategoryNeed,
+  type CategoryNeedOption,
+} from "../components/CategoryNeedSearch";
 import { CategoryChipIcon } from "../components/CategoryChipIcon";
 import { BroadcastRequestModal } from "../components/BroadcastRequestModal";
 import { InquiryChatPanel, startOrOpenChat } from "../components/InquiryChat";
@@ -206,6 +212,9 @@ export function LandingPage() {
   const hasCoords = loc.latitude != null && loc.longitude != null;
   const hasLocation = hasCoords || Boolean(selectedCity);
   const areaFieldValue = selectedArea?.name || customPincode;
+  const searchPin = (selectedArea?.pincode || customPincode || "").replace(/\D/g, "");
+  const hasSearchArea = Boolean(selectedArea) || searchPin.length === 6;
+  const canSearch = Boolean(selectedCity) && hasSearchArea;
   const consumerOrigin = useMemo(() => {
     if (selectedArea) {
       return { latitude: selectedArea.latitude, longitude: selectedArea.longitude };
@@ -493,6 +502,14 @@ export function LandingPage() {
       detectLocation();
     }
   }, []);
+
+  useEffect(() => {
+    if (tree.length === 0) return;
+    const opt = defaultCategoryNeed(tree);
+    if (!opt) return;
+    setNeedCategory((prev) => prev ?? opt);
+    setSearchQ((q) => (q.trim() ? q : opt.name));
+  }, [tree]);
 
   useEffect(() => {
     if (!hasCoords && loc.pincode.length !== 6) {
@@ -788,14 +805,17 @@ export function LandingPage() {
   }
 
   async function runSearch(q: string, categoryId?: number) {
-    const city =
-      selectedCity ||
-      findServiceCityByName(loc.label) ||
-      matchServiceCity(loc.label);
-    if (!city && !hasCoords) {
+    if (!canSearch) {
+      if (!selectedCity) openCityPopup("no_location");
+      return;
+    }
+    const city = selectedCity;
+    if (!city) {
       openCityPopup("no_location");
       return;
     }
+    const pin = selectedArea?.pincode || searchPin;
+    if (!pin) return;
     setSearchBusy(true);
     setError("");
     setSearchDone(false);
@@ -806,25 +826,13 @@ export function LandingPage() {
     try {
       const params: Record<string, string | number> = { q };
       if (categoryId != null) params.category_id = categoryId;
-      if (city) {
-        params.city = city.name;
-        // Prefer a more specific area/pincode when the consumer picked one.
-        const pin =
-          selectedArea?.pincode ||
-          customPincode ||
-          (loc.pincode.replace(/\D/g, "").length === 6 ? loc.pincode.replace(/\D/g, "") : "") ||
-          city.pincode;
-        if (pin) params.pincode = pin;
-      }
-      const lat = consumerOrigin.latitude ?? city?.latitude ?? null;
-      const lon = consumerOrigin.longitude ?? city?.longitude ?? null;
+      params.city = city.name;
+      params.pincode = pin;
+      const lat = consumerOrigin.latitude ?? city.latitude ?? null;
+      const lon = consumerOrigin.longitude ?? city.longitude ?? null;
       if (lat != null && lon != null) {
         params.latitude = lat;
         params.longitude = lon;
-      }
-      if (!params.pincode) {
-        const pin = loc.pincode.replace(/\D/g, "").slice(0, 6);
-        if (pin.length === 6) params.pincode = pin;
       }
       const { data } = await api.get<PublicSearchResult>("/providers/public-search", { params });
       setSearchProviders(sortProvidersNearest(data.providers || []));
@@ -846,11 +854,15 @@ export function LandingPage() {
 
   async function onSearch(e: FormEvent) {
     e.preventDefault();
-    await runSearch(searchQ.trim());
+    if (!canSearch) return;
+    const resolved = resolveCategoryNeed(tree, searchQ, needCategory);
+    await runSearch(searchQ.trim(), resolved?.id);
   }
 
   function onPickNeed(opt: CategoryNeedOption) {
     setNeedCategory(opt);
+    setSearchQ(opt.name);
+    if (!canSearch) return;
     void runSearch(opt.name, opt.id);
   }
 
@@ -1169,7 +1181,7 @@ export function LandingPage() {
             <div className="landing-sidebar-brand">
               <div className="landing-sidebar-brand-row">
                 <Link to="/" className="brand" onClick={() => setNavOpen(false)}>
-                  SahiLocal
+                  KoshalHaat
                 </Link>
                 <button
                   type="button"
@@ -1259,7 +1271,7 @@ export function LandingPage() {
                 </button>
               )}
               <Link to="/" className="brand landing-brand">
-                SahiLocal
+                KoshalHaat
               </Link>
             </div>
             <nav className="landing-auth">
@@ -1313,7 +1325,13 @@ export function LandingPage() {
                 City, area, then category.
               </p>
             </div>
-            <form className="landing-booking-pad landing-booking-pad-3" onSubmit={onSearch}>
+            <form
+              className="landing-booking-pad landing-booking-pad-3"
+              onSubmit={onSearch}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !canSearch) e.preventDefault();
+              }}
+            >
               <div className="landing-pad-row">
                 <div className="landing-pad-field landing-pad-city">
                   <label htmlFor="landing-city-field">City</label>
@@ -1370,10 +1388,19 @@ export function LandingPage() {
                       }
                     }}
                     onPick={onPickNeed}
-                    placeholder="Category or leave blank…"
+                    placeholder=""
                   />
                 </div>
-                <button className="btn landing-pad-submit" type="submit" disabled={searchBusy}>
+                <button
+                  className="btn landing-pad-submit"
+                  type="submit"
+                  disabled={!canSearch || searchBusy}
+                  title={
+                    canSearch
+                      ? undefined
+                      : "Choose a city and an area or pincode to search"
+                  }
+                >
                   {searchBusy ? "Searching…" : "Search"}
                 </button>
               </div>
@@ -1386,10 +1413,10 @@ export function LandingPage() {
                   : customPincode && selectedCity
                     ? `Ready near pincode ${customPincode} in ${selectedCity.name}`
                     : selectedCity
-                      ? `Ready to search in ${selectedCity.name}`
+                      ? "Choose an area or pincode to search"
                       : hasCoords
-                        ? `Near ${loc.label || "you"} — choose a supported city if needed`
-                        : "Choose a city to begin"}
+                        ? `Near ${loc.label || "you"} — choose a supported city and area`
+                        : "Choose a city and area to begin"}
             </p>
           </div>
           <div className="landing-broadcast-card">
@@ -1763,7 +1790,7 @@ export function LandingPage() {
         )}
 
         <footer className="landing-footer">
-          <strong>SahiLocal</strong>
+          <strong>KoshalHaat</strong>
           <span className="muted">Verified providers · nearby matching</span>
         </footer>
       </div>

@@ -1,4 +1,4 @@
-# SahiLocal — How to Start Frontend & Backend
+# KoshalHaat — How to Start Frontend & Backend
 
 ## Prerequisites
 

@@ -1,10 +1,10 @@
 Hi {{full_name}},
 
-Your SahiLocal provider account access has been revoked by the admin team.
+Your KoshalHaat provider account access has been revoked by the admin team.
 
 You can still log in to update your profile and message admin support:
 {{login_url}}
 
 Marketplace features (requests, quotes, orders, and consumer inquiries) are unavailable until your account is re-approved.
 
-— SahiLocal Team
+— KoshalHaat Team

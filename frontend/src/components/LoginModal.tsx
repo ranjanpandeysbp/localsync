@@ -81,7 +81,7 @@ export function LoginModal({ open, onClose, onCreateAccount }: Props) {
         </button>
         <p className="eyebrow">Welcome back</p>
         <h2 id={titleId} className="login-modal-title">
-          Sign in to SahiLocal
+          Sign in to KoshalHaat
         </h2>
         <p className="muted login-modal-lead">Use your phone number and password.</p>
         <form className="stack" onSubmit={onSubmit}>

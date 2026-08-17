@@ -164,7 +164,7 @@ def reverse_geocode_details(latitude: float, longitude: float) -> ReverseGeocode
     req = urllib.request.Request(
         f"https://nominatim.openstreetmap.org/reverse?{params}",
         headers={
-            "User-Agent": "SahiLocal/1.0 (local marketplace; contact=sahilocal)",
+            "User-Agent": "KoshalHaat/1.0 (local marketplace; contact=koshalhaat)",
             "Accept": "application/json",
             "Accept-Language": "en",
         },

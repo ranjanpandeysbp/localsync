@@ -35,6 +35,22 @@ export function categoryNeedOptions(tree: CategoryTree[]): CategoryNeedOption[] 
   return opts;
 }
 
+const PREFERRED_DEFAULT_NAMES = [
+  "Home & Office Maintenance",
+  "Plumbing",
+  "Home plumbing",
+];
+
+export function defaultCategoryNeed(tree: CategoryTree[]): CategoryNeedOption | null {
+  const opts = categoryNeedOptions(tree);
+  if (opts.length === 0) return null;
+  for (const name of PREFERRED_DEFAULT_NAMES) {
+    const hit = opts.find((o) => o.name.toLowerCase() === name.toLowerCase());
+    if (hit) return hit;
+  }
+  return opts.find((o) => o.isParent) || opts[0];
+}
+
 export function resolveCategoryNeed(
   tree: CategoryTree[],
   query: string,
@@ -79,7 +95,7 @@ export function CategoryNeedSearch({
   onChange,
   onPick,
   id,
-  placeholder = "Type a category or need…",
+  placeholder = "",
 }: {
   tree: CategoryTree[];
   value: string;

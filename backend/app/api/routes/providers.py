@@ -976,7 +976,7 @@ async def verify_provider(
                 admin=current_user,
                 provider=user,
                 body=(
-                    "Your provider account has been re-approved by SahiLocal admin. "
+                    "Your provider account has been re-approved by KoshalHaat admin. "
                     "Marketplace features are available again — you can go online, "
                     "receive requests, send quotes, and chat with consumers."
                 ),
@@ -993,7 +993,7 @@ async def verify_provider(
                 admin=current_user,
                 provider=user,
                 body=(
-                    "Congratulations — your provider account has been approved by SahiLocal admin. "
+                    "Congratulations — your provider account has been approved by KoshalHaat admin. "
                     "You can complete My profile, go online, and start receiving nearby requests."
                 ),
                 reason="provider_approved",
@@ -1012,7 +1012,7 @@ async def verify_provider(
             admin=current_user,
             provider=user,
             body=(
-                "Your provider account has been revoked by SahiLocal admin. "
+                "Your provider account has been revoked by KoshalHaat admin. "
                 "You can still open Overview, update My profile, and reply in Admin messages. "
                 "Requests, quotes, orders, and consumer inquiries are unavailable until you are re-approved."
             ),
