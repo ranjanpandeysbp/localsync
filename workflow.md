@@ -1,8 +1,10 @@
-# KoshalHaat App Workflow
+# KoshalCity App Workflow
 
 ## Overview
 
-KoshalHaat is a hyper-local marketplace that connects **consumers** with nearby **verified providers** for products and services.
+KoshalCity is a hyper-local marketplace that connects **consumers** with nearby **verified providers** for products and services.
+
+**Tagline:** Connecting Homes, Empowering Business
 
 **Stack:** React (Vite) · FastAPI · JWT · PostgreSQL/PostGIS · Redis · WebSockets
 
@@ -106,7 +108,7 @@ Sign-in and registration are **modals on the public landing page** (`/`), not se
 - Backdrop click, Escape, or × closes the modal and clears the query param.
 - Unauthenticated access to protected routes sends the user to `/?login=1`.
 - **Log out** returns to the public landing `/` **without** auto-opening Sign in or Select city modals (logout nav flag). Intentional **Sign in** afterward still opens the login modal as usual.
-- Forgot / reset password remain standalone pages (`/forgot-password`, `/reset-password`).
+- Forgot / reset password remain standalone pages (`/forgot-password`, `/reset-password`). When Fast2SMS is configured, forgot-password is OTP-based; the email reset link page remains for older links.
 
 ### Sign in (landing modal)
 
@@ -117,13 +119,23 @@ Sign-in and registration are **modals on the public landing page** (`/`), not se
 
 ### Forgot password
 
+**With Fast2SMS configured** (`FAST2SMS_API_KEY` set):
+
+1. User enters phone on `/forgot-password` → `POST /auth/forgot-password` sends a 6-digit SMS OTP (generic response; does not reveal whether the phone is registered)
+2. User enters OTP + new password → `POST /auth/reset-password-otp`
+3. Redirected to sign in (`/?login=1`)
+
+OTP expires in `FAST2SMS_OTP_EXPIRY_MINUTES` (default 10). Resend is limited to once per `OTP_RESEND_SECONDS` (default 60) and 5 sends per number per hour.
+
+**Without Fast2SMS** (local/demo):
+
 1. User enters phone on `/forgot-password` → `POST /auth/forgot-password`
 2. If the account exists, is active, and has an email on file, a reset link is emailed (SMTP must be enabled in Admin → Config)
 3. Response is always generic (does not reveal whether the phone is registered)
 4. Link opens `/reset-password?token=…` (JWT, expires in 30 minutes by default)
 5. User sets a new password → `POST /auth/reset-password` → redirected to sign in (`/?login=1`)
 
-Config: `frontend_url` (link base, default `http://localhost:5173`) and `password_reset_expire_minutes`.
+Config: `frontend_url` (email link base, default `http://localhost:5173`) and `password_reset_expire_minutes`.
 
 ### Register (landing modal)
 
@@ -132,6 +144,7 @@ Scrollable modal on `/` (wider when role is **Provider**). Same fields as before
 **Shared fields (both roles):**
 
 - Full name, phone, email, password (all required)
+- **Mobile OTP** — when Fast2SMS is configured, **Send OTP** then **Verify & create account**. `POST /auth/otp/send` `{ purpose: "register" }` then `POST /auth/register` with `otp`. Admin-created accounts skip this.
 - **City / locality** and **Pincode** — always required; auto-filled from GPS via reverse geocoding when the modal opens
 - **Location** status — local place name with coordinates, e.g. `Indiranagar 1st Stage · 12.97840, 77.64080`
 - Reverse geocode prefers **local** names (neighbourhood / suburb) over generic admin labels, and also fills **state** when available
@@ -158,10 +171,10 @@ Templates live in `backend/app/services/email_templates/` (paired `html/` + `tex
 
 | Audience | When | Template key(s) | Subject (approx.) |
 |----------|------|-----------------|-------------------|
-| **Consumer** | Self-register on landing (`POST /auth/register`) if email provided | `registration_consumer` | Welcome to KoshalHaat |
-| **Provider** | Self-register or admin **Add provider** left as Pending | `registration_provider` | Thank you for registering with KoshalHaat |
-| **Customer service** | Admin creates agent (Pending) | `registration_customer_service_pending` | Your KoshalHaat customer service account was created |
-| **Customer service** | Admin creates agent already approved, or later **Approve** / **Re-approve** | `registration_customer_service_approved` | Your KoshalHaat customer service account is ready |
+| **Consumer** | Self-register on landing (`POST /auth/register`) if email provided | `registration_consumer` | Welcome to KoshalCity |
+| **Provider** | Self-register or admin **Add provider** left as Pending | `registration_provider` | Thank you for registering with KoshalCity |
+| **Customer service** | Admin creates agent (Pending) | `registration_customer_service_pending` | Your KoshalCity customer service account was created |
+| **Customer service** | Admin creates agent already approved, or later **Approve** / **Re-approve** | `registration_customer_service_approved` | Your KoshalCity customer service account is ready |
 
 Provider email is required at register. Consumer email is optional (no email → no send). CS agents always have an email.
 
@@ -177,7 +190,9 @@ Triggered from staff verify actions (`POST /providers/{id}/verify`) and from adm
 
 ### 3. Password reset
 
-`POST /auth/forgot-password` emails a role-specific template when the account is active and has an email:
+When Fast2SMS is configured, forgot-password uses **SMS OTP** (`POST /auth/forgot-password` + `POST /auth/reset-password-otp`). Email reset below still applies when SMS is not configured, and `/reset-password?token=…` still works for existing email links.
+
+`POST /auth/forgot-password` emails a role-specific template when SMS is **not** configured and the account is active and has an email:
 
 | Role | Template key |
 |------|--------------|
@@ -187,6 +202,27 @@ Triggered from staff verify actions (`POST /providers/{id}/verify`) and from adm
 | Admin | `password_reset_admin` |
 
 Reset link: `{frontend_url}/reset-password?token=…` (default expiry 30 minutes).
+
+---
+
+## Fast2SMS OTP
+
+Used for **self-register mobile verify** and **forgot-password**. Admin-created users are not OTP-gated.
+
+| Env | Purpose |
+|-----|---------|
+| `FAST2SMS_API_KEY` | Enables SMS (`GET /auth/sms-status` → `enabled: true`) |
+| `FAST2SMS_OTP_ID` | Optional DLT / Smart OTP template id. If blank, uses Fast2SMS `route=otp` |
+| `FAST2SMS_OTP_EXPIRY_MINUTES` | Default 10 |
+| `OTP_RESEND_SECONDS` | Default 60 |
+| `OTP_MAX_PER_HOUR` | Default 5 |
+
+Flow: app generates a 6-digit OTP, sends it via Fast2SMS, stores a hash in Redis, verifies locally.
+
+- Register: `POST /auth/otp/send` `{ purpose: "register" }` → `POST /auth/register` with `otp`
+- Forgot: `POST /auth/forgot-password` → `POST /auth/reset-password-otp`
+
+Without an API key, OTP is skipped (local/demo).
 
 ---
 
@@ -708,7 +744,7 @@ PostgreSQL 16 + PostGIS (`postgis/postgis:16-3.4` in `docker-compose.yml`). Defa
 | Database | `localsync` |
 | User / password | `localsync` / `localsync` |
 
-A schema + data snapshot of the **public** app tables lives at **`backend/scripts/koshalhaat.sql`**. It includes current local/dev rows (users, categories, providers, requests, quotes, orders, chats). PostGIS `spatial_ref_sys` and **SMTP config row data** are excluded so the file stays small and does not contain SMTP credentials. User password hashes are included so demo logins still work after restore. Re-enter SMTP in Admin → Config after restore if you need mail.
+A schema + data snapshot of the **public** app tables lives at **`backend/scripts/koshalcity.sql`**. It includes current local/dev rows (users, categories, providers, requests, quotes, orders, chats). PostGIS `spatial_ref_sys` and **SMTP config row data** are excluded so the file stays small and does not contain SMTP credentials. User password hashes are included so demo logins still work after restore. Re-enter SMTP in Admin → Config after restore if you need mail.
 
 **Prerequisite:** Docker Desktop running, then from repo root wait until `db` is healthy:
 
@@ -730,9 +766,9 @@ Do **not** redirect `pg_dump` with PowerShell `>` (that writes UTF-16 and corrup
 **Equivalent** (any OS). After copy, keep `CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA public;` near the top, and **remove** `DROP SCHEMA IF EXISTS public` / `CREATE SCHEMA public` if `pg_dump` added them:
 
 ```bash
-docker compose exec -T db pg_dump -U localsync -d localsync --schema=public --exclude-table=spatial_ref_sys --exclude-table-data=app_smtp_config --no-owner --no-acl --clean --if-exists -f /tmp/koshalhaat.sql
-docker compose cp db:/tmp/koshalhaat.sql ./backend/scripts/koshalhaat.sql
-docker compose exec -T db rm -f /tmp/koshalhaat.sql
+docker compose exec -T db pg_dump -U localsync -d localsync --schema=public --exclude-table=spatial_ref_sys --exclude-table-data=app_smtp_config --no-owner --no-acl --clean --if-exists -f /tmp/koshalcity.sql
+docker compose cp db:/tmp/koshalcity.sql ./backend/scripts/koshalcity.sql
+docker compose exec -T db rm -f /tmp/koshalcity.sql
 ```
 
 ### Restore / import
@@ -741,8 +777,8 @@ docker compose exec -T db rm -f /tmp/koshalhaat.sql
 
 ```powershell
 docker compose up -d
-docker compose cp .\backend\scripts\koshalhaat.sql db:/tmp/koshalhaat.sql
-docker compose exec -T db psql -U localsync -d localsync -v ON_ERROR_STOP=1 -f /tmp/koshalhaat.sql
+docker compose cp .\backend\scripts\koshalcity.sql db:/tmp/koshalcity.sql
+docker compose exec -T db psql -U localsync -d localsync -v ON_ERROR_STOP=1 -f /tmp/koshalcity.sql
 ```
 
 Then start the API as usual (`uvicorn …`). You do **not** need `python -m scripts.seed` after a successful restore unless you want seed.py to add any accounts/categories missing from the snapshot.
@@ -752,10 +788,10 @@ Then start the API as usual (`uvicorn …`). You do **not** need `python -m scri
 ## Notes for operators
 
 - Restart backend after schema updates so startup migrations apply (`public_slug`, `target_mode`, `request_targets`, `payment_mode`, social URL columns, SMTP table, admin support conversations, `REVOKED` verification status, `CUSTOMER_SERVICE` user role, etc.).
-- Re-run `python -m scripts.seed` after role/enum changes to ensure demo accounts exist (including CS `9000000004` / `support123`), **or** restore `backend/scripts/koshalhaat.sql` (see **Database dump / restore**) if you want the saved local snapshot instead of a seed-only database.
+- Re-run `python -m scripts.seed` after role/enum changes to ensure demo accounts exist (including CS `9000000004` / `support123`), **or** restore `backend/scripts/koshalcity.sql` (see **Database dump / restore**) if you want the saved local snapshot instead of a seed-only database.
 - Existing providers without a slug are backfilled on startup from business name.
 - Provider / consumer / CS registration emails and provider approve·revoke·re-approve emails need **Admin → Config** SMTP enabled with a valid from-address.
-- Password reset emails also need SMTP enabled; set `frontend_url` so reset links point at the correct app host. Role-specific templates are under `backend/app/services/email_templates/`.
+- Password reset: with Fast2SMS, users reset via SMS OTP on `/forgot-password`. Without it, reset emails need SMTP enabled; set `frontend_url` so reset links point at the correct app host. Role-specific templates are under `backend/app/services/email_templates/`.
 - Matching quality depends on accurate GPS **and/or** pincode (plus city) on both consumer and provider profiles.
 - Order dashboard location quality depends on filled `state` / `city` / `pincode` / `location_label` on user profiles.
 - Reverse geocoding uses OpenStreetMap Nominatim; allow outbound network from the API host.

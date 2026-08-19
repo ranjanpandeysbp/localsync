@@ -3,13 +3,14 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { InquiryChatPanel, startOrOpenChat } from "../components/InquiryChat";
 import { MapsLink } from "../components/MapsLink";
 import { PostRequestModal } from "../components/PostRequestModal";
-import { offerKindLabel } from "../components/ProviderTrust";
+import { offerKindLabel, VerifiedLocalPartnerBadge } from "../components/ProviderTrust";
 import { api } from "../services/api";
 import { useAuth } from "../store/auth";
 import { isProviderOnlineNow } from "../utils/businessHours";
 import { savePostRequestDraft, type PostRequestDraft } from "../utils/postRequestDraft";
 import type { ProviderPublicProfile } from "../types";
-import { brand, btn, btnSecondary, iconBtn } from "../ui";
+import { KoshalCityLogo } from "../components/KoshalCityLogo";
+import { btn, btnSecondary, iconBtn } from "../ui";
 
 export function PublicProviderPage() {
   const { slugOrId } = useParams<{ slugOrId: string }>();
@@ -145,17 +146,20 @@ export function PublicProviderPage() {
   return (
     <div className="min-h-screen max-w-full min-w-0 overflow-x-clip bg-canvas">
       <header className="sticky top-0 z-30 backdrop-blur-[12px] bg-[rgba(250,249,245,0.92)] border-b border-solid border-line">
-        <div className="w-[min(1120px,calc(100%-2rem))] mx-auto py-4 flex items-center justify-between gap-4 min-w-0">
-          <Link to="/" className={`${brand} text-[1.35rem]`}>
-            KoshalHaat
+        <div className="w-[min(1120px,calc(100%-2rem))] mx-auto py-3 flex items-center justify-between gap-2 min-w-0 flex-nowrap max-[560px]:w-[min(1120px,calc(100%-1.25rem))]">
+          <Link to="/" className="inline-flex no-underline min-w-0 [&_.kc-word]:max-[360px]:hidden">
+            <KoshalCityLogo markSize={28} showTagline={false} />
           </Link>
-          <div className="flex gap-[0.55rem] flex-wrap items-center">
+          <div className="flex gap-2 items-center shrink-0 flex-nowrap">
             {!token && (
               <>
-                <Link className={btnSecondary} to="/?login=1">
+                <Link
+                  className={`${btnSecondary} max-[560px]:px-3 max-[560px]:py-[0.4rem] max-[560px]:text-[0.82rem]`}
+                  to="/?login=1"
+                >
                   Log in
                 </Link>
-                <Link className={btn} to="/?register=1">
+                <Link className={`${btn} max-[560px]:px-3 max-[560px]:py-[0.4rem] max-[560px]:text-[0.82rem]`} to="/?register=1">
                   Register
                 </Link>
               </>
@@ -186,8 +190,13 @@ export function PublicProviderPage() {
             <header className="page-hero">
               <div className="page-hero-row">
                 <div>
-                  <p className="dash-eyebrow">Verified provider</p>
+                  <p className="dash-eyebrow">Local provider</p>
                   <h1 className="public-provider-title">{profile.business_name}</h1>
+                  <VerifiedLocalPartnerBadge
+                    verificationStatus={profile.verification_status}
+                    size="md"
+                    className="mt-2"
+                  />
                   {profile.full_name && <p className="muted page-meta">{profile.full_name}</p>}
                 </div>
                 <span className={`pill ${online ? "online" : "offline"}`}>

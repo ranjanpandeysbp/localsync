@@ -10,7 +10,7 @@ import { MapsLink } from "../components/MapsLink";
 import { PostRequestModal } from "../components/PostRequestModal";
 import { ProfileCard } from "../components/ProfileCard";
 import { StatusFilterSelect } from "../components/StatusFilterSelect";
-import { flattenCategoryOptions } from "../components/ProviderTrust";
+import { flattenCategoryOptions, VerifiedLocalPartnerBadge } from "../components/ProviderTrust";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { api } from "../services/api";
 import { useAuth } from "../store/auth";
@@ -1300,6 +1300,10 @@ export function ConsumerDashboard() {
                               </span>
                             )}
                           </h3>
+                          <VerifiedLocalPartnerBadge
+                            verificationStatus={q.provider_trust?.verification_status}
+                            className="mt-[0.3rem]"
+                          />
                           <p className="muted consumer-quote-meta">
                             ★ {(q.provider_rating ?? 0).toFixed(1)}
                             {q.provider_trust?.full_name

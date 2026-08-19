@@ -97,7 +97,7 @@ def _support_out(
         updated_at=conv.updated_at,
         provider_name=provider.full_name if provider else None,
         provider_business_name=profile.business_name if profile else None,
-        admin_name=admin.full_name if admin else "KoshalHaat Admin",
+        admin_name=admin.full_name if admin else "KoshalCity Admin",
         last_message=last.body if last else None,
         unread_count=unread,
         provider_message_count=_provider_message_count(db, conv),

@@ -7,6 +7,8 @@ import { MapsLink } from "../components/MapsLink";
 import { offerKindLabel } from "../components/ProviderTrust";
 import { api } from "../services/api";
 import { useAdminNav } from "../store/adminNav";
+import { useAuth } from "../store/auth";
+import { staffPathBase } from "../types";
 import type { AdminProviderDetail, AdminSupportConversation, OfferKind } from "../types";
 
 type EditForm = {
@@ -33,7 +35,6 @@ type EditForm = {
   youtube_url: string;
   tax_id: string;
   gst_number: string;
-  aadhaar_number: string;
 };
 
 function emptyForm(): EditForm {
@@ -61,7 +62,6 @@ function emptyForm(): EditForm {
     youtube_url: "",
     tax_id: "",
     gst_number: "",
-    aadhaar_number: "",
   };
 }
 
@@ -90,9 +90,9 @@ function formFromProvider(p: AdminProviderDetail): EditForm {
     youtube_url: p.youtube_url || "",
     tax_id: p.tax_id || "",
     gst_number: p.gst_number || "",
-    aadhaar_number: p.aadhaar_number || "",
   };
 }
+
 
 function DocLink({ href, label }: { href?: string | null; label: string }) {
   if (!href) return <span className="muted">Not uploaded</span>;
@@ -125,6 +125,8 @@ function MetaItem({
 export function AdminProviderDetailPage() {
   const { userId } = useParams<{ userId: string }>();
   const navigate = useNavigate();
+  const user = useAuth((s) => s.user);
+  const base = staffPathBase(user?.role);
   const refreshCounts = useAdminNav((s) => s.refreshCounts);
   const [provider, setProvider] = useState<AdminProviderDetail | null>(null);
   const [form, setForm] = useState<EditForm>(emptyForm);
@@ -187,10 +189,6 @@ export function AdminProviderDetailPage() {
   async function saveDetails(e: FormEvent) {
     e.preventDefault();
     if (!userId) return;
-    if (form.aadhaar_number && !/^\d{12}$/.test(form.aadhaar_number.trim())) {
-      setError("Aadhaar must be 12 digits");
-      return;
-    }
     if (!form.business_name.trim()) {
       setError("Business name is required");
       return;
@@ -230,8 +228,8 @@ export function AdminProviderDetailPage() {
         youtube_url: form.youtube_url.trim() || null,
         tax_id: form.tax_id.trim() || null,
         gst_number: form.gst_number.trim() || null,
-        aadhaar_number: form.aadhaar_number.trim() || null,
       });
+
       applyProvider(data);
       setNote("Provider details saved");
     } catch (err: unknown) {
@@ -299,7 +297,7 @@ export function AdminProviderDetailPage() {
     try {
       await api.delete(`/admin/users/${userId}`);
       await refreshCounts();
-      navigate("/admin/providers", { replace: true });
+      navigate(`${base}/providers`, { replace: true });
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
@@ -358,7 +356,7 @@ export function AdminProviderDetailPage() {
     <AppShell title={provider?.business_name || "Provider details"} onRefresh={load}>
       <div className="admin-provider-detail">
         <div className="admin-provider-detail-nav">
-          <Link className="btn secondary" to="/admin/providers">
+          <Link className="btn secondary" to={`${base}/providers`}>
             ← Back to providers
           </Link>
         </div>
@@ -444,15 +442,15 @@ export function AdminProviderDetailPage() {
                   )}
                   {(provider.verification_status === "REJECTED" ||
                     provider.verification_status === "REVOKED") && (
-                    <button
-                      className="btn secondary"
-                      type="button"
-                      disabled={busy || saving}
-                      onClick={() => void verify("APPROVED")}
-                    >
-                      Re-approve
-                    </button>
-                  )}
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        disabled={busy || saving}
+                        onClick={() => void verify("APPROVED")}
+                      >
+                        Re-approve
+                      </button>
+                    )}
                   <button
                     className="btn"
                     type="button"
@@ -717,20 +715,10 @@ export function AdminProviderDetailPage() {
                       onChange={(e) => setField("gst_number", e.target.value)}
                     />
                   </label>
-                  <label className="field">
-                    <span>Aadhaar number</span>
-                    <input
-                      value={form.aadhaar_number}
-                      onChange={(e) => setField("aadhaar_number", e.target.value)}
-                      inputMode="numeric"
-                      maxLength={12}
-                    />
-                  </label>
                 </div>
                 <div className="admin-provider-doc-list">
                   {(
                     [
-                      ["aadhaar", "Aadhaar document", provider.aadhaar_doc_url],
                       ["gst", "GST document", provider.gst_doc_url],
                       ["government_id", "Government ID", provider.government_id_url],
                       ["business_reg", "Business registration", provider.business_reg_url],

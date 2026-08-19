@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { MarketplaceScene } from "../components/MarketplaceScene";
+import { KoshalCityLogo } from "../components/KoshalCityLogo";
 import { useAuth } from "../store/auth";
 import { roleHome } from "../types";
 import { btn, errorText, field, fieldInput, fieldLabel, muted } from "../ui";
@@ -36,11 +37,11 @@ export function LoginPage() {
     <div className="min-h-screen grid grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] bg-canvas max-[960px]:fixed max-[960px]:inset-0 max-[960px]:block max-[960px]:w-full max-[960px]:h-dvh max-[960px]:min-h-dvh max-[960px]:max-h-dvh max-[960px]:overflow-hidden">
       <aside className="relative grid grid-rows-[auto_1fr] gap-5 p-[clamp(1.5rem,4vw,3rem)] overflow-hidden bg-[radial-gradient(circle_at_18%_20%,rgba(234,161,29,0.22),transparent_42%),linear-gradient(160deg,#14665a_0%,#0f4c43_48%,#0a3a34_100%)] text-bg animate-login-visual-in max-[960px]:absolute max-[960px]:inset-0 max-[960px]:z-0 max-[960px]:grid-rows-1 max-[960px]:p-0 max-[960px]:gap-0">
         <div className="relative z-[1] max-w-md animate-login-rise max-[960px]:hidden">
-          <p className="m-0 mb-3 font-display text-[clamp(1.8rem,3.5vw,2.45rem)] font-extrabold tracking-[-0.04em] leading-none text-bg">
-            KoshalHaat
+          <p className="m-0 mb-3">
+            <KoshalCityLogo tone="light" markSize={48} showTagline />
           </p>
-          <h1 className="m-0 text-[clamp(1.45rem,2.6vw,2rem)] font-semibold tracking-[-0.03em] leading-tight text-bg">
-            Find trusted help around the corner.
+          <h1 className="m-0 text-[clamp(1.2rem,2.2vw,1.55rem)] font-semibold tracking-[-0.03em] leading-snug text-bg">
+            Connecting Homes, Empowering Business
           </h1>
           <p className="mt-[0.85rem] mb-0 max-w-sm text-[1.02rem] leading-[1.55] text-[rgba(250,249,245,0.82)]">
             Verified local providers, nearby requests, and quotes — all in one place.
@@ -60,11 +61,8 @@ export function LoginPage() {
           onSubmit={onSubmit}
         >
           <div className="mb-[0.55rem] max-[960px]:mb-[0.2rem]">
-            <Link
-              to="/"
-              className="hidden max-[960px]:inline-block mb-[0.85rem] font-display text-[1.35rem] font-extrabold tracking-[-0.03em] text-brand max-[960px]:mb-2 [@media(max-width:960px)_and_(max-height:700px)]:mb-1 [@media(max-width:960px)_and_(max-height:700px)]:text-[1.15rem]"
-            >
-              KoshalHaat
+            <Link to="/" className="hidden max-[960px]:inline-flex mb-[0.85rem] no-underline max-[960px]:mb-2 [@media(max-width:960px)_and_(max-height:700px)]:mb-1">
+              <KoshalCityLogo tone="light" markSize={28} />
             </Link>
             <h2 className="m-0 text-brand tracking-[-0.03em] text-[clamp(1.55rem,2.5vw,1.9rem)] max-[960px]:text-[1.4rem] max-[560px]:text-[1.28rem] [@media(max-width:960px)_and_(max-height:700px)]:text-[1.2rem]">
               Welcome back

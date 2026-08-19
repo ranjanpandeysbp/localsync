@@ -1,5 +1,6 @@
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../store/auth";
+import { isStaffRole, roleHome } from "../types";
 import { LandingPage } from "./LandingPage";
 import { authWrap, muted } from "../ui";
 
@@ -15,9 +16,8 @@ export function HomeRedirect() {
   }
 
   if (!token || !user) return <LandingPage />;
-  if (user.role === "PROVIDER") return <Navigate to="/provider/overview" replace />;
-  if (user.role === "ADMIN" || user.role === "CUSTOMER_SERVICE") {
-    return <Navigate to="/admin/overview" replace />;
+  if (user.role === "PROVIDER" || isStaffRole(user.role)) {
+    return <Navigate to={roleHome(user.role)} replace />;
   }
   // Consumers stay on the public landing while signed in.
   return <LandingPage />;

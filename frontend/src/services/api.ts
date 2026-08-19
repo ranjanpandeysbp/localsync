@@ -40,6 +40,7 @@ api.interceptors.response.use(
       if (
         reqUrl.includes("/auth/login") ||
         reqUrl.includes("/auth/register") ||
+        reqUrl.includes("/auth/otp") ||
         reqUrl.includes("/auth/forgot-password") ||
         reqUrl.includes("/auth/reset-password")
       ) {

@@ -1,21 +1,22 @@
-# Dump local KoshalHaat Postgres (Docker service `db`) to backend/scripts/koshalhaat.sql.
+# Dump local KoshalCity Postgres (Docker service `db`) to backend/scripts/koshalcity.sql.
 # Run from anywhere; requires docker compose db healthy. Does not print secrets.
 
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 Set-Location $root
 
-$rel = "backend\scripts\koshalhaat.sql"
+$rel = "backend\scripts\koshalcity.sql"
 docker compose exec -T db pg_dump -U localsync -d localsync `
     --schema=public --no-owner --no-acl --clean --if-exists `
     --exclude-table=spatial_ref_sys `
     --exclude-table-data=app_smtp_config `
-    -f /tmp/koshalhaat.sql
+    --exclude-table-data=app_sms_config `
+    -f /tmp/koshalcity.sql
 if ($LASTEXITCODE -ne 0) { throw "pg_dump failed" }
 
-docker compose cp db:/tmp/koshalhaat.sql .\$rel
+docker compose cp db:/tmp/koshalcity.sql .\$rel
 if ($LASTEXITCODE -ne 0) { throw "docker compose cp failed" }
-docker compose exec -T db rm -f /tmp/koshalhaat.sql
+docker compose exec -T db rm -f /tmp/koshalcity.sql
 
 $path = Join-Path $root $rel
 $text = [IO.File]::ReadAllText($path)
@@ -46,8 +47,8 @@ $text = $text.Replace($schemaBlock, "")
 $ext = @"
 SET row_security = off;
 
--- KoshalHaat / localsync public-schema snapshot (schema + data).
--- SMTP config rows omitted. Do not DROP SCHEMA public (PostGIS lives there).
+-- KoshalCity / localsync public-schema snapshot (schema + data).
+-- SMTP and SMS config rows omitted. Do not DROP SCHEMA public (PostGIS lives there).
 CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA public;
 "@.Replace("`r`n", "`n")
 

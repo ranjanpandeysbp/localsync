@@ -7,10 +7,13 @@ import { mediaSrc } from "../components/Attachments";
 import { CategoryMultiSelect } from "../components/CategoryMultiSelect";
 import { InquiryChatPanel } from "../components/InquiryChat";
 import { MapsLink } from "../components/MapsLink";
+import { Pagination } from "../components/Pagination";
 import { offerKindClass, offerKindLabel } from "../components/ProviderTrust";
+
 import { api } from "../services/api";
 import { useAdminNav } from "../store/adminNav";
 import { useAuth } from "../store/auth";
+import { staffPathBase } from "../types";
 import type {
   AdminCustomerServiceAgent,
   AdminOrder,
@@ -21,6 +24,7 @@ import type {
   CategoryTree,
   OfferKind,
   SmtpConfig,
+  SmsConfig,
   User,
 } from "../types";
 
@@ -55,10 +59,47 @@ const STAFF_SECTIONS = [
 ] as const;
 const ADMIN_ONLY_SECTIONS = ["customer-service", "config"] as const;
 
+const ADMIN_PAGE_SIZE = 10;
+
+type ConfigAccordion = "email" | "sms" | "support" | null;
+
+
+function AccordionChevron() {
+
+  return (
+    <svg
+      className="profile-accordion-chevron"
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden="true"
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+function smsFormFromConfig(data: SmsConfig) {
+  return {
+    is_enabled: data.is_enabled,
+    api_key: "",
+    api_key_set: data.api_key_set,
+    otp_id: data.otp_id || "",
+    sender_id: data.sender_id || "",
+    otp_expiry_minutes: String(data.otp_expiry_minutes || 10),
+    resend_seconds: String(data.resend_seconds || 60),
+    max_per_hour: String(data.max_per_hour || 5),
+  };
+}
+
 export function AdminPage() {
   const { user } = useAuth();
   const { section } = useParams<{ section?: string }>();
   const isAdmin = user?.role === "ADMIN";
+  const base = staffPathBase(user?.role);
   const allowedSections = isAdmin
     ? [...STAFF_SECTIONS, ...ADMIN_ONLY_SECTIONS]
     : [...STAFF_SECTIONS];
@@ -136,7 +177,7 @@ export function AdminPage() {
     username: "",
     password: "",
     from_email: "",
-    from_name: "KoshalHaat",
+    from_name: "KoshalKarobar",
     use_tls: true,
     use_ssl: false,
     is_enabled: false,
@@ -144,9 +185,27 @@ export function AdminPage() {
   });
   const [testEmail, setTestEmail] = useState("");
   const [smtpBusy, setSmtpBusy] = useState(false);
+  const [sms, setSms] = useState({
+    is_enabled: false,
+    api_key: "",
+    api_key_set: false,
+    otp_id: "",
+    sender_id: "",
+    otp_expiry_minutes: "10",
+    resend_seconds: "60",
+    max_per_hour: "5",
+  });
+  const [testPhone, setTestPhone] = useState("");
+  const [smsBusy, setSmsBusy] = useState(false);
+  const [supportEmail, setSupportEmail] = useState("support@koshalkarobar.in");
+  const [supportBusy, setSupportBusy] = useState(false);
+  const [configAccordion, setConfigAccordion] = useState<ConfigAccordion>(null);
   const [categoryView, setCategoryView] = useState<"manage" | "create">("manage");
   const [categorySearch, setCategorySearch] = useState("");
   const [overviewRefresh, setOverviewRefresh] = useState(0);
+  const [providersPage, setProvidersPage] = useState(1);
+  const [consumersPage, setConsumersPage] = useState(1);
+  const [csPage, setCsPage] = useState(1);
 
   const invalidSection =
     !!section && !allowedSections.includes(section as (typeof allowedSections)[number]);
@@ -155,19 +214,27 @@ export function AdminPage() {
     setError("");
     try {
       if (tab === "config") {
-        const { data } = await api.get<SmtpConfig>("/admin/config/smtp");
+        const [smtpRes, smsRes, supportRes] = await Promise.all([
+          api.get<SmtpConfig>("/admin/config/smtp"),
+          api.get<SmsConfig>("/admin/config/sms"),
+          api.get<{ support_email: string }>("/admin/config/support"),
+        ]);
+        const data = smtpRes.data;
         setSmtp({
           host: data.host || "",
           port: String(data.port || 587),
           username: data.username || "",
           password: "",
           from_email: data.from_email || "",
-          from_name: data.from_name || "KoshalHaat",
+          from_name: data.from_name || "KoshalKarobar",
+
           use_tls: data.use_tls,
           use_ssl: data.use_ssl,
           is_enabled: data.is_enabled,
           password_set: data.password_set,
         });
+        setSms(smsFormFromConfig(smsRes.data));
+        setSupportEmail(supportRes.data.support_email || "support@koshalkarobar.in");
         return;
       }
       if (tab === "customer-service") {
@@ -200,9 +267,11 @@ export function AdminPage() {
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        (err as { message?: string })?.message ||
         "Failed to load admin data";
       setError(String(msg));
     }
+
   }
 
   useEffect(() => {
@@ -340,7 +409,35 @@ export function AdminPage() {
     );
   }, [csAgents, csSearch]);
 
+  useEffect(() => {
+    setProvidersPage(1);
+  }, [providerFilter, providerSearch]);
+
+  useEffect(() => {
+    setConsumersPage(1);
+  }, [consumerSearch]);
+
+  useEffect(() => {
+    setCsPage(1);
+  }, [csSearch]);
+
+  const pagedProviders = useMemo(() => {
+    const start = (providersPage - 1) * ADMIN_PAGE_SIZE;
+    return filteredProviders.slice(start, start + ADMIN_PAGE_SIZE);
+  }, [filteredProviders, providersPage]);
+
+  const pagedConsumers = useMemo(() => {
+    const start = (consumersPage - 1) * ADMIN_PAGE_SIZE;
+    return filteredConsumers.slice(start, start + ADMIN_PAGE_SIZE);
+  }, [filteredConsumers, consumersPage]);
+
+  const pagedCsAgents = useMemo(() => {
+    const start = (csPage - 1) * ADMIN_PAGE_SIZE;
+    return filteredCsAgents.slice(start, start + ADMIN_PAGE_SIZE);
+  }, [filteredCsAgents, csPage]);
+
   const parents = categories;
+
 
   const filteredParents = useMemo(() => {
     const q = categorySearch.trim().toLowerCase();
@@ -365,7 +462,7 @@ export function AdminPage() {
   }, [parents, categorySearch]);
 
   if (invalidSection || ((section === "config" || section === "customer-service") && !isAdmin)) {
-    return <Navigate to="/admin/overview" replace />;
+    return <Navigate to={`${base}/overview`} replace />;
   }
 
   function slugify(name: string) {
@@ -471,8 +568,9 @@ export function AdminPage() {
         username: data.username || "",
         password: "",
         from_email: data.from_email || "",
-        from_name: data.from_name || "KoshalHaat",
+        from_name: data.from_name || "KoshalKarobar",
         use_tls: data.use_tls,
+
         use_ssl: data.use_ssl,
         is_enabled: data.is_enabled,
         password_set: data.password_set,
@@ -485,6 +583,26 @@ export function AdminPage() {
       setError(String(msg));
     } finally {
       setSmtpBusy(false);
+    }
+  }
+
+  async function saveSupportEmail(e: FormEvent) {
+    e.preventDefault();
+    setSupportBusy(true);
+    setError("");
+    try {
+      const { data } = await api.put<{ support_email: string }>("/admin/config/support", {
+        support_email: supportEmail.trim(),
+      });
+      setSupportEmail(data.support_email);
+      setNote("Support email configuration saved");
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        "Failed to save support email settings";
+      setError(String(msg));
+    } finally {
+      setSupportBusy(false);
     }
   }
 
@@ -502,6 +620,50 @@ export function AdminPage() {
       setError(String(msg));
     } finally {
       setSmtpBusy(false);
+    }
+  }
+
+  async function saveSms(e: FormEvent) {
+    e.preventDefault();
+    setSmsBusy(true);
+    setError("");
+    try {
+      const payload: Record<string, unknown> = {
+        is_enabled: sms.is_enabled,
+        otp_id: sms.otp_id || null,
+        sender_id: sms.sender_id || null,
+        otp_expiry_minutes: Number(sms.otp_expiry_minutes),
+        resend_seconds: Number(sms.resend_seconds),
+        max_per_hour: Number(sms.max_per_hour),
+      };
+      if (sms.api_key) payload.api_key = sms.api_key;
+      const { data } = await api.put<SmsConfig>("/admin/config/sms", payload);
+      setSms(smsFormFromConfig(data));
+      setNote("Fast2SMS settings saved");
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        "Failed to save Fast2SMS settings";
+      setError(String(msg));
+    } finally {
+      setSmsBusy(false);
+    }
+  }
+
+  async function sendTestSms(e: FormEvent) {
+    e.preventDefault();
+    setSmsBusy(true);
+    setError("");
+    try {
+      await api.post("/admin/config/sms/test", { phone_number: testPhone });
+      setNote(`Test OTP sent to ${testPhone}`);
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        "Test OTP failed";
+      setError(String(msg));
+    } finally {
+      setSmsBusy(false);
     }
   }
 
@@ -564,7 +726,7 @@ export function AdminPage() {
       setProviderView("list");
       setNote(`Provider “${data.business_name}” created`);
       await load();
-      navigate(`/admin/providers/${data.user_id}`);
+      navigate(`${base}/providers/${data.user_id}`);
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
@@ -1070,8 +1232,9 @@ export function AdminPage() {
                     : "No providers in this filter."}
               </p>
             )}
-            {filteredProviders.map((p) => {
+            {pagedProviders.map((p) => {
               const categories =
+
                 (p.categories && p.categories.length > 0
                   ? p.categories.join(", ")
                   : p.category_name) || "No category";
@@ -1090,13 +1253,13 @@ export function AdminPage() {
                   <header className="admin-provider-card-head">
                     <div className="admin-provider-card-title">
                       <h3>
-                        <Link to={`/admin/providers/${p.user_id}`}>{p.business_name}</Link>
+                        <Link to={`${base}/providers/${p.user_id}`}>{p.business_name}</Link>
                       </h3>
                       <p className="admin-provider-card-owner">{p.full_name}</p>
                     </div>
                     <div className="admin-provider-card-badges">
                       <Link
-                        to={`/admin/providers/${p.user_id}#messaging`}
+                        to={`${base}/providers/${p.user_id}#messaging`}
                         className="admin-msg-icon-btn"
                         title={
                           unreadFromProvider > 0
@@ -1192,21 +1355,12 @@ export function AdminPage() {
                         </div>
                       </dd>
                     </div>
-                    {p.aadhaar_doc_url && (
-                      <div>
-                        <dt>Documents</dt>
-                        <dd>
-                          <a href={mediaSrc(p.aadhaar_doc_url)} target="_blank" rel="noreferrer">
-                            Aadhaar document
-                          </a>
-                        </dd>
-                      </div>
-                    )}
                   </dl>
+
 
                   <footer className="admin-provider-card-actions">
                     <div className="admin-provider-card-actions-main">
-                      <Link className="btn" to={`/admin/providers/${p.user_id}`}>
+                      <Link className="btn" to={`${base}/providers/${p.user_id}`}>
                         Details
                       </Link>
                       <button
@@ -1267,7 +1421,16 @@ export function AdminPage() {
               );
             })}
           </div>
+          <Pagination
+            page={providersPage}
+            totalItems={filteredProviders.length}
+            pageSize={ADMIN_PAGE_SIZE}
+            onPageChange={setProvidersPage}
+            itemLabel="providers"
+            className="mt-4"
+          />
           </section>
+
             </>
           )}
         </div>
@@ -1301,8 +1464,9 @@ export function AdminPage() {
                   : "No consumers yet."}
               </p>
             )}
-            {filteredConsumers.map((c) => {
+            {pagedConsumers.map((c) => {
               const address = [c.address_line1, c.address_line2, c.city, c.state, c.pincode]
+
                 .filter(Boolean)
                 .join(", ");
               const locationText = c.location_label || address || null;
@@ -1398,8 +1562,17 @@ export function AdminPage() {
               );
             })}
           </div>
+          <Pagination
+            page={consumersPage}
+            totalItems={filteredConsumers.length}
+            pageSize={ADMIN_PAGE_SIZE}
+            onPageChange={setConsumersPage}
+            itemLabel="consumers"
+            className="mt-4"
+          />
           </section>
         </div>
+
       )}
 
       {tab === "orders" && <AdminOrdersDashboard />}
@@ -1479,7 +1652,7 @@ export function AdminPage() {
                   <p className="muted" style={{ fontSize: "0.85rem" }}>
                     Updated {new Date(t.updated_at).toLocaleString()}
                   </p>
-                  <Link className="btn secondary" to={`/admin/providers/${t.provider_id}`}>
+                  <Link className="btn secondary" to={`${base}/providers/${t.provider_id}`}>
                     View provider
                   </Link>
                 </div>
@@ -1985,8 +2158,9 @@ export function AdminPage() {
                         : "No customer service agents yet."}
                     </p>
                   )}
-                  {filteredCsAgents.map((a) => {
+                  {pagedCsAgents.map((a) => {
                     const statusLabel =
+
                       a.status === "APPROVED"
                         ? "Approved"
                         : a.status === "REVOKED"
@@ -2075,8 +2249,17 @@ export function AdminPage() {
                     );
                   })}
                 </div>
+                <Pagination
+                  page={csPage}
+                  totalItems={filteredCsAgents.length}
+                  pageSize={ADMIN_PAGE_SIZE}
+                  onPageChange={setCsPage}
+                  itemLabel="agents"
+                  className="mt-4"
+                />
               </section>
             </>
+
           )}
         </div>
       )}
@@ -2085,139 +2268,375 @@ export function AdminPage() {
         <div className="page-stack narrow">
           <header className="page-hero">
             <p className="dash-eyebrow">Admin</p>
-            <h2>Email config</h2>
-            <p className="page-lead">SMTP settings for transactional mail.</p>
+            <h2>Config</h2>
+            <p className="page-lead">Email (SMTP) and Fast2SMS OTP for the app.</p>
           </header>
-          <form className="page-panel page-form" onSubmit={saveSmtp}>
-            <h2>SMTP email settings</h2>
-            <p className="page-lead">
-              Used by the app to send emails (provider approval, future notifications, etc.).
-            </p>
-            <div className="field">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={smtp.is_enabled}
-                  onChange={(e) => setSmtp({ ...smtp, is_enabled: e.target.checked })}
-                />{" "}
-                Enable SMTP sending
-              </label>
-            </div>
-            <div className="field">
-              <label>SMTP host</label>
-              <input
-                required
-                value={smtp.host}
-                onChange={(e) => setSmtp({ ...smtp, host: e.target.value })}
-                placeholder="smtp.gmail.com"
-              />
-            </div>
-            <div className="field">
-              <label>Port</label>
-              <input
-                required
-                type="number"
-                min={1}
-                max={65535}
-                value={smtp.port}
-                onChange={(e) => setSmtp({ ...smtp, port: e.target.value })}
-              />
-            </div>
-            <div className="field">
-              <label>Username</label>
-              <input
-                value={smtp.username}
-                onChange={(e) => setSmtp({ ...smtp, username: e.target.value })}
-                placeholder="optional"
-              />
-            </div>
-            <div className="field">
-              <label>Password {smtp.password_set ? "(saved — leave blank to keep)" : ""}</label>
-              <input
-                type="password"
-                value={smtp.password}
-                onChange={(e) => setSmtp({ ...smtp, password: e.target.value })}
-                placeholder={smtp.password_set ? "••••••••" : "SMTP password"}
-                autoComplete="new-password"
-              />
-            </div>
-            <div className="field">
-              <label>From email</label>
-              <input
-                required
-                type="email"
-                value={smtp.from_email}
-                onChange={(e) => setSmtp({ ...smtp, from_email: e.target.value })}
-                placeholder="noreply@koshalhaat.app"
-              />
-            </div>
-            <div className="field">
-              <label>From name</label>
-              <input
-                value={smtp.from_name}
-                onChange={(e) => setSmtp({ ...smtp, from_name: e.target.value })}
-              />
-            </div>
-            <div className="page-actions">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={smtp.use_tls}
-                  onChange={(e) =>
-                    setSmtp({
-                      ...smtp,
-                      use_tls: e.target.checked,
-                      use_ssl: e.target.checked ? false : smtp.use_ssl,
-                    })
-                  }
-                />{" "}
-                STARTTLS (587)
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={smtp.use_ssl}
-                  onChange={(e) =>
-                    setSmtp({
-                      ...smtp,
-                      use_ssl: e.target.checked,
-                      use_tls: e.target.checked ? false : smtp.use_tls,
-                    })
-                  }
-                />{" "}
-                SSL (465)
-              </label>
-            </div>
-            <div className="page-actions">
-              <button className="btn" type="submit" disabled={smtpBusy}>
-                {smtpBusy ? "Saving…" : "Save SMTP settings"}
-              </button>
-            </div>
-          </form>
-
-          <form className="page-panel page-form" onSubmit={sendTestEmail}>
-            <h2>Send test email</h2>
-            <p className="page-lead">Verify the SMTP connection by sending a test message.</p>
-            <div className="field">
-              <label>To email</label>
-              <input
-                required
-                type="email"
-                value={testEmail}
-                onChange={(e) => setTestEmail(e.target.value)}
-                placeholder="you@example.com"
-              />
-            </div>
-            <div className="page-actions">
+          <div className="profile-sections" role="list">
+            <section
+              className={`profile-accordion ${configAccordion === "email" ? "is-open" : ""}`}
+              role="listitem"
+            >
               <button
-                className="btn secondary"
-                type="submit"
-                disabled={smtpBusy || !smtp.is_enabled}
+                type="button"
+                className="profile-accordion-trigger"
+                aria-expanded={configAccordion === "email"}
+                aria-controls="admin-config-email"
+                onClick={() => setConfigAccordion((prev) => (prev === "email" ? null : "email"))}
               >
-                {smtpBusy ? "Sending…" : "Send test"}
+
+                <span className="profile-accordion-index" aria-hidden="true">
+                  1
+                </span>
+                <span className="profile-accordion-copy">
+                  <span className="profile-accordion-title">Email</span>
+                  <span className="muted profile-accordion-hint">
+                    SMTP for transactional mail
+                  </span>
+                </span>
+                <AccordionChevron />
               </button>
-            </div>
-          </form>
+              {configAccordion === "email" && (
+                <div className="profile-accordion-panel" id="admin-config-email">
+                  <div className="profile-section">
+                    <form className="page-form" onSubmit={saveSmtp}>
+                      <h2>SMTP email settings</h2>
+                      <p className="page-lead">
+                        Used by the app to send emails (provider approval, future notifications,
+                        etc.).
+                      </p>
+                      <div className="field">
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={smtp.is_enabled}
+                            onChange={(e) => setSmtp({ ...smtp, is_enabled: e.target.checked })}
+                          />{" "}
+                          Enable SMTP sending
+                        </label>
+                      </div>
+                      <div className="field">
+                        <label>SMTP host</label>
+                        <input
+                          required
+                          value={smtp.host}
+                          onChange={(e) => setSmtp({ ...smtp, host: e.target.value })}
+                          placeholder="smtp.gmail.com"
+                        />
+                      </div>
+                      <div className="field">
+                        <label>Port</label>
+                        <input
+                          required
+                          type="number"
+                          min={1}
+                          max={65535}
+                          value={smtp.port}
+                          onChange={(e) => setSmtp({ ...smtp, port: e.target.value })}
+                        />
+                      </div>
+                      <div className="field">
+                        <label>Username</label>
+                        <input
+                          value={smtp.username}
+                          onChange={(e) => setSmtp({ ...smtp, username: e.target.value })}
+                          placeholder="optional"
+                        />
+                      </div>
+                      <div className="field">
+                        <label>
+                          Password {smtp.password_set ? "(saved — leave blank to keep)" : ""}
+                        </label>
+                        <input
+                          type="password"
+                          value={smtp.password}
+                          onChange={(e) => setSmtp({ ...smtp, password: e.target.value })}
+                          placeholder={smtp.password_set ? "••••••••" : "SMTP password"}
+                          autoComplete="new-password"
+                        />
+                      </div>
+                      <div className="field">
+                        <label>From email</label>
+                        <input
+                          required
+                          type="email"
+                          value={smtp.from_email}
+                          onChange={(e) => setSmtp({ ...smtp, from_email: e.target.value })}
+                          placeholder="noreply@koshalkarobar.app"
+                        />
+
+                      </div>
+                      <div className="field">
+                        <label>From name</label>
+                        <input
+                          value={smtp.from_name}
+                          onChange={(e) => setSmtp({ ...smtp, from_name: e.target.value })}
+                        />
+                      </div>
+                      <div className="page-actions">
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={smtp.use_tls}
+                            onChange={(e) =>
+                              setSmtp({
+                                ...smtp,
+                                use_tls: e.target.checked,
+                                use_ssl: e.target.checked ? false : smtp.use_ssl,
+                              })
+                            }
+                          />{" "}
+                          STARTTLS (587)
+                        </label>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={smtp.use_ssl}
+                            onChange={(e) =>
+                              setSmtp({
+                                ...smtp,
+                                use_ssl: e.target.checked,
+                                use_tls: e.target.checked ? false : smtp.use_tls,
+                              })
+                            }
+                          />{" "}
+                          SSL (465)
+                        </label>
+                      </div>
+                      <div className="page-actions">
+                        <button className="btn" type="submit" disabled={smtpBusy}>
+                          {smtpBusy ? "Saving…" : "Save SMTP settings"}
+                        </button>
+                      </div>
+                    </form>
+
+                    <form className="page-form" onSubmit={sendTestEmail}>
+                      <h2>Send test email</h2>
+                      <p className="page-lead">
+                        Verify the SMTP connection by sending a test message.
+                      </p>
+                      <div className="field">
+                        <label>To email</label>
+                        <input
+                          required
+                          type="email"
+                          value={testEmail}
+                          onChange={(e) => setTestEmail(e.target.value)}
+                          placeholder="you@example.com"
+                        />
+                      </div>
+                      <div className="page-actions">
+                        <button
+                          className="btn secondary"
+                          type="submit"
+                          disabled={smtpBusy || !smtp.is_enabled}
+                        >
+                          {smtpBusy ? "Sending…" : "Send test"}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <section
+              className={`profile-accordion ${configAccordion === "sms" ? "is-open" : ""}`}
+              role="listitem"
+            >
+              <button
+                type="button"
+                className="profile-accordion-trigger"
+                aria-expanded={configAccordion === "sms"}
+                aria-controls="admin-config-sms"
+                onClick={() => setConfigAccordion((prev) => (prev === "sms" ? null : "sms"))}
+              >
+
+                <span className="profile-accordion-index" aria-hidden="true">
+                  2
+                </span>
+                <span className="profile-accordion-copy">
+                  <span className="profile-accordion-title">Fast2SMS</span>
+                  <span className="muted profile-accordion-hint">
+                    Mobile OTP for register and forgot password
+                  </span>
+                </span>
+                <AccordionChevron />
+              </button>
+              {configAccordion === "sms" && (
+                <div className="profile-accordion-panel" id="admin-config-sms">
+                  <div className="profile-section">
+                    <form className="page-form" onSubmit={saveSms}>
+                      <h2>Fast2SMS settings</h2>
+                      <p className="page-lead">
+                        Used to send registration and forgot-password OTPs. The API key is never
+                        shown after save.
+                      </p>
+                      <div className="field">
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={sms.is_enabled}
+                            onChange={(e) => setSms({ ...sms, is_enabled: e.target.checked })}
+                          />{" "}
+                          Enable Fast2SMS
+                        </label>
+                      </div>
+                      <div className="field">
+                        <label>
+                          API key {sms.api_key_set ? "(saved — leave blank to keep)" : ""}
+                        </label>
+                        <input
+                          type="password"
+                          value={sms.api_key}
+                          onChange={(e) => setSms({ ...sms, api_key: e.target.value })}
+                          placeholder={sms.api_key_set ? "••••••••" : "Fast2SMS API key"}
+                          autoComplete="new-password"
+                        />
+                      </div>
+                      <div className="field">
+                        <label>OTP ID</label>
+                        <input
+                          value={sms.otp_id}
+                          onChange={(e) => setSms({ ...sms, otp_id: e.target.value })}
+                          placeholder="Smart OTP / DLT template id"
+                        />
+                        <p className="muted">
+                          Leave blank to use Fast2SMS route=otp (generic OTP SMS).
+                        </p>
+                      </div>
+                      <div className="field">
+                        <label>Sender ID</label>
+                        <input
+                          value={sms.sender_id}
+                          onChange={(e) => setSms({ ...sms, sender_id: e.target.value })}
+                          placeholder="optional"
+                          maxLength={20}
+                        />
+                      </div>
+                      <div className="field">
+                        <label>OTP expiry (minutes)</label>
+                        <input
+                          required
+                          type="number"
+                          min={1}
+                          max={60}
+                          value={sms.otp_expiry_minutes}
+                          onChange={(e) =>
+                            setSms({ ...sms, otp_expiry_minutes: e.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="field">
+                        <label>Resend wait (seconds)</label>
+                        <input
+                          required
+                          type="number"
+                          min={15}
+                          max={600}
+                          value={sms.resend_seconds}
+                          onChange={(e) => setSms({ ...sms, resend_seconds: e.target.value })}
+                        />
+                      </div>
+                      <div className="field">
+                        <label>Max OTPs per hour</label>
+                        <input
+                          required
+                          type="number"
+                          min={1}
+                          max={50}
+                          value={sms.max_per_hour}
+                          onChange={(e) => setSms({ ...sms, max_per_hour: e.target.value })}
+                        />
+                      </div>
+                      <div className="page-actions">
+                        <button className="btn" type="submit" disabled={smsBusy}>
+                          {smsBusy ? "Saving…" : "Save Fast2SMS settings"}
+                        </button>
+                      </div>
+                    </form>
+
+                    <form className="page-form" onSubmit={sendTestSms}>
+                      <h2>Send test OTP</h2>
+                      <p className="page-lead">
+                        Confirm Fast2SMS delivery. This does not store a login OTP.
+                      </p>
+                      <div className="field">
+                        <label>Mobile number</label>
+                        <input
+                          required
+                          type="tel"
+                          inputMode="numeric"
+                          value={testPhone}
+                          onChange={(e) => setTestPhone(e.target.value)}
+                          placeholder="10-digit mobile"
+                        />
+                      </div>
+                      <div className="page-actions">
+                        <button
+                          className="btn secondary"
+                          type="submit"
+                          disabled={smsBusy || !sms.is_enabled || !sms.api_key_set}
+                        >
+                          {smsBusy ? "Sending…" : "Send test"}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <section
+              className={`profile-accordion ${configAccordion === "support" ? "is-open" : ""}`}
+              role="listitem"
+            >
+              <button
+                type="button"
+                className="profile-accordion-trigger"
+                aria-expanded={configAccordion === "support"}
+                aria-controls="admin-config-support"
+                onClick={() => setConfigAccordion((prev) => (prev === "support" ? null : "support"))}
+              >
+                <span className="profile-accordion-index" aria-hidden="true">
+                  3
+                </span>
+                <span className="profile-accordion-copy">
+                  <span className="profile-accordion-title">Support Contact</span>
+                  <span className="muted profile-accordion-hint">
+                    Email address to receive Contact Us form enquiries
+                  </span>
+                </span>
+                <AccordionChevron />
+              </button>
+              {configAccordion === "support" && (
+                <div className="profile-accordion-panel" id="admin-config-support">
+                  <div className="profile-section">
+                    <form className="page-form" onSubmit={saveSupportEmail}>
+                      <h2>Support Email Settings</h2>
+                      <p className="page-lead">
+                        Configures the recipient email address for public enquiries sent via the landing page 'Contact Us' form.
+                      </p>
+                      <div className="field">
+                        <label>Support Recipient Email</label>
+                        <input
+                          required
+                          type="email"
+                          value={supportEmail}
+                          onChange={(e) => setSupportEmail(e.target.value)}
+                          placeholder="support@koshalkarobar.in"
+                        />
+                      </div>
+                      <div className="page-actions">
+                        <button className="btn" type="submit" disabled={supportBusy}>
+                          {supportBusy ? "Saving…" : "Save support email"}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+            </section>
+          </div>
         </div>
       )}
 

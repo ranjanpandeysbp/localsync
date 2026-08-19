@@ -1,7 +1,8 @@
 import { FormEvent, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../services/api";
-import { authWrap, brand, btn, card, errorText, field, fieldInput, fieldLabel, muted, pillOnline } from "../ui";
+import { KoshalCityLogo } from "../components/KoshalCityLogo";
+import { authWrap, btn, card, errorText, field, fieldInput, fieldLabel, muted, pillOnline } from "../ui";
 
 export function ResetPasswordPage() {
   const [params] = useSearchParams();
@@ -46,8 +47,10 @@ export function ResetPasswordPage() {
   return (
     <div className={authWrap}>
       <form className={`${card} w-[min(420px,100%)]`} onSubmit={onSubmit}>
-        <h1 className={brand}>
-          <Link to="/">KoshalHaat</Link>
+        <h1 className="m-0">
+          <Link to="/" className="inline-flex no-underline">
+            <KoshalCityLogo markSize={36} showTagline />
+          </Link>
         </h1>
         <h2 className="mt-[0.35rem] mb-0">Choose a new password</h2>
         <p className={muted}>Use at least 6 characters. You&apos;ll sign in with your phone after.</p>

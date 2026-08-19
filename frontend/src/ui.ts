@@ -1,4 +1,5 @@
-/** Shared Tailwind class strings matching KoshalHaat’s existing visual design. */
+/** Shared Tailwind class strings matching KoshalKarobar’s existing visual design. */
+
 
 export function cn(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");

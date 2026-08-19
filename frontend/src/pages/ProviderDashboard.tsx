@@ -289,7 +289,8 @@ export function ProviderDashboard() {
         bumpAdminUnread(1);
         return;
       }
-      setToast("New message from KoshalHaat admin");
+      setToast("New message from KoshalKarobar admin");
+
       void loadSupportThreads();
       if (activeSupportId) {
         clearAdminUnread();
@@ -1237,7 +1238,7 @@ export function ProviderDashboard() {
                       {isLimited && (
                         <Link className="provider-overview-shortcut" to="/provider/support">
                           <strong>Admin messages</strong>
-                          <span className="muted">Contact KoshalHaat support</span>
+                          <span className="muted">Contact KoshalKarobar support</span>
                         </Link>
                       )}
                     </div>
@@ -1376,7 +1377,7 @@ export function ProviderDashboard() {
             <p className="dash-eyebrow">Support</p>
             <h2>Admin messages</h2>
             <p className="page-lead">
-              Messages from KoshalHaat admins about your account or listings.
+              Messages from KoshalKarobar admins about your account or listings.
             </p>
           </header>
           <section className="page-panel">
@@ -1384,7 +1385,7 @@ export function ProviderDashboard() {
               <InquiryChatPanel
                 conversationId={activeSupportId}
                 mode="inline"
-                title="KoshalHaat admin"
+                title="KoshalKarobar admin"
                 subtitle="Support chat"
                 avatarLabel="G"
                 autoFocus
@@ -1400,7 +1401,8 @@ export function ProviderDashboard() {
                 )}
                 {supportThreads.map((t) => (
                   <div key={t.id} className="list-item">
-                    <strong>{t.admin_name || "KoshalHaat Admin"}</strong>
+                    <strong>{t.admin_name || "KoshalKarobar Admin"}</strong>
+
                     <div className="muted">{t.last_message || "Conversation started"}</div>
                     <p className="muted" style={{ fontSize: "0.85rem" }}>
                       Updated {new Date(t.updated_at).toLocaleString()}

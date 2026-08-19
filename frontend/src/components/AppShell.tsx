@@ -6,8 +6,9 @@ import { useAdminNav } from "../store/adminNav";
 import { useConsumerNav } from "../store/consumerNav";
 import { useProviderNav } from "../store/providerNav";
 import { unlockNotificationSound } from "../services/sounds";
-import { isStaffRole, roleHome, type UserRole } from "../types";
+import { isStaffRole, roleHome, staffPathBase, type UserRole } from "../types";
 import { CONSUMER_NAV } from "../nav/consumer";
+import { KoshalCityLogo } from "./KoshalCityLogo";
 import {
   btnSecondary,
   cn,
@@ -67,23 +68,27 @@ function navForRole(
     ];
   }
   if (isStaffRole(role)) {
+    const base = staffPathBase(role);
     const items: NavItem[] = [
-      { to: "/admin/overview", label: "Overview" },
-      { to: "/admin/providers", label: adminLabels?.providers || "Providers" },
-      { to: "/admin/consumers", label: adminLabels?.consumers || "Consumers" },
-      { to: "/admin/orders", label: adminLabels?.orders || "Order dashboard" },
-      { to: "/admin/categories", label: adminLabels?.categories || "Categories" },
+      { to: `${base}/overview`, label: "Overview" },
+      { to: `${base}/providers`, label: adminLabels?.providers || "Providers" },
+      { to: `${base}/consumers`, label: adminLabels?.consumers || "Consumers" },
+      { to: `${base}/orders`, label: adminLabels?.orders || "Order dashboard" },
+      { to: `${base}/categories`, label: adminLabels?.categories || "Categories" },
       {
-        to: "/admin/messages",
+        to: `${base}/messages`,
         label: "Provider messages",
         badge: badges?.messagesUnread || 0,
       },
     ];
     if (role === "ADMIN") {
       items.push(
-        { to: "/admin/customer-service", label: "Customer service agents" },
-        { to: "/admin/config", label: "Config" },
+        { to: `${base}/customer-service`, label: "Customer service agents" },
+        { to: `${base}/config`, label: "Config" },
       );
+    }
+    if (role === "CUSTOMER_SERVICE") {
+      items.push({ to: `${base}/profile`, label: "My profile" });
     }
     return items;
   }
@@ -159,11 +164,12 @@ export function AppShell({
     }
     if (!isStaffRole(user?.role) || m.type !== "admin_message") return;
     // Provider replies arrive as admin_message; ignore while already viewing messages inbox/chat
-    if (location.pathname.startsWith("/admin/messages")) {
+    const staffBase = staffPathBase(user?.role);
+    if (location.pathname.startsWith(`${staffBase}/messages`)) {
       void refreshCounts();
       return;
     }
-    if (location.pathname.startsWith("/admin/providers/")) {
+    if (location.pathname.startsWith(`${staffBase}/providers/`)) {
       void refreshCounts();
       return;
     }
@@ -321,12 +327,9 @@ export function AppShell({
         aria-label="Main navigation"
       >
         <div>
-          <Link to={home} className="font-display text-[1.45rem] font-bold tracking-[-0.04em] text-white">
-            KoshalHaat
+          <Link to={home} className="inline-flex no-underline">
+            <KoshalCityLogo tone="light" markSize={40} showTagline />
           </Link>
-          <p className="text-[rgba(244,250,247,0.72)] mt-[0.2rem] mb-0 text-[0.8rem] font-medium tracking-[0.01em]">
-            Hyper-local marketplace
-          </p>
         </div>
 
         <nav className="flex flex-col gap-[0.35rem] flex-1">

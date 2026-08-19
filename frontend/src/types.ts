@@ -1,13 +1,50 @@
 export type UserRole = "CONSUMER" | "PROVIDER" | "ADMIN" | "CUSTOMER_SERVICE";
 
+export const ADMIN_BASE = "/admin";
+export const CS_BASE = "/cs";
+
 export function isStaffRole(role?: UserRole | null): boolean {
   return role === "ADMIN" || role === "CUSTOMER_SERVICE";
 }
 
+export function staffPathBase(role?: UserRole | null): typeof ADMIN_BASE | typeof CS_BASE {
+  return role === "CUSTOMER_SERVICE" ? CS_BASE : ADMIN_BASE;
+}
+
 export function roleHome(role: UserRole): string {
   if (role === "PROVIDER") return "/provider/overview";
-  if (isStaffRole(role)) return "/admin/overview";
+  if (role === "CUSTOMER_SERVICE") return `${CS_BASE}/overview`;
+  if (role === "ADMIN") return `${ADMIN_BASE}/overview`;
   return "/";
+}
+
+const ADMIN_ONLY_FRONT_PATHS = ["/customer-service", "/config"];
+
+/** If a staff user is on the other role’s URL prefix, return the remapped path. */
+export function remapStaffLocation(
+  role: UserRole,
+  pathname: string,
+  search = "",
+  hash = "",
+): string | null {
+  const tail = search + hash;
+  if (role === "CUSTOMER_SERVICE" && (pathname === ADMIN_BASE || pathname.startsWith(`${ADMIN_BASE}/`))) {
+    const rest = pathname === ADMIN_BASE ? "" : pathname.slice(ADMIN_BASE.length);
+    if (ADMIN_ONLY_FRONT_PATHS.some((p) => rest === p || rest.startsWith(`${p}/`))) {
+      return `${CS_BASE}/overview`;
+    }
+    if (!rest || rest === "/") return `${CS_BASE}/overview`;
+    return `${CS_BASE}${rest}${tail}`;
+  }
+  if (role === "ADMIN" && (pathname === CS_BASE || pathname.startsWith(`${CS_BASE}/`))) {
+    const rest = pathname === CS_BASE ? "" : pathname.slice(CS_BASE.length);
+    if (rest === "/profile" || rest.startsWith("/profile/")) {
+      return `${ADMIN_BASE}/overview`;
+    }
+    if (!rest || rest === "/") return `${ADMIN_BASE}/overview`;
+    return `${ADMIN_BASE}${rest}${tail}`;
+  }
+  return null;
 }
 export type OfferKind = "PRODUCT" | "SERVICE" | "BOTH";
 
@@ -99,7 +136,6 @@ export interface ProviderProfile {
   opening_time?: string | null;
   closing_time?: string | null;
   gst_number?: string | null;
-  aadhaar_number?: string | null;
   max_radius_km: number;
   is_online: boolean;
   verification_status: "PENDING" | "APPROVED" | "REJECTED" | "REVOKED";
@@ -112,8 +148,8 @@ export interface ProviderProfile {
   rating_count?: number;
   government_id_url?: string | null;
   business_reg_url?: string | null;
-  aadhaar_doc_url?: string | null;
   gst_doc_url?: string | null;
+
   ekyc_photo_url?: string | null;
   ekyc_latitude?: number | null;
   ekyc_longitude?: number | null;
@@ -209,6 +245,16 @@ export interface SmtpConfig {
   is_enabled: boolean;
 }
 
+export interface SmsConfig {
+  is_enabled: boolean;
+  api_key_set: boolean;
+  otp_id: string;
+  sender_id: string;
+  otp_expiry_minutes: number;
+  resend_seconds: number;
+  max_per_hour: number;
+}
+
 export interface Attachment {
   id: string;
   original_filename: string;
@@ -292,9 +338,8 @@ export interface AdminProvider {
   categories?: string[];
   offer_kind?: OfferKind | null;
   gst_number?: string | null;
-  aadhaar_number?: string | null;
-  aadhaar_doc_url?: string | null;
   verification_status: "PENDING" | "APPROVED" | "REJECTED" | "REVOKED";
+
   is_online: boolean;
   is_active: boolean;
   average_rating: number;

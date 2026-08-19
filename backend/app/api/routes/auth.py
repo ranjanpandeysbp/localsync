@@ -1,5 +1,6 @@
 from datetime import timedelta
 import json
+import logging
 import re
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -13,9 +14,14 @@ from app.core.security import create_access_token, get_password_hash, verify_pas
 from app.db.models import OfferKind, ProviderProfile, User, UserRole, VerificationStatus
 from app.db.session import get_db
 from app.schemas import (
+    ChangePasswordRequest,
     ForgotPasswordRequest,
     MessageOut,
+    OtpSendRequest,
+    OtpVerifyRequest,
+    ResetPasswordOtpRequest,
     ResetPasswordRequest,
+    SmsStatusOut,
     Token,
     UserLogin,
     UserLocationUpdate,
@@ -25,9 +31,20 @@ from app.schemas import (
 from app.services.geo import make_point, normalize_lat_lon
 from app.services.maps import google_maps_url, reverse_geocode_details
 from app.services.provider_catalog import set_provider_categories
+from app.services.sms import (
+    SmsError,
+    clear_phone_verified,
+    is_phone_verified,
+    mark_phone_verified,
+    normalize_mobile,
+    resolve_sms,
+    send_otp,
+    verify_otp,
+)
 from app.services.uploads import media_url, save_upload_file
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 GSTIN_RE = re.compile(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$")
 
@@ -117,6 +134,66 @@ def _ensure_provider_can_login(db: Session, user: User) -> None:
     )
 
 
+def _sms_http_error(exc: SmsError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+@router.get("/sms-status", response_model=SmsStatusOut)
+def sms_status(db: Session = Depends(get_db)):
+    runtime = resolve_sms(db)
+    return SmsStatusOut(
+        enabled=runtime.can_send,
+        resend_seconds=runtime.resend_seconds,
+        otp_expiry_minutes=runtime.otp_expiry_minutes,
+    )
+
+
+@router.post("/otp/send", response_model=MessageOut)
+def send_mobile_otp(payload: OtpSendRequest, db: Session = Depends(get_db)):
+    try:
+        mobile = normalize_mobile(payload.phone_number)
+    except SmsError as exc:
+        raise _sms_http_error(exc) from exc
+
+    purpose = payload.purpose
+    if purpose == "register":
+        existing = db.scalar(select(User).where(User.phone_number == mobile))
+        if existing:
+            raise HTTPException(status_code=400, detail="Phone number already registered")
+        try:
+            _sent_mobile, otp = send_otp(mobile, "register", db)
+        except SmsError as exc:
+            raise _sms_http_error(exc) from exc
+        if resolve_sms(db).can_send:
+            return MessageOut(detail="OTP sent to your mobile number")
+        return MessageOut(
+            detail="OTP sent. SMS is not configured, so this local demo code is shown once.",
+            demo_otp=otp,
+        )
+
+    user = db.scalar(select(User).where(User.phone_number == mobile))
+    generic = MessageOut(detail="If an account exists for that phone, an OTP was sent.")
+    if not user or not user.is_active:
+        return generic
+    try:
+        send_otp(mobile, "forgot_password", db)
+    except SmsError as exc:
+        if exc.status_code == 429:
+            raise _sms_http_error(exc) from exc
+        logger.warning("Forgot-password OTP send failed for %s: %s", mobile, exc)
+    return generic
+
+
+@router.post("/otp/verify", response_model=MessageOut)
+def verify_mobile_otp(payload: OtpVerifyRequest):
+    try:
+        mobile = verify_otp(payload.phone_number, payload.purpose, payload.otp)
+        mark_phone_verified(payload.purpose, mobile)
+    except SmsError as exc:
+        raise _sms_http_error(exc) from exc
+    return MessageOut(detail="Mobile number verified")
+
+
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 async def register(
     role: UserRole = Form(...),
@@ -135,15 +212,36 @@ async def register(
     offerings_detail: str | None = Form(None),
     offer_kind: OfferKind | None = Form(None),
     category_ids_json: str | None = Form(None),
-    aadhaar_file: UploadFile | None = File(None),
+    otp: str | None = Form(None),
     db: Session = Depends(get_db),
 ):
+
     if role in (UserRole.ADMIN, UserRole.CUSTOMER_SERVICE):
         raise HTTPException(status_code=400, detail="Cannot self-register as staff")
+
+    try:
+        phone_number = normalize_mobile(phone_number)
+    except SmsError as exc:
+        raise _sms_http_error(exc) from exc
 
     existing = db.scalar(select(User).where(User.phone_number == phone_number))
     if existing:
         raise HTTPException(status_code=400, detail="Phone number already registered")
+
+    try:
+        already = is_phone_verified("register", phone_number)
+    except SmsError as exc:
+        raise _sms_http_error(exc) from exc
+    if not already:
+        if not (otp or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Verify your mobile number with the OTP sent to your phone",
+            )
+        try:
+            verify_otp(phone_number, "register", otp or "")
+        except SmsError as exc:
+            raise _sms_http_error(exc) from exc
 
     email_norm = email.strip().lower() if email and email.strip() else None
     if not email_norm:
@@ -175,7 +273,6 @@ async def register(
     if not pin_norm or not re.fullmatch(r"\d{6}", pin_norm):
         raise HTTPException(status_code=400, detail="A valid 6-digit pincode is required")
 
-    aadhaar_url = None
     if role == UserRole.PROVIDER:
         if not biz_name:
             raise HTTPException(
@@ -187,10 +284,6 @@ async def register(
                 status_code=400,
                 detail="A valid 15-character GSTIN is required for provider registration",
             )
-        # Optional legacy upload if a client still sends it
-        if aadhaar_file is not None and getattr(aadhaar_file, "filename", None):
-            stored_name, _, _, _ = await save_upload_file(aadhaar_file)
-            aadhaar_url = media_url(stored_name)
     else:
         biz_name = biz_name or full_name.strip()
 
@@ -239,10 +332,10 @@ async def register(
             offerings_detail=offerings,
             verification_status=VerificationStatus.PENDING,
             gst_number=gst,
-            aadhaar_doc_url=aadhaar_url,
             base_location=(make_point(lon, lat) if lat is not None and lon is not None else None),
         )
         db.add(profile)
+
         db.flush()
         try:
             set_provider_categories(db, profile, category_ids)
@@ -251,6 +344,7 @@ async def register(
 
     db.commit()
     db.refresh(user)
+    clear_phone_verified("register", phone_number)
 
     if role == UserRole.PROVIDER:
         from app.services.email import send_provider_registration_pending
@@ -274,7 +368,11 @@ async def register(
 
 @router.post("/login", response_model=Token)
 def login(payload: UserLogin, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.phone_number == payload.phone_number))
+    try:
+        phone = normalize_mobile(payload.phone_number)
+    except SmsError:
+        phone = payload.phone_number.strip()
+    user = db.scalar(select(User).where(User.phone_number == phone))
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect phone number or password")
     if not user.is_active:
@@ -300,10 +398,28 @@ def login_form(
 @router.post("/forgot-password", response_model=MessageOut)
 def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
     """
-    Request a password reset email. Always returns a generic success message
-    so callers cannot probe whether a phone number is registered.
+    Start password reset. When Fast2SMS is configured, an OTP is sent.
+    Otherwise an email link is sent if the account has an email.
+    Always returns a generic success message.
     """
-    phone = payload.phone_number.strip()
+    try:
+        phone = normalize_mobile(payload.phone_number)
+    except SmsError:
+        phone = payload.phone_number.strip()
+
+    if resolve_sms(db).can_send:
+        generic = MessageOut(detail="If an account exists for that phone, an OTP was sent.")
+        user = db.scalar(select(User).where(User.phone_number == phone))
+        if not user or not user.is_active:
+            return generic
+        try:
+            send_otp(phone, "forgot_password", db)
+        except SmsError as exc:
+            if exc.status_code == 429:
+                raise _sms_http_error(exc) from exc
+            logger.warning("Forgot-password OTP send failed for %s: %s", phone, exc)
+        return generic
+
     generic = MessageOut(
         detail=(
             "If an account exists for that phone with an email on file, "
@@ -332,6 +448,24 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
         role=user.role.value,
     )
     return generic
+
+
+@router.post("/reset-password-otp", response_model=MessageOut)
+def reset_password_otp(payload: ResetPasswordOtpRequest, db: Session = Depends(get_db)):
+    if not resolve_sms(db).can_send:
+        raise HTTPException(status_code=503, detail="SMS OTP is not configured")
+    try:
+        mobile = verify_otp(payload.phone_number, "forgot_password", payload.otp)
+    except SmsError as exc:
+        raise _sms_http_error(exc) from exc
+
+    user = db.scalar(select(User).where(User.phone_number == mobile))
+    if not user or not user.is_active:
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+
+    user.hashed_password = get_password_hash(payload.password)
+    db.commit()
+    return MessageOut(detail="Password updated. You can sign in with your new password.")
 
 
 @router.post("/reset-password", response_model=MessageOut)
@@ -426,6 +560,21 @@ def update_my_profile(
     db.commit()
     db.refresh(current_user)
     return user_to_out(current_user, db)
+
+
+@router.patch("/me/password", response_model=MessageOut)
+def change_my_password(
+    payload: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if payload.current_password == payload.password:
+        raise HTTPException(status_code=400, detail="New password must be different")
+    current_user.hashed_password = get_password_hash(payload.password)
+    db.commit()
+    return MessageOut(detail="Password updated")
 
 
 @router.patch("/me/location", response_model=UserOut)

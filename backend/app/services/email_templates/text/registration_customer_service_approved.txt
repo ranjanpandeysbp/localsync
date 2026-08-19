@@ -1,10 +1,10 @@
 Hi {{full_name}},
 
-Your KoshalHaat customer service account is ready.
+Your KoshalCity customer service account is ready.
 
 You can sign in and help manage providers, consumers, orders, and support messages:
 {{login_url}}
 
-Keep your login details secure. Contact a KoshalHaat admin if you need access changes.
+Keep your login details secure. Contact a KoshalCity admin if you need access changes.
 
-— KoshalHaat Team
+— KoshalCity Team

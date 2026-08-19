@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useParams } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
+import { VerifiedLocalPartnerBadge } from "../components/ProviderTrust";
 import { AttachmentGallery } from "../components/Attachments";
 import { startOrOpenChat, InquiryChatPanel } from "../components/InquiryChat";
 import { MapsLink } from "../components/MapsLink";
@@ -423,9 +424,9 @@ export function RequestDetailPage() {
                               ) : (
                                 <h3>{providerLabel}</h3>
                               )}
-                              {q.provider_trust?.verification_status === "APPROVED" && (
-                                <span className="pill online">Verified</span>
-                              )}
+                              <VerifiedLocalPartnerBadge
+                                verificationStatus={q.provider_trust?.verification_status}
+                              />
                             </div>
                             <button
                               className="icon-btn request-detail-chat-icon provider-quote-chat-btn"

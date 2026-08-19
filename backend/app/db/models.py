@@ -3,7 +3,6 @@ import secrets
 import uuid
 from datetime import datetime
 
-from geoalchemy2 import Geography
 from sqlalchemy import (
     Boolean,
     DateTime,
@@ -15,12 +14,33 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    Uuid,
     func,
+    types,
 )
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
+
+
+class PointType(types.TypeDecorator):
+    """
+    Stores points as WKT strings ('POINT(lon lat)') across SQLite, MySQL, and PostgreSQL.
+    Transparently accepts WKTElement, str, or None.
+    """
+
+    impl = String(100)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if hasattr(value, "desc"):  # GeoAlchemy2 WKTElement
+            return str(value.desc)
+        return str(value)
+
+    def process_result_value(self, value, dialect):
+        return value
 
 
 class UserRole(str, enum.Enum):
@@ -88,8 +108,8 @@ class OfferKind(str, enum.Enum):
 class User(Base):
     __tablename__ = "users"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    role: Mapped[UserRole] = mapped_column(Enum(UserRole, name="user_role"), nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    role: Mapped[UserRole] = mapped_column(Enum(UserRole, name="user_role", native_enum=False), nullable=False)
     phone_number: Mapped[str] = mapped_column(String(20), unique=True, index=True, nullable=False)
     email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -136,7 +156,7 @@ class Category(Base):
     )
     # What this category is intended for (admin hint)
     kind: Mapped[OfferKind] = mapped_column(
-        Enum(OfferKind, name="offer_kind"), default=OfferKind.BOTH
+        Enum(OfferKind, name="offer_kind", native_enum=False), default=OfferKind.BOTH
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -150,9 +170,9 @@ class Category(Base):
 class ProviderProfile(Base):
     __tablename__ = "provider_profiles"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False
     )
     business_name: Mapped[str] = mapped_column(String(255), nullable=False)
     public_slug: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True, index=True)
@@ -160,7 +180,7 @@ class ProviderProfile(Base):
     category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     offer_kind: Mapped[OfferKind] = mapped_column(
-        Enum(OfferKind, name="offer_kind", create_type=False),
+        Enum(OfferKind, name="offer_kind", native_enum=False),
         default=OfferKind.BOTH,
     )
     offerings_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -170,20 +190,19 @@ class ProviderProfile(Base):
     opening_time: Mapped[str | None] = mapped_column(String(5), nullable=True)  # HH:MM
     closing_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
     gst_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    aadhaar_number: Mapped[str | None] = mapped_column(String(12), nullable=True)
-    # longitude/latitude stored as GEOGRAPHY(Point, 4326)
-    base_location = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=True)
+    # Point stored as WKT 'POINT(lon lat)' or PointType
+    base_location = mapped_column(PointType, nullable=True)
     max_radius_km: Mapped[int] = mapped_column(Integer, default=5)
     is_online: Mapped[bool] = mapped_column(Boolean, default=False)
     verification_status: Mapped[VerificationStatus] = mapped_column(
-        Enum(VerificationStatus, name="verification_status"),
+        Enum(VerificationStatus, name="verification_status", native_enum=False),
         default=VerificationStatus.PENDING,
     )
     government_id_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     business_reg_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    aadhaar_doc_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     gst_doc_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     tax_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
     # eKYC — live photo + GPS + video session request with customer service
     ekyc_photo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     ekyc_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -216,7 +235,7 @@ class ProviderCategory(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     provider_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("provider_profiles.id", ondelete="CASCADE"), nullable=False, index=True
+        Uuid(as_uuid=True), ForeignKey("provider_profiles.id", ondelete="CASCADE"), nullable=False, index=True
     )
     category_id: Mapped[int] = mapped_column(
         ForeignKey("categories.id", ondelete="CASCADE"), nullable=False, index=True
@@ -229,22 +248,22 @@ class ProviderCategory(Base):
 class ServiceRequest(Base):
     __tablename__ = "service_requests"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     consumer_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    request_location = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=True)
+    request_location = mapped_column(PointType, nullable=True)
     request_pincode: Mapped[str | None] = mapped_column(String(12), nullable=True, index=True)
     search_radius_km: Mapped[int] = mapped_column(Integer, default=5)
     target_mode: Mapped[RequestTargetMode] = mapped_column(
-        Enum(RequestTargetMode, name="request_target_mode"),
+        Enum(RequestTargetMode, name="request_target_mode", native_enum=False),
         default=RequestTargetMode.BROADCAST,
     )
     status: Mapped[RequestStatus] = mapped_column(
-        Enum(RequestStatus, name="request_status"), default=RequestStatus.ACTIVE, index=True
+        Enum(RequestStatus, name="request_status", native_enum=False), default=RequestStatus.ACTIVE, index=True
     )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -273,10 +292,10 @@ class RequestTarget(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     request_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True
+        Uuid(as_uuid=True), ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True
     )
     provider_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
     request: Mapped[ServiceRequest] = relationship(back_populates="targets")
@@ -286,12 +305,12 @@ class Quote(Base):
     __tablename__ = "quotes"
     __table_args__ = (UniqueConstraint("request_id", "provider_id", name="uq_quote_request_provider"),)
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     request_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True
+        Uuid(as_uuid=True), ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True
     )
     provider_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     price_quote: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="INR")
@@ -299,7 +318,7 @@ class Quote(Base):
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
     catalog_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[QuoteStatus] = mapped_column(
-        Enum(QuoteStatus, name="quote_status"), default=QuoteStatus.PENDING
+        Enum(QuoteStatus, name="quote_status", native_enum=False), default=QuoteStatus.PENDING
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -322,19 +341,19 @@ class Attachment(Base):
 
     __tablename__ = "attachments"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     uploaded_by: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     content_type: Mapped[str] = mapped_column(String(100), nullable=False)
     stored_name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     request_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=True, index=True
+        Uuid(as_uuid=True), ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=True, index=True
     )
     quote_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("quotes.id", ondelete="CASCADE"), nullable=True, index=True
+        Uuid(as_uuid=True), ForeignKey("quotes.id", ondelete="CASCADE"), nullable=True, index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -345,30 +364,30 @@ class Attachment(Base):
 class Order(Base):
     __tablename__ = "orders"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     quote_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("quotes.id", ondelete="CASCADE"), unique=True, nullable=False
+        Uuid(as_uuid=True), ForeignKey("quotes.id", ondelete="CASCADE"), unique=True, nullable=False
     )
     request_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("service_requests.id"), nullable=False, index=True
+        Uuid(as_uuid=True), ForeignKey("service_requests.id"), nullable=False, index=True
     )
     consumer_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+        Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
     )
     provider_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+        Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
     )
     agreed_price: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     fulfillment_type: Mapped[FulfillmentType] = mapped_column(
-        Enum(FulfillmentType, name="fulfillment_type"), nullable=False
+        Enum(FulfillmentType, name="fulfillment_type", native_enum=False), nullable=False
     )
     payment_mode: Mapped[PaymentMode] = mapped_column(
-        Enum(PaymentMode, name="payment_mode"),
+        Enum(PaymentMode, name="payment_mode", native_enum=False),
         default=PaymentMode.CASH,
         nullable=False,
     )
     status: Mapped[OrderStatus] = mapped_column(
-        Enum(OrderStatus, name="order_status"), default=OrderStatus.CONFIRMED
+        Enum(OrderStatus, name="order_status", native_enum=False), default=OrderStatus.CONFIRMED
     )
     completion_otp: Mapped[str] = mapped_column(String(6), default=lambda: f"{secrets.randbelow(10**6):06d}")
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -385,12 +404,12 @@ class Order(Base):
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     order_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True
+        Uuid(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True
     )
     sender_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+        Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     body: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -402,12 +421,12 @@ class Rating(Base):
     __tablename__ = "ratings"
     __table_args__ = (UniqueConstraint("order_id", "rater_id", name="uq_rating_order_rater"),)
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     order_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False
+        Uuid(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False
     )
-    rater_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    ratee_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    rater_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    ratee_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False)
     score: Mapped[int] = mapped_column(Integer, nullable=False)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -423,12 +442,12 @@ class Conversation(Base):
         UniqueConstraint("consumer_id", "provider_id", name="uq_conversation_consumer_provider"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     consumer_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     provider_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -456,12 +475,12 @@ class Conversation(Base):
 class InquiryMessage(Base):
     __tablename__ = "inquiry_messages"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     conversation_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True
+        Uuid(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True
     )
     sender_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+        Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     body: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -470,20 +489,20 @@ class InquiryMessage(Base):
 
 
 class AdminConversation(Base):
-    """Support thread between KoshalHaat admins and a provider (one per provider)."""
+    """Support thread between KoshalCity admins and a provider (one per provider)."""
 
     __tablename__ = "admin_conversations"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     provider_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,
         index=True,
     )
     created_by_admin_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -504,20 +523,21 @@ class AdminConversation(Base):
 class AdminMessage(Base):
     __tablename__ = "admin_messages"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     conversation_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid(as_uuid=True),
         ForeignKey("admin_conversations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     sender_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+        Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     body: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     conversation: Mapped[AdminConversation] = relationship(back_populates="messages")
+
 
 
 class AppSmtpConfig(Base):
@@ -531,10 +551,29 @@ class AppSmtpConfig(Base):
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     from_email: Mapped[str] = mapped_column(String(255), nullable=False, default="")
-    from_name: Mapped[str] = mapped_column(String(255), nullable=False, default="KoshalHaat")
+    from_name: Mapped[str] = mapped_column(String(255), nullable=False, default="KoshalCity")
     use_tls: Mapped[bool] = mapped_column(Boolean, default=True)
     use_ssl: Mapped[bool] = mapped_column(Boolean, default=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    support_email: Mapped[str] = mapped_column(String(255), nullable=False, default="support@koshalkarobar.in")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AppSmsConfig(Base):
+    """Singleton Fast2SMS settings configured by admin for OTP."""
+
+    __tablename__ = "app_sms_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    api_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    otp_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sender_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    otp_expiry_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    resend_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    max_per_hour: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

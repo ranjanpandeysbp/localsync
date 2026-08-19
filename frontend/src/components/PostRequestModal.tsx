@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { CategorySearchBox } from "./CategorySearchBox";
-import { flattenCategoryOptions } from "./ProviderTrust";
+import { flattenCategoryOptions, VerifiedLocalPartnerBadge } from "./ProviderTrust";
 import { api, apiErrorMessage } from "../services/api";
 import { useAuth } from "../store/auth";
 import type { PostRequestDraft, PostRequestProvider } from "../utils/postRequestDraft";
@@ -412,10 +412,14 @@ export function PostRequestModal({ open, onClose, draft = null, onSuccess }: Pro
                             })
                           }
                         >
-                          <strong>{p.business_name}</strong>
-                          {p.full_name && <span className={muted}> · {p.full_name}</span>}
-                          {p.category_name && (
-                            <span className={muted}> · {p.category_name}</span>
+                          <span className="flex flex-wrap items-center gap-[0.35rem]">
+                            <strong>{p.business_name}</strong>
+                            <VerifiedLocalPartnerBadge verificationStatus={p.verification_status} />
+                          </span>
+                          {(p.full_name || p.category_name) && (
+                            <span className={`${muted} block`}>
+                              {[p.full_name, p.category_name].filter(Boolean).join(" · ")}
+                            </span>
                           )}
                         </button>
                       </li>

@@ -324,7 +324,7 @@ def _seed_service_cities(db, consumer_hash: str, provider_hash: str) -> None:
             _ensure_consumer(
                 db,
                 phone=phone,
-                email=f"consumer.{city['code']}.{seq}@koshalhaat.app",
+                email=f"consumer.{city['code']}.{seq}@koshalcity.app",
                 full_name=full_name,
                 password_hash=consumer_hash,
                 label=f"{area}, {city['name']}",
@@ -345,7 +345,7 @@ def _seed_service_cities(db, consumer_hash: str, provider_hash: str) -> None:
             _ensure_provider(
                 db,
                 phone=phone,
-                email=f"provider.{city['code']}.{template['key']}@koshalhaat.app",
+                email=f"provider.{city['code']}.{template['key']}@koshalcity.app",
                 full_name=f"{city['name']} {template['person']}",
                 password_hash=provider_hash,
                 business_name=business,
@@ -367,11 +367,18 @@ def _seed_service_cities(db, consumer_hash: str, provider_hash: str) -> None:
 
 
 def seed() -> None:
+    from app.core.config import settings
+
+    dialect_name = engine.dialect.name.upper()
+    print(f"[seed] Seeding database: {dialect_name} ({settings.app_env.upper()} mode)")
+    print(f"[seed] Target: {settings.database_url.split('@')[-1] if '@' in settings.database_url else settings.database_url}")
+
     with engine.begin() as conn:
         ensure_postgis(conn)
         Base.metadata.create_all(bind=conn)
 
     db = SessionLocal()
+
     try:
         for name, slug, desc, kind, parent_slug in DEFAULT_CATEGORIES:
             _ensure_category(db, name, slug, desc, kind, parent_slug)
@@ -386,8 +393,8 @@ def seed() -> None:
             admin = User(
                 role=UserRole.ADMIN,
                 phone_number="9000000001",
-                email="admin@koshalhaat.app",
-                full_name="KoshalHaat Admin",
+                email="admin@koshalcity.app",
+                full_name="KoshalCity Admin",
                 hashed_password=get_password_hash("admin123"),
                 is_verified=True,
             )
@@ -398,8 +405,8 @@ def seed() -> None:
             cs = User(
                 role=UserRole.CUSTOMER_SERVICE,
                 phone_number="9000000004",
-                email="support@koshalhaat.app",
-                full_name="KoshalHaat Customer Service",
+                email="support@koshalcity.app",
+                full_name="KoshalCity Customer Service",
                 hashed_password=get_password_hash("support123"),
                 is_verified=True,
             )
@@ -410,7 +417,7 @@ def seed() -> None:
             consumer = User(
                 role=UserRole.CONSUMER,
                 phone_number="9000000002",
-                email="consumer@koshalhaat.app",
+                email="consumer@koshalcity.app",
                 full_name="Demo Consumer",
                 hashed_password=consumer_hash,
                 is_verified=True,
@@ -444,7 +451,7 @@ def seed() -> None:
             provider = User(
                 role=UserRole.PROVIDER,
                 phone_number="9000000003",
-                email="provider@koshalhaat.app",
+                email="provider@koshalcity.app",
                 full_name="Demo Provider",
                 hashed_password=provider_hash,
                 is_verified=True,

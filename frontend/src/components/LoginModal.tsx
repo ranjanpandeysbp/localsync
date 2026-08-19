@@ -90,8 +90,9 @@ export function LoginModal({ open, onClose, onCreateAccount }: Props) {
         </button>
         <p className={eyebrow}>Welcome back</p>
         <h2 id={titleId} className={loginModalTitle}>
-          Sign in to KoshalHaat
+          Sign in to KoshalKarobar
         </h2>
+
         <p className={`${muted} m-0 mb-[1.1rem]`}>Use your phone number and password.</p>
         <form className="flex flex-col gap-3" onSubmit={onSubmit}>
           <label className={field}>

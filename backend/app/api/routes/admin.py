@@ -47,9 +47,15 @@ from app.schemas import (
     SmtpConfigOut,
     SmtpConfigUpdate,
     SmtpTestRequest,
+    SupportConfigOut,
+    SupportConfigUpdate,
+    SmsConfigOut,
+    SmsConfigUpdate,
+    SmsTestRequest,
     UserOut,
 )
 from app.services.email import get_or_create_smtp_config, send_email, send_provider_approved
+from app.services.sms import SmsError, get_or_create_sms_config, send_test_otp
 from app.services.business_hours import effective_is_online, sync_online_flag_with_hours
 from app.services.geo import get_lon_lat_from_profile, make_point, normalize_lat_lon, normalize_pincode
 from app.services.maps import google_maps_url
@@ -64,7 +70,6 @@ _GROUP_BY_VALUES = {"state", "city", "area", "pincode"}
 _LOCATION_OF_VALUES = {"consumer", "provider"}
 
 _DOC_FIELD_MAP = {
-    "aadhaar": "aadhaar_doc_url",
     "gst": "gst_doc_url",
     "government_id": "government_id_url",
     "business_reg": "business_reg_url",
@@ -97,8 +102,8 @@ _PROFILE_UPDATE_FIELDS = {
     "max_radius_km",
     "tax_id",
     "gst_number",
-    "aadhaar_number",
 }
+
 
 
 def _location_column(group_by: str):
@@ -191,10 +196,9 @@ def _admin_provider_base(
         categories=provider_category_names(db, profile),
         offer_kind=profile.offer_kind,
         gst_number=profile.gst_number,
-        aadhaar_number=profile.aadhaar_number,
-        aadhaar_doc_url=profile.aadhaar_doc_url,
         verification_status=profile.verification_status,
         is_online=effective_is_online(profile),
+
         is_active=user.is_active,
         average_rating=user.average_rating,
         rating_count=user.rating_count,
@@ -606,12 +610,6 @@ def update_provider(
     profile, user, category = _load_provider_row(db, user_id)
     data = payload.model_dump(exclude_unset=True)
 
-    if "aadhaar_number" in data and data["aadhaar_number"]:
-        digits = "".join(ch for ch in str(data["aadhaar_number"]) if ch.isdigit())
-        if len(digits) != 12:
-            raise HTTPException(status_code=400, detail="Aadhaar must be 12 digits")
-        data["aadhaar_number"] = digits
-
     if "pincode" in data and data["pincode"]:
         data["pincode"] = normalize_pincode(data["pincode"]) or str(data["pincode"]).strip()
 
@@ -659,7 +657,7 @@ def update_provider(
 @router.post("/providers/{user_id}/documents", response_model=AdminProviderDetailOut)
 async def upload_provider_document(
     user_id: UUID,
-    doc_type: str = Query(..., description="aadhaar | gst | government_id | business_reg"),
+    doc_type: str = Query(..., description="gst | government_id | business_reg"),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     _: User = Depends(require_staff()),
@@ -668,8 +666,9 @@ async def upload_provider_document(
     if not field:
         raise HTTPException(
             status_code=400,
-            detail="doc_type must be one of: aadhaar, gst, government_id, business_reg",
+            detail="doc_type must be one of: gst, government_id, business_reg",
         )
+
     profile, user, category = _load_provider_row(db, user_id)
     stored_name, _, _, _ = await save_upload_file(file)
     setattr(profile, field, media_url(stored_name))
@@ -1055,7 +1054,7 @@ def _smtp_to_out(cfg) -> SmtpConfigOut:
         username=cfg.username,
         password_set=bool(cfg.password),
         from_email=cfg.from_email or "",
-        from_name=cfg.from_name or "KoshalHaat",
+        from_name=cfg.from_name or "KoshalCity",
         use_tls=bool(cfg.use_tls),
         use_ssl=bool(cfg.use_ssl),
         is_enabled=bool(cfg.is_enabled),
@@ -1083,7 +1082,7 @@ def update_smtp_config(
     if payload.password is not None and payload.password != "":
         cfg.password = payload.password
     cfg.from_email = str(payload.from_email).strip()
-    cfg.from_name = payload.from_name.strip() or "KoshalHaat"
+    cfg.from_name = payload.from_name.strip() or "KoshalCity"
     cfg.use_tls = payload.use_tls
     cfg.use_ssl = payload.use_ssl
     cfg.is_enabled = payload.is_enabled
@@ -1093,6 +1092,28 @@ def update_smtp_config(
     db.commit()
     db.refresh(cfg)
     return _smtp_to_out(cfg)
+
+
+@router.get("/config/support", response_model=SupportConfigOut)
+def get_support_config(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    cfg = get_or_create_smtp_config(db)
+    return SupportConfigOut(support_email=cfg.support_email or "support@koshalkarobar.in")
+
+
+@router.put("/config/support", response_model=SupportConfigOut)
+def update_support_config(
+    payload: SupportConfigUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    cfg = get_or_create_smtp_config(db)
+    cfg.support_email = str(payload.support_email).strip()
+    db.commit()
+    db.refresh(cfg)
+    return SupportConfigOut(support_email=cfg.support_email)
 
 
 @router.post("/config/smtp/test")
@@ -1105,13 +1126,13 @@ def test_smtp_config(
         send_email(
             db,
             to_email=str(payload.to_email),
-            subject="KoshalHaat SMTP test",
+            subject="KoshalCity SMTP test",
             body_text=(
-                "This is a test email from KoshalHaat.\n\n"
+                "This is a test email from KoshalCity.\n\n"
                 "Your SMTP configuration is working."
             ),
             body_html=(
-                "<p>This is a test email from <strong>KoshalHaat</strong>.</p>"
+                "<p>This is a test email from <strong>KoshalCity</strong>.</p>"
                 "<p>Your SMTP configuration is working.</p>"
             ),
         )
@@ -1120,3 +1141,58 @@ def test_smtp_config(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"SMTP send failed: {exc}") from exc
     return {"ok": True, "detail": f"Test email sent to {payload.to_email}"}
+
+
+def _sms_to_out(cfg) -> SmsConfigOut:
+    return SmsConfigOut(
+        is_enabled=bool(cfg.is_enabled),
+        api_key_set=bool((cfg.api_key or "").strip()),
+        otp_id=cfg.otp_id or "",
+        sender_id=cfg.sender_id or "",
+        otp_expiry_minutes=int(cfg.otp_expiry_minutes or 10),
+        resend_seconds=int(cfg.resend_seconds or 60),
+        max_per_hour=int(cfg.max_per_hour or 5),
+    )
+
+
+@router.get("/config/sms", response_model=SmsConfigOut)
+def get_sms_config(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    return _sms_to_out(get_or_create_sms_config(db))
+
+
+@router.put("/config/sms", response_model=SmsConfigOut)
+def update_sms_config(
+    payload: SmsConfigUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    cfg = get_or_create_sms_config(db)
+    cfg.is_enabled = payload.is_enabled
+    if payload.api_key is not None and payload.api_key.strip():
+        cfg.api_key = payload.api_key.strip()
+    cfg.otp_id = (payload.otp_id or "").strip() or None
+    cfg.sender_id = (payload.sender_id or "").strip() or None
+    cfg.otp_expiry_minutes = payload.otp_expiry_minutes
+    cfg.resend_seconds = payload.resend_seconds
+    cfg.max_per_hour = payload.max_per_hour
+    db.commit()
+    db.refresh(cfg)
+    return _sms_to_out(cfg)
+
+
+@router.post("/config/sms/test")
+def test_sms_config(
+    payload: SmsTestRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    try:
+        to = send_test_otp(db, payload.phone_number)
+    except SmsError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not send test OTP: {exc}") from exc
+    return {"ok": True, "detail": f"Test OTP sent to {to}"}

@@ -1,18 +1,35 @@
+import math
+import re
 from uuid import UUID
 
-from geoalchemy2 import Geography, WKTElement
-from geoalchemy2.functions import ST_DWithin, ST_Distance
-from sqlalchemy import and_, cast, nulls_last, or_, select, text
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 
-from app.db.models import ProviderCategory, ProviderProfile, User, VerificationStatus
+from app.db.models import ProviderCategory, ProviderProfile, ServiceRequest, User, VerificationStatus
 from app.services.business_hours import effective_is_online
 
 
-def make_point(longitude: float, latitude: float) -> WKTElement:
+def haversine_distance_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
+    """Calculate the Great-Circle distance between two points on the Earth in meters."""
+    R = 6371000.0  # Earth radius in meters
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+
+    a = (
+        math.sin(delta_phi / 2.0) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2.0) ** 2
+    )
+    c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
+    return R * c
+
+
+def make_point(longitude: float, latitude: float) -> str:
+    """Return WKT POINT representation."""
     lon, lat = normalize_lat_lon(longitude, latitude)
-    return WKTElement(f"POINT({lon} {lat})", srid=4326)
+    return f"POINT({lon} {lat})"
 
 
 def normalize_lat_lon(longitude: float, latitude: float) -> tuple[float, float]:
@@ -27,59 +44,16 @@ def normalize_lat_lon(longitude: float, latitude: float) -> tuple[float, float]:
     return lon, lat
 
 
-def _request_geog(longitude: float, latitude: float):
-    return cast(func.ST_SetSRID(func.ST_MakePoint(longitude, latitude), 4326), Geography)
-
-
-def find_providers_in_radius(
-    db: Session,
-    *,
-    category_id: int,
-    longitude: float,
-    latitude: float,
-    radius_km: int,
-    online_only: bool = True,
-    verified_only: bool = True,
-) -> list[tuple[ProviderProfile, float]]:
-    """Return providers within radius (km) with distance in meters."""
-    from app.db.models import Category
-
-    request_point = _request_geog(longitude, latitude)
-    distance_m = ST_Distance(ProviderProfile.base_location, request_point)
-    radius_m = radius_km * 1000
-
-    child_ids = list(
-        db.scalars(select(Category.id).where(Category.parent_id == category_id)).all()
-    )
-    match_ids = [category_id, *child_ids]
-    parent = db.get(Category, category_id)
-    if parent and parent.parent_id:
-        match_ids.append(parent.parent_id)
-
-    filters = [
-        ProviderProfile.base_location.is_not(None),
-        ST_DWithin(ProviderProfile.base_location, request_point, radius_m),
-        or_(
-            ProviderProfile.category_id.in_(match_ids),
-            ProviderProfile.id.in_(
-                select(ProviderCategory.provider_id).where(ProviderCategory.category_id.in_(match_ids))
-            ),
-        ),
-    ]
-    if online_only or verified_only:
-        filters.append(ProviderProfile.verification_status == VerificationStatus.APPROVED)
-
-    stmt = (
-        select(ProviderProfile, distance_m.label("distance_m"))
-        .join(User, User.id == ProviderProfile.user_id)
-        .where(and_(*filters, User.is_active.is_(True)))
-        .order_by(distance_m)
-    )
-    rows = db.execute(stmt).all()
-    results = [(row[0], float(row[1])) for row in rows]
-    if online_only:
-        results = [(p, d) for p, d in results if effective_is_online(p)]
-    return results
+def _parse_wkt_point(wkt: str | None) -> tuple[float, float] | None:
+    if not wkt or not isinstance(wkt, str):
+        return None
+    match = re.search(r"POINT\s*\(\s*([-\d.]+)\s+([-\d.]+)\s*\)", wkt, re.IGNORECASE)
+    if match:
+        try:
+            return float(match.group(1)), float(match.group(2))
+        except ValueError:
+            return None
+    return None
 
 
 def _category_match_ids(db: Session, category_id: int) -> list[int]:
@@ -98,8 +72,63 @@ def _category_match_ids(db: Session, category_id: int) -> list[int]:
 def normalize_pincode(pincode: str | None) -> str | None:
     if not pincode:
         return None
-    digits = "".join(ch for ch in pincode if ch.isdigit())
+    digits = "".join(ch for ch in str(pincode) if ch.isdigit())
     return digits or None
+
+
+def find_providers_in_radius(
+    db: Session,
+    *,
+    category_id: int,
+    longitude: float,
+    latitude: float,
+    radius_km: int,
+    online_only: bool = True,
+    verified_only: bool = True,
+) -> list[tuple[ProviderProfile, float]]:
+    """Return providers within radius (km) with distance in meters."""
+    from app.db.models import Category
+
+    match_ids = _category_match_ids(db, category_id)
+    radius_m = radius_km * 1000.0
+
+    filters = [
+        or_(
+            ProviderProfile.category_id.in_(match_ids),
+            ProviderProfile.id.in_(
+                select(ProviderCategory.provider_id).where(ProviderCategory.category_id.in_(match_ids))
+            ),
+        ),
+    ]
+    if online_only or verified_only:
+        filters.append(ProviderProfile.verification_status == VerificationStatus.APPROVED)
+
+    stmt = (
+        select(ProviderProfile)
+        .join(User, User.id == ProviderProfile.user_id)
+        .where(and_(*filters, User.is_active.is_(True)))
+    )
+    profiles = db.scalars(stmt).all()
+
+    results: list[tuple[ProviderProfile, float]] = []
+    for profile in profiles:
+        u_lon, u_lat = None, None
+        if profile.user and profile.user.longitude is not None and profile.user.latitude is not None:
+            u_lon, u_lat = profile.user.longitude, profile.user.latitude
+        elif profile.base_location:
+            pt = _parse_wkt_point(profile.base_location)
+            if pt:
+                u_lon, u_lat = pt
+
+        if u_lon is not None and u_lat is not None:
+            dist_m = haversine_distance_m(longitude, latitude, u_lon, u_lat)
+            if dist_m <= radius_m:
+                results.append((profile, dist_m))
+
+    results.sort(key=lambda item: item[1])
+    if online_only:
+        results = [(p, d) for p, d in results if effective_is_online(p)]
+    return results
 
 
 def find_providers_by_pincode(
@@ -150,25 +179,35 @@ def find_all_providers_in_radius(
     verified_only: bool = True,
 ) -> list[tuple[ProviderProfile, float]]:
     """Return all providers within radius (km), any category, with distance in meters."""
-    request_point = _request_geog(longitude, latitude)
-    distance_m = ST_Distance(ProviderProfile.base_location, request_point)
-    radius_m = radius_km * 1000
+    radius_m = radius_km * 1000.0
 
-    filters = [
-        ProviderProfile.base_location.is_not(None),
-        ST_DWithin(ProviderProfile.base_location, request_point, radius_m),
-    ]
+    filters = []
     if online_only or verified_only:
         filters.append(ProviderProfile.verification_status == VerificationStatus.APPROVED)
 
     stmt = (
-        select(ProviderProfile, distance_m.label("distance_m"))
+        select(ProviderProfile)
         .join(User, User.id == ProviderProfile.user_id)
         .where(and_(*filters, User.is_active.is_(True)))
-        .order_by(distance_m)
     )
-    rows = db.execute(stmt).all()
-    results = [(row[0], float(row[1])) for row in rows]
+    profiles = db.scalars(stmt).all()
+
+    results: list[tuple[ProviderProfile, float]] = []
+    for profile in profiles:
+        u_lon, u_lat = None, None
+        if profile.user and profile.user.longitude is not None and profile.user.latitude is not None:
+            u_lon, u_lat = profile.user.longitude, profile.user.latitude
+        elif profile.base_location:
+            pt = _parse_wkt_point(profile.base_location)
+            if pt:
+                u_lon, u_lat = pt
+
+        if u_lon is not None and u_lat is not None:
+            dist_m = haversine_distance_m(longitude, latitude, u_lon, u_lat)
+            if dist_m <= radius_m:
+                results.append((profile, dist_m))
+
+    results.sort(key=lambda item: item[1])
     if online_only:
         results = [(p, d) for p, d in results if effective_is_online(p)]
     return results
@@ -212,10 +251,7 @@ def find_all_providers_by_city(
     online_only: bool = False,
     verified_only: bool = True,
 ) -> list[tuple[ProviderProfile, float | None]]:
-    """Match verified providers whose profile city/label/pincode matches the service city.
-
-    When origin coords are provided, include ST_Distance for those with a base location.
-    """
+    """Match verified providers whose profile city/label/pincode matches the service city."""
     name = (city or "").strip()
     pin = normalize_pincode(pincode)
     if not name and not pin:
@@ -239,27 +275,36 @@ def find_all_providers_by_city(
     if online_only or verified_only:
         filters.append(ProviderProfile.verification_status == VerificationStatus.APPROVED)
 
+    stmt = (
+        select(ProviderProfile)
+        .join(User, User.id == ProviderProfile.user_id)
+        .where(and_(*filters, User.is_active.is_(True)))
+        .order_by(ProviderProfile.is_online.desc(), User.average_rating.desc())
+    )
+    profiles = db.scalars(stmt).all()
+
     if longitude is not None and latitude is not None:
-        request_point = _request_geog(longitude, latitude)
-        distance_m = ST_Distance(ProviderProfile.base_location, request_point)
-        stmt = (
-            select(ProviderProfile, distance_m.label("distance_m"))
-            .join(User, User.id == ProviderProfile.user_id)
-            .where(and_(*filters, User.is_active.is_(True)))
-            .order_by(nulls_last(distance_m))
-        )
-        rows = db.execute(stmt).all()
-        results: list[tuple[ProviderProfile, float | None]] = [
-            (row[0], float(row[1]) if row[1] is not None else None) for row in rows
-        ]
+        results_with_dist: list[tuple[ProviderProfile, float | None]] = []
+        for p in profiles:
+            u_lon, u_lat = None, None
+            if p.user and p.user.longitude is not None and p.user.latitude is not None:
+                u_lon, u_lat = p.user.longitude, p.user.latitude
+            elif p.base_location:
+                pt = _parse_wkt_point(p.base_location)
+                if pt:
+                    u_lon, u_lat = pt
+
+            dist = (
+                haversine_distance_m(longitude, latitude, u_lon, u_lat)
+                if (u_lon is not None and u_lat is not None)
+                else None
+            )
+            results_with_dist.append((p, dist))
+
+        results_with_dist.sort(key=lambda item: (item[1] is None, item[1]))
+        results = results_with_dist
     else:
-        stmt = (
-            select(ProviderProfile)
-            .join(User, User.id == ProviderProfile.user_id)
-            .where(and_(*filters, User.is_active.is_(True)))
-            .order_by(ProviderProfile.is_online.desc(), User.average_rating.desc())
-        )
-        results = [(p, None) for p in db.scalars(stmt).all()]
+        results = [(p, None) for p in profiles]
 
     if online_only:
         results = [(p, d) for p, d in results if effective_is_online(p)]
@@ -330,7 +375,6 @@ def match_providers(
         )
         if nearby:
             return nearby
-        # Stale/wrong GPS (or empty area) — still try same-pincode providers
         if pincode:
             return find_providers_by_pincode(
                 db,
@@ -355,29 +399,23 @@ def users_share_pincode(a: str | None, b: str | None) -> bool:
     pa, pb = normalize_pincode(a), normalize_pincode(b)
     return bool(pa and pb and pa == pb)
 
+
 def get_lon_lat_from_profile(db: Session, profile: ProviderProfile) -> tuple[float | None, float | None]:
-    if profile.base_location is None:
-        return None, None
-    row = db.execute(
-        text(
-            "SELECT ST_X(base_location::geometry) AS lon, ST_Y(base_location::geometry) AS lat "
-            "FROM provider_profiles WHERE id = :id"
-        ),
-        {"id": str(profile.id)},
-    ).first()
-    if not row:
-        return None, None
-    return float(row.lon), float(row.lat)
+    if profile.user and profile.user.longitude is not None and profile.user.latitude is not None:
+        return float(profile.user.longitude), float(profile.user.latitude)
+    if profile.base_location is not None:
+        pt = _parse_wkt_point(profile.base_location)
+        if pt:
+            return pt
+    return None, None
 
 
 def get_request_lon_lat(db: Session, request_id: UUID) -> tuple[float | None, float | None]:
-    row = db.execute(
-        text(
-            "SELECT ST_X(request_location::geometry) AS lon, ST_Y(request_location::geometry) AS lat "
-            "FROM service_requests WHERE id = :id"
-        ),
-        {"id": str(request_id)},
-    ).first()
-    if not row:
+    req = db.get(ServiceRequest, request_id)
+    if not req or req.request_location is None:
         return None, None
-    return float(row.lon), float(row.lat)
+    pt = _parse_wkt_point(req.request_location)
+    if pt:
+        return pt
+    return None, None
+

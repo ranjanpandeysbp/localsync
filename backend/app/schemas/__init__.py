@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
@@ -44,13 +45,37 @@ class ForgotPasswordRequest(BaseModel):
     phone_number: str = Field(min_length=8, max_length=20)
 
 
+class OtpSendRequest(BaseModel):
+    phone_number: str = Field(min_length=8, max_length=20)
+    purpose: Literal["register", "forgot_password"]
+
+
+class OtpVerifyRequest(BaseModel):
+    phone_number: str = Field(min_length=8, max_length=20)
+    otp: str = Field(min_length=4, max_length=10)
+    purpose: Literal["register"] = "register"
+
+
 class ResetPasswordRequest(BaseModel):
     token: str = Field(min_length=10)
     password: str = Field(min_length=6, max_length=128)
 
 
+class ResetPasswordOtpRequest(BaseModel):
+    phone_number: str = Field(min_length=8, max_length=20)
+    otp: str = Field(min_length=4, max_length=10)
+    password: str = Field(min_length=6, max_length=128)
+
+
+class SmsStatusOut(BaseModel):
+    enabled: bool
+    resend_seconds: int
+    otp_expiry_minutes: int
+
+
 class MessageOut(BaseModel):
     detail: str
+    demo_otp: str | None = None
 
 
 class UserOut(BaseModel):
@@ -99,6 +124,11 @@ class UserProfileUpdate(BaseModel):
     location_label: str | None = Field(default=None, max_length=255)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=6, max_length=128)
 
 
 class CategoryCreate(BaseModel):
@@ -315,7 +345,6 @@ class ProviderProfileUpdate(BaseModel):
     opening_time: str | None = None
     closing_time: str | None = None
     gst_number: str | None = None
-    aadhaar_number: str | None = Field(default=None, max_length=12)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     max_radius_km: int | None = Field(default=None, ge=1, le=50)
@@ -323,7 +352,6 @@ class ProviderProfileUpdate(BaseModel):
     tax_id: str | None = None
     government_id_url: str | None = None
     business_reg_url: str | None = None
-    aadhaar_doc_url: str | None = None
     gst_doc_url: str | None = None
 
 
@@ -345,7 +373,6 @@ class ProviderProfileOut(BaseModel):
     opening_time: str | None = None
     closing_time: str | None = None
     gst_number: str | None = None
-    aadhaar_number: str | None = None
     max_radius_km: int
     is_online: bool
     verification_status: VerificationStatus
@@ -358,8 +385,8 @@ class ProviderProfileOut(BaseModel):
     rating_count: int = 0
     government_id_url: str | None = None
     business_reg_url: str | None = None
-    aadhaar_doc_url: str | None = None
     gst_doc_url: str | None = None
+
     ekyc_photo_url: str | None = None
     ekyc_latitude: float | None = None
     ekyc_longitude: float | None = None
@@ -542,8 +569,6 @@ class AdminProviderOut(BaseModel):
     categories: list[str] = Field(default_factory=list)
     offer_kind: OfferKind | None = None
     gst_number: str | None = None
-    aadhaar_number: str | None = None
-    aadhaar_doc_url: str | None = None
     verification_status: VerificationStatus
     is_online: bool
     is_active: bool
@@ -607,7 +632,7 @@ class AdminProviderUpdate(BaseModel):
     max_radius_km: int | None = Field(default=None, ge=1, le=50)
     tax_id: str | None = None
     gst_number: str | None = None
-    aadhaar_number: str | None = Field(default=None, max_length=12)
+
 
 
 class AdminProviderCreate(BaseModel):
@@ -754,7 +779,7 @@ class SmtpConfigUpdate(BaseModel):
     username: str | None = Field(default=None, max_length=255)
     password: str | None = Field(default=None, max_length=255)
     from_email: EmailStr
-    from_name: str = Field(default="KoshalHaat", max_length=255)
+    from_name: str = Field(default="KoshalCity", max_length=255)
     use_tls: bool = True
     use_ssl: bool = False
     is_enabled: bool = False
@@ -762,6 +787,38 @@ class SmtpConfigUpdate(BaseModel):
 
 class SmtpTestRequest(BaseModel):
     to_email: EmailStr
+
+
+class SupportConfigOut(BaseModel):
+    support_email: str
+
+
+class SupportConfigUpdate(BaseModel):
+    support_email: EmailStr
+
+
+class SmsConfigOut(BaseModel):
+    is_enabled: bool
+    api_key_set: bool
+    otp_id: str
+    sender_id: str
+    otp_expiry_minutes: int
+    resend_seconds: int
+    max_per_hour: int
+
+
+class SmsConfigUpdate(BaseModel):
+    is_enabled: bool = False
+    api_key: str | None = Field(default=None, max_length=255)
+    otp_id: str | None = Field(default=None, max_length=64)
+    sender_id: str | None = Field(default=None, max_length=20)
+    otp_expiry_minutes: int = Field(default=10, ge=1, le=60)
+    resend_seconds: int = Field(default=60, ge=15, le=600)
+    max_per_hour: int = Field(default=5, ge=1, le=50)
+
+
+class SmsTestRequest(BaseModel):
+    phone_number: str = Field(min_length=8, max_length=20)
 
 
 class PublicSearchCategory(BaseModel):

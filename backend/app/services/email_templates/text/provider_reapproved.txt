@@ -1,8 +1,8 @@
 Hi {{full_name}},
 
-Good news — your KoshalHaat provider account has been re-approved.
+Good news — your KoshalCity provider account has been re-approved.
 
 You can log in again and use marketplace features such as requests, quotes, orders, and consumer inquiries:
 {{login_url}}
 
-— KoshalHaat Team
+— KoshalCity Team

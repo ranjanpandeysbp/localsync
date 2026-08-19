@@ -49,7 +49,6 @@ from app.services.uploads import media_url, save_upload_file
 router = APIRouter(prefix="/providers", tags=["providers"])
 
 DOC_FIELD_MAP = {
-    "aadhaar": "aadhaar_doc_url",
     "gst": "gst_doc_url",
     "government_id": "government_id_url",
     "business_reg": "business_reg_url",
@@ -86,7 +85,6 @@ def _to_out(db: Session, profile: ProviderProfile) -> ProviderProfileOut:
         opening_time=profile.opening_time,
         closing_time=profile.closing_time,
         gst_number=profile.gst_number,
-        aadhaar_number=profile.aadhaar_number,
         max_radius_km=profile.max_radius_km,
         is_online=effective_is_online(profile),
         verification_status=profile.verification_status,
@@ -99,7 +97,6 @@ def _to_out(db: Session, profile: ProviderProfile) -> ProviderProfileOut:
         rating_count=user.rating_count if user else 0,
         government_id_url=profile.government_id_url,
         business_reg_url=profile.business_reg_url,
-        aadhaar_doc_url=profile.aadhaar_doc_url,
         gst_doc_url=profile.gst_doc_url,
         ekyc_photo_url=profile.ekyc_photo_url,
         ekyc_latitude=profile.ekyc_latitude,
@@ -109,6 +106,7 @@ def _to_out(db: Session, profile: ProviderProfile) -> ProviderProfileOut:
         ekyc_captured_at=profile.ekyc_captured_at,
         ekyc_video_requested_at=profile.ekyc_video_requested_at,
     )
+
 
 
 @router.get("/catalog", response_model=list[ProviderCatalogItem])
@@ -755,7 +753,7 @@ def update_my_profile(
 
 @router.post("/me/documents", response_model=ProviderProfileOut)
 async def upload_provider_document(
-    doc_type: str = Query(..., description="aadhaar | gst | government_id | business_reg"),
+    doc_type: str = Query(..., description="gst | government_id | business_reg"),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.PROVIDER)),
@@ -764,8 +762,9 @@ async def upload_provider_document(
     if not field:
         raise HTTPException(
             status_code=400,
-            detail="doc_type must be one of: aadhaar, gst, government_id, business_reg",
+            detail="doc_type must be one of: gst, government_id, business_reg",
         )
+
     profile = (
         db.query(ProviderProfile).filter(ProviderProfile.user_id == current_user.id).first()
     )
@@ -976,7 +975,7 @@ async def verify_provider(
                 admin=current_user,
                 provider=user,
                 body=(
-                    "Your provider account has been re-approved by KoshalHaat admin. "
+                    "Your provider account has been re-approved by KoshalCity admin. "
                     "Marketplace features are available again — you can go online, "
                     "receive requests, send quotes, and chat with consumers."
                 ),
@@ -993,7 +992,7 @@ async def verify_provider(
                 admin=current_user,
                 provider=user,
                 body=(
-                    "Congratulations — your provider account has been approved by KoshalHaat admin. "
+                    "Congratulations — your provider account has been approved by KoshalCity admin. "
                     "You can complete My profile, go online, and start receiving nearby requests."
                 ),
                 reason="provider_approved",
@@ -1012,7 +1011,7 @@ async def verify_provider(
             admin=current_user,
             provider=user,
             body=(
-                "Your provider account has been revoked by KoshalHaat admin. "
+                "Your provider account has been revoked by KoshalCity admin. "
                 "You can still open Overview, update My profile, and reply in Admin messages. "
                 "Requests, quotes, orders, and consumer inquiries are unavailable until you are re-approved."
             ),

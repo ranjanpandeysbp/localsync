@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../services/api";
+import { useAuth } from "../store/auth";
+import { staffPathBase } from "../types";
 import type {
   AdminAnalytics,
   AdminCustomerServiceAgent,
@@ -70,6 +72,7 @@ export function AdminOverviewDashboard({
   isAdmin: boolean;
   refreshNonce?: number;
 }) {
+  const base = staffPathBase(useAuth((s) => s.user?.role));
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
   const [providers, setProviders] = useState<AdminProvider[]>([]);
@@ -222,15 +225,15 @@ export function AdminOverviewDashboard({
       {busy && !providers.length && !orders.length && <p className="muted">Loading overview…</p>}
 
       <section className="provider-today" aria-label="Today">
-        <Link className="provider-today-item is-link" to="/admin/providers">
+        <Link className="provider-today-item is-link" to={`${base}/providers`}>
           <span className="provider-today-label">Pending providers</span>
           <strong className={dash.pending.length ? "is-on" : ""}>{dash.pending.length}</strong>
         </Link>
-        <Link className="provider-today-item is-link" to="/admin/messages">
+        <Link className="provider-today-item is-link" to={`${base}/messages`}>
           <span className="provider-today-label">Unread messages</span>
           <strong className={dash.unread.length ? "is-on" : ""}>{dash.unread.length}</strong>
         </Link>
-        <Link className="provider-today-item is-link" to="/admin/orders">
+        <Link className="provider-today-item is-link" to={`${base}/orders`}>
           <span className="provider-today-label">Open orders</span>
           <strong>{dash.openOrders.length}</strong>
         </Link>
@@ -259,7 +262,7 @@ export function AdminOverviewDashboard({
               <ul>
                 {dash.pending.slice(0, 4).map((p) => (
                   <li key={p.user_id}>
-                    <Link to={`/admin/providers/${p.user_id}`}>
+                    <Link to={`${base}/providers/${p.user_id}`}>
                       <strong>{p.business_name}</strong>
                       <span className="muted">
                         {p.full_name}
@@ -270,7 +273,7 @@ export function AdminOverviewDashboard({
                 ))}
               </ul>
             )}
-            <Link className="provider-board-more" to="/admin/providers">
+            <Link className="provider-board-more" to={`${base}/providers`}>
               All providers
             </Link>
           </article>
@@ -286,7 +289,7 @@ export function AdminOverviewDashboard({
               <ul>
                 {dash.unread.slice(0, 4).map((t) => (
                   <li key={t.id}>
-                    <Link to={`/admin/providers/${t.provider_id}#messaging`}>
+                    <Link to={`${base}/providers/${t.provider_id}#messaging`}>
                       <strong>{t.provider_business_name || t.provider_name || "Provider"}</strong>
                       <span className="muted">
                         {t.unread_count} new
@@ -297,7 +300,7 @@ export function AdminOverviewDashboard({
                 ))}
               </ul>
             )}
-            <Link className="provider-board-more" to="/admin/messages">
+            <Link className="provider-board-more" to={`${base}/messages`}>
               All messages
             </Link>
           </article>
@@ -313,7 +316,7 @@ export function AdminOverviewDashboard({
               <ul>
                 {dash.watchJobs.slice(0, 4).map((o) => (
                   <li key={o.id}>
-                    <Link to="/admin/orders">
+                    <Link to={`${base}/orders`}>
                       <strong>
                         {o.provider_business_name || o.provider_name || "Provider"}
                       </strong>
@@ -327,7 +330,7 @@ export function AdminOverviewDashboard({
                 ))}
               </ul>
             )}
-            <Link className="provider-board-more" to="/admin/orders">
+            <Link className="provider-board-more" to={`${base}/orders`}>
               Order dashboard
             </Link>
           </article>
@@ -366,7 +369,7 @@ export function AdminOverviewDashboard({
             <p className="dash-eyebrow">Marketplace</p>
             <h3>Health</h3>
           </div>
-          <Link to="/admin/orders">Order dashboard</Link>
+          <Link to={`${base}/orders`}>Order dashboard</Link>
         </div>
         <div className="admin-analytics-kpis">
           <div className="admin-analytics-kpi kpi-consumers">
@@ -397,19 +400,19 @@ export function AdminOverviewDashboard({
           <p className="dash-eyebrow">Providers</p>
           <h3>Verification funnel</h3>
           <div className="admin-funnel-grid">
-            <Link className="admin-funnel-cell" to="/admin/providers">
+            <Link className="admin-funnel-cell" to={`${base}/providers`}>
               <span>Pending</span>
               <strong>{dash.pending.length}</strong>
             </Link>
-            <Link className="admin-funnel-cell is-ok" to="/admin/providers">
+            <Link className="admin-funnel-cell is-ok" to={`${base}/providers`}>
               <span>Approved</span>
               <strong>{dash.approved.length}</strong>
             </Link>
-            <Link className="admin-funnel-cell is-warn" to="/admin/providers">
+            <Link className="admin-funnel-cell is-warn" to={`${base}/providers`}>
               <span>Rejected</span>
               <strong>{dash.rejected.length}</strong>
             </Link>
-            <Link className="admin-funnel-cell is-muted" to="/admin/providers">
+            <Link className="admin-funnel-cell is-muted" to={`${base}/providers`}>
               <span>Revoked</span>
               <strong>{dash.revoked.length}</strong>
             </Link>
@@ -422,7 +425,7 @@ export function AdminOverviewDashboard({
               <p className="dash-eyebrow">Orders</p>
               <h3>Problem orders</h3>
             </div>
-            <Link to="/admin/orders">View all</Link>
+            <Link to={`${base}/orders`}>View all</Link>
           </div>
           {dash.problemOrders.length === 0 ? (
             <p className="muted">No disputed, cancelled, or rejected orders.</p>
@@ -430,7 +433,7 @@ export function AdminOverviewDashboard({
             <ul>
               {dash.problemOrders.slice(0, 6).map((o) => (
                 <li key={o.id}>
-                  <Link to="/admin/orders">
+                  <Link to={`${base}/orders`}>
                     <strong>
                       {o.provider_business_name || o.provider_name || "Provider"}
                     </strong>
