@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60 * 24 * 7
     database_url: str = DEFAULT_DATABASE_URL
     redis_url: str = "redis://localhost:6379/0"
-    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://31.97.237.200:5173"
     default_search_radius_km: int = 5
     city_search_radius_km: int = 30
     max_search_radius_km: int = 50

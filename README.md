@@ -1,4 +1,4 @@
-﻿# KoshalKarobar — Start Guide
+# KoshalKarobar — Start Guide
 
 ## Database Modes
 
