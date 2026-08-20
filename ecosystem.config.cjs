@@ -59,8 +59,8 @@ module.exports = {
       name: "localsync-web",
       cwd: FRONTEND,
 
-      script: "npm",
-      args: "run preview",    // vite preview --host 0.0.0.0 --port 5173
+      script: "npx",
+      args: "serve dist -s -l 5173 --no-clipboard",  // static SPA server on port 5173
 
       interpreter: "none",
 
