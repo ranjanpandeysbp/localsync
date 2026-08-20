@@ -1,4 +1,4 @@
-// PM2 Ecosystem Config — KoshalKarobar
+// PM2 Ecosystem Config ï¿½ KoshalKarobar
 // Usage:
 //   pm2 start ecosystem.config.cjs          # start all apps
 //   pm2 restart ecosystem.config.cjs        # restart all apps
@@ -8,12 +8,12 @@
 
 const path = require("path");
 
-const ROOT     = __dirname;                        // repo root
-const BACKEND  = path.join(ROOT, "backend");
+const ROOT = __dirname;                        // repo root
+const BACKEND = path.join(ROOT, "backend");
 const FRONTEND = path.join(ROOT, "frontend");
 
 // Resolve python from venv if it exists, else system python3
-const PYTHON   = path.join(BACKEND, "venv", "bin", "python3");
+const PYTHON = path.join(BACKEND, ".venv", "bin", "python3");
 
 module.exports = {
   apps: [
@@ -24,7 +24,7 @@ module.exports = {
       name: "localsync-api",
       cwd: BACKEND,
 
-      // Run uvicorn directly — more stable under PM2 than run.py with --reload
+      // Run uvicorn directly ï¿½ more stable under PM2 than run.py with --reload
       script: PYTHON,
       args: "-m uvicorn app.main:app --host 0.0.0.0 --port 2025 --workers 2",
 
