@@ -83,7 +83,26 @@ async def submit_contact_form(
         try:
             stored_name, original, _, _ = await save_upload_file(attachment)
             original_filename = original
-            attachment_url = f"{settings.frontend_url.replace(':5173', ':8000')}/media/{stored_name}"
+            import sys
+            import os
+            try:
+                backend_port = int(os.environ.get("PORT", "8000"))
+            except ValueError:
+                backend_port = 8000
+            for i, arg in enumerate(sys.argv):
+                if arg in ("--port", "-p") and i + 1 < len(sys.argv):
+                    try:
+                        backend_port = int(sys.argv[i + 1])
+                        break
+                    except ValueError:
+                        pass
+                if arg.startswith("--port="):
+                    try:
+                        backend_port = int(arg.split("=", 1)[1])
+                        break
+                    except ValueError:
+                        pass
+            attachment_url = f"{settings.frontend_url.replace(':5173', f':{backend_port}')}/media/{stored_name}"
         except Exception as exc:
             logger.error("Failed to save contact upload: %s", exc)
             raise HTTPException(

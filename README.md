@@ -1,143 +1,151 @@
-# KoshalCity — How to Start Frontend & Backend
+﻿# KoshalKarobar — Start Guide
 
 ## Database Modes
 
-KoshalCity supports two runtime database modes:
-1. **Default Mode (SQLite)**: Zero setup required! Runs on a local SQLite database (`backend/localsync.db`). Docker is completely optional.
-2. **Production Mode (MySQL)**: Connects to the production MySQL database (`srv1953.hstgr.io`) or uses configuration from `.env`.
+| Mode | Database | When to use |
+|------|----------|-------------|
+| **Default (SQLite)** | `backend/localsync.db` (local file) | Local dev on Windows / macOS |
+| **Production / nodocker** | Hostinger MySQL (`srv1953.hstgr.io`) | Ubuntu VPS / Shared hosting, no Docker |
 
 ---
 
-## Backend (FastAPI) — port 8000
+## Local Development (Windows / macOS)
 
-Open a terminal in `backend/`:
-
-### First time setup
-
-**Windows (PowerShell):**
+### 1 — Backend (FastAPI) — port 2025
 
 ```powershell
+# Windows PowerShell
 cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+
+# SQLite (default, zero setup)
+python run.py --port 2025
+
+# MySQL / Hostinger (reads .env)
+python run.py prod --nodocker --port 2025
 ```
 
-**macOS / Linux:**
-
 ```bash
+# macOS / Linux
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+
+python run.py --port 2025                    # SQLite
+python run.py prod --nodocker --port 2025    # MySQL
 ```
+
+**Useful flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--port 2025` | Run on a custom port (default: `8000`) |
+| `--nodocker` | Skip Docker & Redis; use in-memory fallback + load `.env` |
+| `prod` | Connect to Hostinger MySQL instead of SQLite |
+| `--seed` | Seed the database then exit |
+
+**Backend URLs (local)**
+- API docs: http://127.0.0.1:2025/docs
+- Health: http://127.0.0.1:2025/health
 
 ---
 
-### Running the Backend
-
-#### Option A: Default Mode (SQLite — Instant Local Dev)
-
-```bash
-# Seed the default SQLite database (only needed once)
-python run.py --seed
-
-# Start the API server in default SQLite mode
-python run.py
-```
-
-Or using uvicorn directly:
-```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-#### Option B: Production Mode (MySQL / .env)
-
-Pass `prod` or `--prod` flag on startup:
-
-```bash
-# Seed the production MySQL database
-python run.py --seed --prod
-
-# Start the API server in production MySQL mode
-python run.py prod
-```
-
-Or using environment variable / uvicorn:
-```bash
-# Pass APP_ENV=production or --prod
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 prod
-```
-
-**Backend URLs**
-
-- API docs: http://127.0.0.1:8000/docs  
-- Health check: http://127.0.0.1:8000/health (shows active database engine & mode)
-
-Leave this terminal open while developing.
-
----
-
-## Frontend (React / Vite) — port 5173
-
-Open a **second** terminal:
-
-### First time
+### 2 — Frontend (React / Vite) — port 5173
 
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run dev      # dev server with hot reload → http://localhost:5173
 ```
 
-### Every other time
+> The Vite dev server proxies `/api`, `/ws`, and `/health` to `http://127.0.0.1:2025` automatically.
+
+---
+
+## Production Deployment on Hostinger Ubuntu (PM2)
+
+### One-time server setup
 
 ```bash
-cd frontend
-npm run dev
+# Install PM2 globally
+npm install -g pm2
+
+# Python venv + backend deps
+cd ~/work/localsync/backend
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# Build React frontend
+cd ~/work/localsync/frontend
+rm -f package-lock.json        # remove Windows lock file if present
+rm -rf node_modules            # clean Windows binaries
+npm install                    # pulls correct Linux binaries
+npm run build                  # outputs frontend/dist/
+
+# Create logs directory
+mkdir -p ~/work/localsync/logs
 ```
 
-**Frontend URL:** http://localhost:5173  
+### Configure backend environment
 
-Leave this terminal open while developing.
+Edit `backend/.env` (create if not present):
+
+```ini
+APP_ENV=production
+NODOCKER=1
+PORT=2025
+SECRET_KEY=your-secret-key-here
+DATABASE_URL=mysql+pymysql://u554759618_tradesetup:oO3O3N4%3Aa%3F@srv1953.hstgr.io:3306/u554759618_tradesetup?charset=utf8mb4
+CORS_ORIGINS=http://YOUR_VPS_IP:5173,https://yourdomain.com
+FAST2SMS_API_KEY=
+```
+
+### Start with PM2
+
+```bash
+cd ~/work/localsync
+pm2 start ecosystem.config.cjs    # starts localsync-api (port 2025) + localsync-web (port 5173)
+pm2 save                          # persist process list
+pm2 startup                       # auto-start on reboot (follow the printed command)
+```
+
+### PM2 quick reference
+
+```bash
+pm2 list                          # show all running apps & status
+pm2 logs                          # tail all logs
+pm2 logs localsync-api            # backend logs only
+pm2 logs localsync-web            # frontend logs only
+pm2 restart ecosystem.config.cjs  # restart both apps
+pm2 stop localsync-api            # stop backend only
+pm2 monit                         # live CPU / memory dashboard
+```
+
+### Open firewall ports
+
+```bash
+ufw allow 2025    # FastAPI backend
+ufw allow 5173    # React frontend
+ufw reload
+```
 
 ---
 
-## Quick checklist
+## Quick Reference
 
-| Mode | Backend Command | Database Target | Ready when |
-|------|-----------------|-----------------|------------|
-| **Default (SQLite)** | `python run.py` | `localsync.db` (local file) | http://127.0.0.1:8000/docs loads |
-| **Prod (MySQL)** | `python run.py prod` | Hostinger MySQL (`srv1953.hstgr.io`) | http://127.0.0.1:8000/docs loads |
-| **Frontend** | `npm run dev` | Talks to backend on port 8000 | http://localhost:5173 loads |
-
-
-Start order: **Docker → Backend → Frontend**.
+| What | URL |
+|------|-----|
+| React app | http://YOUR_IP:5173 |
+| API docs (Swagger) | http://YOUR_IP:2025/docs |
+| Health check | http://YOUR_IP:2025/health |
 
 ---
 
-## Fast2SMS (register + forgot-password OTP)
-
-Configure Fast2SMS in **Admin → Config → Fast2SMS** (API key, OTP template id, sender, limits, test OTP). The key is never returned on GET.
-
-Env vars below only **seed the first row** if the database has no SMS config yet:
-
-```
-FAST2SMS_API_KEY=your_api_key
-FAST2SMS_OTP_ID=          # optional; DLT / Smart OTP template id. Blank uses Fast2SMS route=otp
-FAST2SMS_OTP_EXPIRY_MINUTES=10
-```
-
-`GET /api/v1/auth/sms-status` reports `{ "enabled": true }` when Fast2SMS is enabled in Config and an API key is saved.
-
-- **Register:** Create account → OTP SMS → Verify & create. Without Fast2SMS, a one-time demo OTP is returned for local testing.
-- **Forgot password:** Phone → OTP → new password when SMS is enabled; otherwise email-link (SMTP).
-
-Get a key at https://www.fast2sms.com — Dev / API settings.
-
----
-
-## Demo logins
+## Demo Logins
 
 | Role | Phone | Password |
 |------|-------|----------|
@@ -146,31 +154,34 @@ Get a key at https://www.fast2sms.com — Dev / API settings.
 | Admin | `9000000001` | `admin123` |
 | Customer service | `9000000004` | `support123` |
 
-### Attachments
+---
 
-Consumers can attach **images or PDFs** when posting a request.  
-Providers can attach **images or PDFs** (catalog / proof) when submitting a quote.  
+## Attachments
+
+Consumers and Providers can attach **images or PDFs** to requests and quotes.
 Limits: up to **5 files**, **8 MB** each · JPEG, PNG, WebP, GIF, PDF.
 
-### Browse & pre-request chat
+---
 
-1. On the consumer dashboard, pick a **category or subcategory**.
-2. See providers in **Online** / **Offline** tabs (offerings, hours, GST, Maps link).
-3. Click **Chat & ask** on an **online** provider to inquire before posting a request.
-4. Providers reply from their **Consumer inquiries** panel.
+## Fast2SMS OTP
 
-## Summary
-Registration is now minimal (name, mobile, password, role + GPS). Address, contact, GST/Aadhaar and documents live on **My profile** (`/profile`).
+Configure in **Admin → Config → Fast2SMS**. Without a key, a demo OTP is printed to the console for local testing.
 
-Hard-refresh the app, open **Register**, allow location, then finish details under **My profile**.
-
+```ini
+FAST2SMS_API_KEY=your_key
+FAST2SMS_OTP_ID=          # optional DLT template id
+FAST2SMS_OTP_EXPIRY_MINUTES=10
+```
 
 ---
 
 ## Stop
 
-- Frontend / Backend: `Ctrl+C` in each terminal  
-- Database: `docker compose down` (from repo root)
+```bash
+pm2 stop ecosystem.config.cjs     # stop both apps on server
+# or locally:
+Ctrl+C                             # in each terminal
+```
 
 ---
 
@@ -178,6 +189,8 @@ Hard-refresh the app, open **Register**, allow location, then finish details und
 
 | Issue | Fix |
 |-------|-----|
-| BE can’t connect to DB | Run `docker compose up -d` and wait for healthy |
-| FE blank / API errors | Confirm BE is running on port **8000** |
-| Docker errors | Open Docker Desktop, wait until fully started, retry |
+| `npm install` fails with `EBADPLATFORM` | `rm -rf node_modules package-lock.json && npm install` |
+| Backend can't connect to MySQL | Check `DATABASE_URL` in `backend/.env` |
+| FE blank / API 502 | Confirm backend is running: `pm2 list` |
+| PM2 app keeps restarting | Check logs: `pm2 logs localsync-api --lines 50` |
+| Port already in use | `pm2 stop all` then restart, or change `PORT` in `.env` |

@@ -22,12 +22,15 @@ def main():
     is_prod = any(arg in args for arg in ("prod", "--prod", "-p", "production", "--production"))
     is_nodocker = any(arg in args for arg in ("nodocker", "--nodocker", "-nd", "no-docker", "--no-docker"))
     do_seed = any(arg in args for arg in ("seed", "--seed", "-s"))
-    port = 8000
-    host = "0.0.0.0"
+    try:
+        port = int(os.environ.get("PORT", "8000"))
+    except ValueError:
+        port = 8000
+    host = os.environ.get("HOST", "0.0.0.0")
 
-    # Find custom port if passed e.g. --port 8001
+    # Find custom port or host if passed e.g. --port 8001 --host 127.0.0.1
     for i, arg in enumerate(args):
-        if arg in ("--port", "-P") and i + 1 < len(argv if 'argv' in locals() else args):
+        if arg in ("--port", "-p") and i + 1 < len(args):
             try:
                 port = int(args[i + 1])
             except ValueError:
@@ -37,6 +40,10 @@ def main():
                 port = int(arg.split("=", 1)[1])
             except ValueError:
                 pass
+        if arg == "--host" and i + 1 < len(args):
+            host = sys.argv[i + 2]
+        if arg.startswith("--host="):
+            host = sys.argv[i + 1].split("=", 1)[1]
 
     if is_nodocker:
         os.environ["NODOCKER"] = "1"
@@ -67,7 +74,7 @@ def main():
     print(f"[*] Database URL: {settings.database_url.split('@')[-1] if '@' in settings.database_url else settings.database_url}")
     print(f"[*] Interactive docs available at: http://127.0.0.1:{port}/docs")
 
-    uvicorn.run("app.main:app", host=host, port=port, reload=True)
+    uvicorn.run("app.main:app", host=host, port=port, reload=not is_prod)
 
 
 if __name__ == "__main__":
