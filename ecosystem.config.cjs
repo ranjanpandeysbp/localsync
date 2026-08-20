@@ -59,8 +59,8 @@ module.exports = {
       name: "localsync-web",
       cwd: FRONTEND,
 
-      script: "npx",
-      args: "serve dist -s -l 5173 --no-clipboard",  // static SPA server on port 5173
+      script: "npm",
+      args: "run preview",
 
       interpreter: "none",
 
