@@ -20,13 +20,14 @@ def main():
     args = [a.lower() for a in sys.argv[1:]]
 
     is_prod = any(arg in args for arg in ("prod", "--prod", "-p", "production", "--production"))
+    is_nodocker = any(arg in args for arg in ("nodocker", "--nodocker", "-nd", "no-docker", "--no-docker"))
     do_seed = any(arg in args for arg in ("seed", "--seed", "-s"))
     port = 8000
     host = "0.0.0.0"
 
     # Find custom port if passed e.g. --port 8001
     for i, arg in enumerate(args):
-        if arg in ("--port", "-P") and i + 1 < len(args):
+        if arg in ("--port", "-P") and i + 1 < len(argv if 'argv' in locals() else args):
             try:
                 port = int(args[i + 1])
             except ValueError:
@@ -37,12 +38,21 @@ def main():
             except ValueError:
                 pass
 
+    if is_nodocker:
+        os.environ["NODOCKER"] = "1"
+
     if is_prod:
         os.environ["APP_ENV"] = "production"
         os.environ["PROD"] = "1"
-        mode_label = "PRODUCTION (MySQL / .env)"
+        if is_nodocker:
+            mode_label = "PRODUCTION (MySQL / .env) [NODOCKER: Redis Bypassed]"
+        else:
+            mode_label = "PRODUCTION (MySQL / .env)"
     else:
-        mode_label = "DEFAULT (SQLite: localsync.db)"
+        if is_nodocker:
+            mode_label = "NODOCKER (MySQL / .env) [Redis Bypassed]"
+        else:
+            mode_label = "DEFAULT (SQLite: localsync.db)"
 
     if do_seed:
         print(f"[*] Seeding database in {mode_label} mode...")

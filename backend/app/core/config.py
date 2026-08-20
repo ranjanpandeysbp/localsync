@@ -34,12 +34,37 @@ def _detect_is_prod() -> bool:
     return False
 
 
+def _detect_no_docker() -> bool:
+    """Check CLI flags or environment variables for nodocker mode."""
+    argv = [arg.lower() for arg in sys.argv]
+    if any(arg in argv for arg in ("nodocker", "--nodocker", "-nd", "no-docker", "--no-docker")):
+        return True
+    for i, arg in enumerate(argv):
+        if arg in ("--nodocker", "-nd") and i + 1 < len(argv):
+            if argv[i + 1] in ("true", "1", "yes"):
+                return True
+        if arg.startswith(("--nodocker=", "nodocker=")):
+            val = arg.split("=", 1)[1].strip()
+            if val in ("true", "1", "yes"):
+                return True
+
+    env_val = (
+        os.getenv("NODOCKER")
+        or os.getenv("NO_DOCKER")
+        or ""
+    ).lower().strip()
+    if env_val in ("true", "1", "yes"):
+        return True
+    return False
+
+
 # Determine backend directory and .env location
 BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 ENV_FILE_PATH = BACKEND_DIR / ".env"
 DEFAULT_SQLITE_PATH = BACKEND_DIR / "localsync.db"
 
 IS_PROD_MODE = _detect_is_prod()
+IS_NODOCKER = _detect_no_docker()
 
 # Default Hostinger MySQL production parameters
 DEFAULT_PROD_DB_HOST = "srv1953.hstgr.io"
@@ -49,7 +74,7 @@ DEFAULT_PROD_DB_PASS = "oO3O3N4:a?"
 DEFAULT_PROD_DB_NAME = "u554759618_tradesetup"
 
 # Build default database URL based on mode
-if IS_PROD_MODE:
+if IS_PROD_MODE or IS_NODOCKER:
     db_host = os.getenv("DB_HOST", DEFAULT_PROD_DB_HOST)
     db_port = os.getenv("DB_PORT", DEFAULT_PROD_DB_PORT)
     db_user = os.getenv("DB_USER", DEFAULT_PROD_DB_USER)
@@ -66,13 +91,14 @@ else:
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=str(ENV_FILE_PATH) if (IS_PROD_MODE and ENV_FILE_PATH.exists()) else None,
+        env_file=str(ENV_FILE_PATH) if ((IS_PROD_MODE or IS_NODOCKER) and ENV_FILE_PATH.exists()) else None,
         extra="ignore",
     )
 
     app_name: str = "KoshalKarobar"
     app_env: str = "production" if IS_PROD_MODE else "development"
     is_prod: bool = IS_PROD_MODE
+    is_nodocker: bool = IS_NODOCKER
     api_v1_prefix: str = "/api/v1"
     secret_key: str = "change-me-in-production-koshalkarobar-secret"
     algorithm: str = "HS256"
