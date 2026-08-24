@@ -6,6 +6,7 @@ import { RegisterModal } from "../components/RegisterModal";
 import { ContactForm } from "../components/ContactForm";
 import { CitySearchBox } from "../components/CitySearchBox";
 import { AreaSearchBox, type AreaPick } from "../components/AreaSearchBox";
+import { SkeletonCard, SkeletonCategoryCard } from "../components/Skeleton";
 import {
   CategoryNeedSearch,
   categoryNeedOptions,
@@ -100,7 +101,7 @@ type LocState = {
 type CityPopupReason = "no_location" | "out_of_area" | null;
 
 const SEARCH_PAGE_SIZE = 10;
-const POPULAR_PREVIEW = 8;
+const POPULAR_PREVIEW = 9;
 const SUBCAT_TAB_PREVIEW = 5;
 
 function parentCategoryTags(categories: string[] | undefined): string[] {
@@ -151,6 +152,7 @@ export function LandingPage() {
   const [searchBusy, setSearchBusy] = useState(false);
   const [searchProviders, setSearchProviders] = useState<ProviderCatalogItem[]>([]);
   const [searchCategories, setSearchCategories] = useState<PublicSearchCategory[]>([]);
+  const [searchCatsExpanded, setSearchCatsExpanded] = useState(false);
   const [searchDone, setSearchDone] = useState(false);
   const [searchPage, setSearchPage] = useState(1);
   const [selectedSearchIds, setSelectedSearchIds] = useState<string[]>([]);
@@ -327,9 +329,14 @@ export function LandingPage() {
   }, [signedIn, user?.role, activeChat?.id]);
 
   const popularTree = useMemo(() => {
-    if (!countsReady || !hasLocation) return tree;
+    if (countsReady && hasLocation) {
+      return [...tree].sort(
+        (a, b) => (nearbyCounts[b.id] || 0) - (nearbyCounts[a.id] || 0),
+      );
+    }
+    // Fallback: sort by subcategory count so richest categories show first
     return [...tree].sort(
-      (a, b) => (nearbyCounts[b.id] || 0) - (nearbyCounts[a.id] || 0),
+      (a, b) => (b.subcategories?.length || 0) - (a.subcategories?.length || 0),
     );
   }, [tree, nearbyCounts, countsReady, hasLocation]);
   const visiblePopular = catsExpanded ? popularTree : popularTree.slice(0, POPULAR_PREVIEW);
@@ -806,8 +813,9 @@ export function LandingPage() {
   ) {
     const full = resolveCategory(cat, parent);
     setSelected(full);
-    setSearchDone(false);
     setSearchProviders([]);
+    setSearchDone(false);
+    setSearchCatsExpanded(false);
     setSelectedSearchIds([]);
     setSearchActionError("");
     setError("");
@@ -1781,18 +1789,30 @@ export function LandingPage() {
                 homeFit && "flex-1 flex flex-col -mt-4 pt-[1.1rem] pb-[0.4rem] min-h-0",
               )}
             >
+              {searchBusy && (
+                <section className="w-[min(920px,calc(100%-2rem))] mx-auto mb-10 box-border max-[560px]:w-[min(920px,calc(100%-1.25rem))]">
+                  <div className="pb-[0.85rem] border-b border-solid border-[rgba(29,36,43,0.07)] mb-[1.15rem]">
+                    <div className="skeleton h-[0.7rem] w-16 rounded-full mb-2" />
+                    <div className="skeleton h-[1.4rem] w-48 rounded-full mb-3" />
+                    <div className="skeleton h-[0.75rem] w-64 rounded-full" />
+                  </div>
+                  <div className="grid gap-3">
+                    {[0, 1, 2, 3].map((i) => <SkeletonCard key={i} />)}
+                  </div>
+                </section>
+              )}
               {searchDone && (
                 <section
                   className="w-[min(920px,calc(100%-2rem))] mx-auto mb-10 box-border max-[560px]:w-[min(920px,calc(100%-1.25rem))]"
                   ref={searchRef}
                   id="search-results"
                 >
-                  <div className="flex items-end justify-between gap-4 flex-wrap pb-[0.85rem] border-b border-solid border-[rgba(29,36,43,0.07)] mb-[1.15rem]">
+                  <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 pb-[0.85rem] border-b border-solid border-[rgba(29,36,43,0.07)] mb-[1.15rem]">
                     <div>
                       <p className="m-0 mb-[0.2rem] text-[0.72rem] font-bold tracking-[0.08em] uppercase text-primary/78">Results</p>
-                      <h2 className="m-0 mb-[0.35rem] font-display text-[clamp(1.45rem,2.4vw,1.75rem)] font-bold tracking-[-0.03em] text-brand-dark">
+                      <h2 className="m-0 mb-[0.35rem] font-display text-[clamp(1.1rem,3.5vw,1.75rem)] md:text-[clamp(1.45rem,2.4vw,1.75rem)] font-bold tracking-[-0.03em] text-brand-dark">
                         {searchQ.trim()
-                          ? `Matches for “${searchQ.trim()}”`
+                          ? `Matches for "${searchQ.trim()}"`
                           : selectedArea && selectedCity
                             ? `Providers near ${selectedArea.name}`
                             : customPincode && selectedCity
@@ -1802,27 +1822,6 @@ export function LandingPage() {
                                 : "Providers near you"}
                       </h2>
                       <p className="m-0 text-[0.92rem] leading-[1.45] text-[rgba(29,36,43,0.62)]">{matchHint}</p>
-                      {searchCategories.length > 0 && (
-                        <div className="flex flex-wrap gap-[0.4rem] mt-3" aria-label="Matching categories">
-                          {searchCategories.slice(0, 8).map((cat) => (
-                            <button
-                              key={cat.id}
-                              type="button"
-                              className="border border-solid border-primary/18 bg-primary/6 text-brand rounded-full py-[0.28rem] px-[0.7rem] text-[0.78rem] font-semibold cursor-pointer hover:bg-primary/12"
-                              onClick={() => {
-                                const parent = tree.find((p) => p.id === cat.id);
-                                const subParent = tree.find((p) =>
-                                  (p.subcategories || []).some((s) => s.id === cat.id),
-                                );
-                                const sub = subParent?.subcategories?.find((s) => s.id === cat.id);
-                                onSelectCategory(parent || sub || cat, subParent);
-                              }}
-                            >
-                              {cat.parent_name ? `${cat.parent_name} › ${cat.name}` : cat.name}
-                            </button>
-                          ))}
-                        </div>
-                      )}
                       {searchProviders.length > 0 && (
                         <p className={`${muted} mt-[0.35rem] mb-0 text-[0.86rem]`}>
                           {searchProviders.length} provider{searchProviders.length === 1 ? "" : "s"} · page{" "}
@@ -1831,7 +1830,7 @@ export function LandingPage() {
                       )}
                     </div>
                     {searchProviders.length > 0 && (
-                      <div className="flex flex-wrap items-center justify-end gap-x-[0.85rem] gap-y-[0.65rem] py-[0.65rem] px-[0.85rem] rounded-[14px] bg-primary/6 border border-solid border-primary/12 max-[820px]:items-stretch max-[820px]:w-full max-[820px]:flex-col">
+                      <div className="flex flex-wrap items-center justify-end gap-x-[0.85rem] gap-y-[0.65rem] py-[0.65rem] px-[0.85rem] rounded-[14px] bg-primary/6 border border-solid border-primary/12 w-full md:w-auto md:flex-nowrap md:items-center">
                         <p className="m-0 text-[0.88rem] font-semibold text-brand-dark">
                           {selectedSearchIds.length === 0
                             ? "Select providers to request"
@@ -1839,7 +1838,7 @@ export function LandingPage() {
                         </p>
                         <button
                           type="button"
-                          className={`${btn} max-[820px]:w-full`}
+                          className={`${btn} w-full md:w-auto`}
                           onClick={goSendRequest}
                           disabled={selectedSearchIds.length === 0}
                         >
@@ -1848,6 +1847,7 @@ export function LandingPage() {
                       </div>
                     )}
                   </div>
+
                   {searchActionError && <p className={errorText}>{searchActionError}</p>}
                   {chatError && (
                     <p className={errorText} onClick={() => setChatError("")}>
@@ -1863,23 +1863,56 @@ export function LandingPage() {
                         </p>
                       </div>
                     ) : (
-                      pagedSearchProviders.map((p) => (
-                        <ProviderCard
-                          key={p.user_id}
-                          provider={p}
-                          selectable
-                          selected={selectedSearchIds.includes(p.user_id)}
-                          onToggleSelect={() => toggleSearchProvider(p.user_id)}
-                          showDistance
-                          parentCategoriesOnly
-                          showChat={showChat}
-                          chatBusy={openingChatId === p.user_id}
-                          chatUnread={chatUnreadByProvider[p.user_id] || 0}
-                          onChat={() => void chatWithProvider(p)}
-                        />
-                      ))
+                      <>
+                        {pagedSearchProviders.slice(0, 4).map((p) => (
+                          <ProviderCard
+                            key={p.user_id}
+                            provider={p}
+                            selectable
+                            selected={selectedSearchIds.includes(p.user_id)}
+                            onToggleSelect={() => toggleSearchProvider(p.user_id)}
+                            showDistance
+                            parentCategoriesOnly
+                            showChat={showChat}
+                            chatBusy={openingChatId === p.user_id}
+                            chatUnread={chatUnreadByProvider[p.user_id] || 0}
+                            onChat={() => void chatWithProvider(p)}
+                          />
+                        ))}
+
+                        {/* All Categories link after 4th provider */}
+                        <button
+                          type="button"
+                          className="w-full py-3 px-4 rounded-2xl border border-solid border-primary/15 bg-white text-brand text-[0.9rem] font-bold cursor-pointer hover:bg-primary/5 hover:border-primary/30 transition-all duration-150"
+                          onClick={() => {
+                            setSearchDone(false);
+                            setTimeout(() => {
+                              document.getElementById("categories")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                            }, 50);
+                          }}
+                        >
+                          All Categories ({popularTree.length})
+                        </button>
+
+                        {pagedSearchProviders.slice(4).map((p) => (
+                          <ProviderCard
+                            key={p.user_id}
+                            provider={p}
+                            selectable
+                            selected={selectedSearchIds.includes(p.user_id)}
+                            onToggleSelect={() => toggleSearchProvider(p.user_id)}
+                            showDistance
+                            parentCategoriesOnly
+                            showChat={showChat}
+                            chatBusy={openingChatId === p.user_id}
+                            chatUnread={chatUnreadByProvider[p.user_id] || 0}
+                            onChat={() => void chatWithProvider(p)}
+                          />
+                        ))}
+                      </>
                     )}
                   </div>
+
                   {searchProviders.length > SEARCH_PAGE_SIZE && (
                     <Pagination
                       page={currentSearchPage}
@@ -1950,69 +1983,84 @@ export function LandingPage() {
                         className="shrink-0 mb-[0.15rem] py-[0.35rem] px-[0.15rem] border-0 bg-transparent text-brand font-inherit text-[0.88rem] font-bold cursor-pointer hover:text-brand-dark hover:underline"
                         onClick={() => setCatsExpanded((v) => !v)}
                       >
-                        {catsExpanded ? "Show less" : `See all (${popularTree.length})`}
+                        {catsExpanded ? "Show less" : `All Categories (${popularTree.length})`}
                       </button>
                     ) : null}
                   </div>
 
-                  {tree.length === 0 && <p className={muted}>Loading categories…</p>}
+                  {tree.length === 0 && (
+                    <div className={cn(
+                      "grid grid-cols-1 md:grid-cols-3 gap-[0.65rem]",
+                      homeFit && "flex-1 min-h-0 overflow-y-auto content-start",
+                    )}>
+                      {Array.from({ length: 9 }).map((_, i) => (
+                        <SkeletonCategoryCard key={i} compact={homeFit} />
+                      ))}
+                    </div>
+                  )}
                   <div
                     className={cn(
                       browsing
                         ? "flex flex-wrap gap-[0.65rem]"
-                        : homeFit
-                          ? "grid grid-cols-[repeat(auto-fill,minmax(9.75rem,1fr))] gap-2 flex-1 min-h-0 overflow-y-auto content-start"
-                          : "grid grid-cols-[repeat(auto-fill,minmax(10.75rem,1fr))] gap-[0.65rem] max-[900px]:grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))]",
+                        : "grid grid-cols-1 md:grid-cols-3 gap-[0.65rem]"
+                        + (homeFit ? " flex-1 min-h-0 overflow-y-auto content-start" : ""),
                     )}
                     role="list"
                     aria-label={browsing ? "Selected category" : "Popular categories"}
                   >
-                    {(browsing && selectedParentCat ? [selectedParentCat] : visiblePopular).map((cat) => {
-                      const nearby = nearbyCounts[cat.id];
-                      const subCount = cat.subcategories?.length || 0;
-                      let meta: string;
-                      if (hasLocation && countsReady) {
-                        meta = `${nearby || 0} nearby`;
-                      } else if (hasLocation && !countsReady) {
-                        meta = "Counting…";
-                      } else if (subCount > 0) {
-                        meta = `${subCount} type${subCount === 1 ? "" : "s"}`;
-                      } else {
-                        meta = offerKindLabel(cat.kind);
-                      }
-                      const isActive = selectedParentCat?.id === cat.id;
-                      return (
-                        <button
-                          key={cat.id}
-                          type="button"
-                          className={cn(
-                            "flex flex-row items-center gap-3 text-left min-h-[4.4rem] min-w-0 py-[0.8rem] px-[0.9rem] rounded-2xl border border-solid border-[rgba(29,36,43,0.08)] bg-[rgba(255,254,251,0.92)] cursor-pointer transition-[border-color,transform,background,box-shadow] hover:border-primary/35 hover:bg-card hover:-translate-y-0.5 hover:shadow-[0_10px_24px_rgba(15,76,67,0.08)] focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-2",
-                            browsing && "flex-[0_1_17rem] max-w-80",
-                            homeFit && "min-h-14 py-2 px-[0.65rem] gap-[0.55rem]",
-                            isActive && "border-brand bg-primary/6 hover:border-brand",
-                          )}
-                          role="listitem"
-                          aria-pressed={isActive}
-                          onClick={() => onSelectCategory(cat)}
-                        >
-                          <span
+                    {(() => {
+                      const itemsToRender = browsing && selectedParentCat ? [selectedParentCat] : visiblePopular;
+
+                      const renderCat = (cat: CategoryTree, index = 0) => {
+                        const nearby = nearbyCounts[cat.id];
+                        const subCount = cat.subcategories?.length || 0;
+                        let meta: string;
+                        if (hasLocation && countsReady) {
+                          meta = `${nearby || 0} nearby`;
+                        } else if (hasLocation && !countsReady) {
+                          meta = "Counting…";
+                        } else if (subCount > 0) {
+                          meta = `${subCount} type${subCount === 1 ? "" : "s"}`;
+                        } else {
+                          meta = offerKindLabel(cat.kind);
+                        }
+                        const isActive = selectedParentCat?.id === cat.id;
+                        return (
+                          <button
+                            key={cat.id}
+                            type="button"
                             className={cn(
-                              "grid place-items-center shrink-0 w-[2.4rem] h-[2.4rem] rounded-xl bg-[linear-gradient(145deg,rgba(26,107,95,0.14),rgba(15,76,67,0.1))] text-brand-dark font-bold text-[0.95rem]",
-                              homeFit && "w-8 h-8 rounded-[10px]",
+                              "flex flex-row items-center gap-[0.85rem] text-left min-h-[4.8rem] min-w-0 py-[0.85rem] px-[1rem] rounded-[1.25rem] border border-solid border-[rgba(29,36,43,0.06)] bg-white shadow-[0_2px_8px_rgba(29,36,43,0.02)] cursor-pointer transition-all duration-200 hover:border-primary/40 hover:bg-[#fbfbf9] hover:-translate-y-1 hover:shadow-[0_12px_28px_rgba(15,76,67,0.1)] focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-2",
+                              browsing && "flex-[0_1_17rem] max-w-80",
+                              homeFit && "min-h-14 py-2 px-[0.65rem] gap-[0.55rem]",
+                              isActive && "border-brand bg-primary/8 shadow-sm hover:border-brand",
+                              !catsExpanded && !browsing && index >= 3 && "md:flex hidden",
                             )}
-                            aria-hidden="true"
+                            role="listitem"
+                            aria-pressed={isActive}
+                            onClick={() => onSelectCategory(cat)}
                           >
-                            <CategoryChipIcon name={cat.name} slug={cat.slug} />
-                          </span>
-                          <span className="flex flex-col gap-[0.15rem] min-w-0">
-                            <strong className="text-[0.98rem] font-semibold tracking-[-0.02em] text-ink [overflow-wrap:anywhere]">
-                              {cat.name}
-                            </strong>
-                            <span className="text-[0.8rem] text-[rgba(29,36,43,0.55)]">{meta}</span>
-                          </span>
-                        </button>
-                      );
-                    })}
+                            <span
+                              className={cn(
+                                "grid place-items-center shrink-0 w-8 h-8 rounded-[0.7rem] md:w-[2.75rem] md:h-[2.75rem] md:rounded-[0.85rem] bg-[linear-gradient(135deg,rgba(15,76,67,0.12),rgba(26,107,95,0.06))] text-brand font-bold text-[0.9rem] md:text-[1.1rem]",
+                                homeFit && "w-8 h-8 rounded-lg text-[0.9rem]",
+                              )}
+                              aria-hidden="true"
+                            >
+                              <CategoryChipIcon name={cat.name} slug={cat.slug} />
+                            </span>
+                            <span className="flex flex-col gap-[0.1rem] min-w-0 flex-1">
+                              <strong className="text-[0.8rem] md:text-[0.92rem] font-bold tracking-[-0.01em] leading-[1.25] text-[var(--ink)] line-clamp-2 whitespace-normal break-words text-left">
+                                {cat.name}
+                              </strong>
+                              <span className="text-[0.72rem] md:text-[0.82rem] font-medium text-[rgba(29,36,43,0.58)] truncate">{meta}</span>
+                            </span>
+                          </button>
+                        );
+                      };
+
+                      return itemsToRender.map((c, i) => renderCat(c, i));
+                    })()}
                   </div>
                   {selectedParentCat && rankedSubcats.length > 0 && (
                     <div
@@ -2129,7 +2177,9 @@ export function LandingPage() {
                         </p>
                       )}
                       {hasLocation && categoryBusy && !zeroNearbySelected && (
-                        <p className={muted}>Loading providers…</p>
+                        <div className="grid gap-3">
+                          {[0, 1, 2].map((i) => <SkeletonCard key={i} />)}
+                        </div>
                       )}
                       {showBroadcastEmpty && (
                         <div className="py-7 px-5 text-left rounded-2xl border border-solid border-primary/14 bg-primary/4">

@@ -1,6 +1,6 @@
 import type { Attachment } from "../types";
 
-const MEDIA_BASE = import.meta.env.VITE_MEDIA_URL || "http://127.0.0.1:2025";
+const MEDIA_BASE = import.meta.env.VITE_MEDIA_URL || "";
 
 export function mediaSrc(url: string): string {
   if (url.startsWith("http")) return url;

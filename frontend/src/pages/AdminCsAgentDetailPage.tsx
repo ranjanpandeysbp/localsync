@@ -3,6 +3,7 @@ import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { api, apiErrorMessage } from "../services/api";
 import { useAuth } from "../store/auth";
+import { Skeleton } from "../components/Skeleton";
 import type { AdminCustomerServiceAgent } from "../types";
 
 type EditForm = {
@@ -163,7 +164,19 @@ export function AdminCsAgentDetailPage() {
 
         {note && <p className="pill online">{note}</p>}
         {error && <p className="error">{error}</p>}
-        {loading && <p className="muted">Loading agent…</p>}
+        {loading && (
+          <div className="flex flex-col gap-4 p-4">
+            <div className="flex gap-4 items-start">
+              <Skeleton className="shrink-0 w-14 h-14 rounded-xl" />
+              <div className="flex flex-col gap-2 flex-1">
+                <Skeleton className="h-[1rem] w-[40%] rounded-full" />
+                <Skeleton className="h-[0.75rem] w-[25%] rounded-full" />
+              </div>
+            </div>
+            <Skeleton className="h-[0.75rem] w-full rounded-full" />
+            <Skeleton className="h-[0.75rem] w-[70%] rounded-full" />
+          </div>
+        )}
 
         {agent && !loading && (
           <>

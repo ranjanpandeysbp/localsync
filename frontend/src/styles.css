@@ -35,6 +35,23 @@
   --animate-landing-rise: landing-rise 0.45s ease both;
   --animate-landing-scene-drift: landing-scene-drift 16s ease-in-out infinite alternate;
 }
+/* --- Responsive root font size --- */
+html { font-size: 14px; }
+@media (min-width: 480px) { html { font-size: 15px; } }
+@media (min-width: 768px) { html { font-size: 16px; } }
+
+/* --- Skeleton shimmer --- */
+@keyframes skeleton-shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #ede9df 25%, #f5f2ea 50%, #ede9df 75%);
+  background-size: 800px 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  border-radius: 0.5rem;
+}
+
 
 
 @keyframes login-visual-in {

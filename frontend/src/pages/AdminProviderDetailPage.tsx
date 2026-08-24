@@ -8,6 +8,7 @@ import { offerKindLabel } from "../components/ProviderTrust";
 import { api } from "../services/api";
 import { useAdminNav } from "../store/adminNav";
 import { useAuth } from "../store/auth";
+import { Skeleton } from "../components/Skeleton";
 import { staffPathBase } from "../types";
 import type { AdminProviderDetail, AdminSupportConversation, OfferKind } from "../types";
 
@@ -363,7 +364,20 @@ export function AdminProviderDetailPage() {
 
         {note && <p className="pill online">{note}</p>}
         {error && <p className="error">{error}</p>}
-        {loading && <p className="muted">Loading provider…</p>}
+        {loading && (
+          <div className="flex flex-col gap-4 p-4">
+            <div className="flex gap-4 items-start">
+              <Skeleton className="shrink-0 w-16 h-16 rounded-xl" />
+              <div className="flex flex-col gap-2 flex-1">
+                <Skeleton className="h-[1rem] w-[45%] rounded-full" />
+                <Skeleton className="h-[0.75rem] w-[30%] rounded-full" />
+              </div>
+            </div>
+            <Skeleton className="h-[0.75rem] w-full rounded-full" />
+            <Skeleton className="h-[0.75rem] w-[80%] rounded-full" />
+            <Skeleton className="h-24 w-full rounded-xl" />
+          </div>
+        )}
 
         {provider && !loading && (
           <>

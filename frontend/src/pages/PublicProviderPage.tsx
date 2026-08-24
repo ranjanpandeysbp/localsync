@@ -11,6 +11,7 @@ import { savePostRequestDraft, type PostRequestDraft } from "../utils/postReques
 import type { ProviderPublicProfile } from "../types";
 import { KoshalCityLogo } from "../components/KoshalCityLogo";
 import { btn, btnSecondary, iconBtn } from "../ui";
+import { Skeleton } from "../components/Skeleton";
 
 export function PublicProviderPage() {
   const { slugOrId } = useParams<{ slugOrId: string }>();
@@ -174,7 +175,30 @@ export function PublicProviderPage() {
       </header>
 
       <section className="w-[min(920px,calc(100%-2rem))] mx-auto mb-10 box-border pt-6">
-        {loading && <p className="muted">Loading provider…</p>}
+        {loading && (
+          <div className="flex flex-col gap-5">
+            {/* Header skeleton */}
+            <div className="flex gap-4 items-start">
+              <Skeleton className="shrink-0 w-20 h-20 rounded-2xl" />
+              <div className="flex flex-col gap-2 flex-1">
+                <Skeleton className="h-[1.1rem] w-[50%] rounded-full" />
+                <Skeleton className="h-[0.8rem] w-[35%] rounded-full" />
+                <Skeleton className="h-[0.75rem] w-[45%] rounded-full" />
+              </div>
+            </div>
+            {/* Body skeletons */}
+            <div className="flex flex-col gap-2">
+              <Skeleton className="h-[0.8rem] w-full rounded-full" />
+              <Skeleton className="h-[0.8rem] w-[90%] rounded-full" />
+              <Skeleton className="h-[0.8rem] w-[75%] rounded-full" />
+            </div>
+            <div className="flex gap-2">
+              <Skeleton className="h-10 flex-1 rounded-xl" />
+              <Skeleton className="h-10 flex-1 rounded-xl" />
+            </div>
+            <Skeleton className="h-36 w-full rounded-2xl" />
+          </div>
+        )}
         {error && !loading && (
           <div className="page-panel" style={{ maxWidth: 640 }}>
             <h2>Provider unavailable</h2>
