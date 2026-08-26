@@ -25,14 +25,27 @@ export function normalizeDraftProviders(draft: PostRequestDraft): PostRequestPro
 }
 
 export function savePostRequestDraft(draft: PostRequestDraft): void {
-  sessionStorage.setItem(POST_REQUEST_DRAFT_KEY, JSON.stringify(draft));
+  const payload = {
+    draft,
+    timestamp: Date.now(),
+  };
+  localStorage.setItem(POST_REQUEST_DRAFT_KEY, JSON.stringify(payload));
 }
 
 export function readPostRequestDraft(): PostRequestDraft | null {
-  const raw = sessionStorage.getItem(POST_REQUEST_DRAFT_KEY);
+  const raw = localStorage.getItem(POST_REQUEST_DRAFT_KEY);
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as PostRequestDraft;
+    const parsedObj = JSON.parse(raw);
+    const parsed = parsedObj.draft as PostRequestDraft;
+    const timestamp = parsedObj.timestamp as number;
+    
+    // Auto-expire after 24 hours (24 * 60 * 60 * 1000)
+    if (!timestamp || Date.now() - timestamp > 86400000) {
+      clearPostRequestDraft();
+      return null;
+    }
+
     if (!Array.isArray(parsed.providerIds) || parsed.providerIds.length === 0) return null;
     return {
       providerIds: parsed.providerIds.map(String),
@@ -55,7 +68,7 @@ export function readPostRequestDraft(): PostRequestDraft | null {
 }
 
 export function clearPostRequestDraft(): void {
-  sessionStorage.removeItem(POST_REQUEST_DRAFT_KEY);
+  localStorage.removeItem(POST_REQUEST_DRAFT_KEY);
 }
 
 /** Most common category among selected providers. */

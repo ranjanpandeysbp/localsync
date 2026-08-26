@@ -6,6 +6,7 @@ import { useWebSocket } from "../hooks/useWebSocket";
 import { api } from "../services/api";
 import { useAuth } from "../store/auth";
 import type { Order } from "../types";
+import { cn } from "../ui";
 
 export function OrderPage() {
   const { id } = useParams();
@@ -15,6 +16,14 @@ export function OrderPage() {
   const [score, setScore] = useState("5");
   const [comment, setComment] = useState("");
   const [note, setNote] = useState("");
+  const [rated, setRated] = useState(false);
+
+  const getStepIndex = (status: Order["status"]) => {
+    if (status === "CONFIRMED") return 1;
+    if (status === "IN_PROGRESS") return 2;
+    if (status === "COMPLETED") return rated ? 4 : 3;
+    return 0; // Cancelled, Rejected, etc.
+  };
 
   async function load() {
     if (!id) return;
@@ -60,6 +69,7 @@ export function OrderPage() {
       await api.post(`/orders/${id}/ratings`, { score: Number(score), comment: comment || null });
       setNote("Thanks for the rating — it helps others trust this marketplace");
       setComment("");
+      setRated(true);
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
@@ -107,10 +117,48 @@ export function OrderPage() {
                     <span>{order.status === "REJECTED" ? "Rejected" : order.status}</span>
                   </p>
                 </div>
-                <span className={`pill ${open ? "online" : "offline"}`}>
-                  {order.status === "REJECTED" ? "Rejected" : order.status}
-                </span>
               </div>
+              
+              {open && order.status !== "REJECTED" && (
+                <div className="flex w-full mt-6 mb-2 overflow-x-auto">
+                  <div className="flex w-full justify-between items-center relative min-w-[320px]">
+                    <div className="absolute top-1/2 left-[10%] right-[10%] h-[2px] bg-slate-200 -z-10 -translate-y-1/2">
+                      <div 
+                        className="h-full bg-primary transition-all duration-300"
+                        style={{ width: `${(Math.max(0, getStepIndex(order.status) - 1) / 3) * 100}%` }}
+                      />
+                    </div>
+                    {[
+                      "Quote Accepted",
+                      "Work Started",
+                      "Job Completed",
+                      "Reviewed & Closed"
+                    ].map((label, idx) => {
+                      const stepNum = idx + 1;
+                      const currentStep = getStepIndex(order.status);
+                      const isActive = stepNum <= currentStep;
+                      return (
+                        <div key={label} className="flex flex-col items-center gap-2 flex-1 z-10">
+                          <div 
+                            className={cn(
+                              "w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-colors",
+                              isActive ? "bg-primary text-white" : "bg-slate-200 text-slate-500"
+                            )}
+                          >
+                            {isActive ? "✓" : stepNum}
+                          </div>
+                          <span className={cn(
+                            "text-xs font-semibold text-center leading-tight whitespace-pre-wrap max-w-[80px]",
+                            isActive ? "text-primary" : "text-slate-400"
+                          )}>
+                            {label}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               {order.status === "REJECTED" && (
                 <p className="page-note">
                   This quote was not selected — the consumer accepted another provider’s quote for

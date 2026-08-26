@@ -18,6 +18,7 @@ export function RequestDetailPage() {
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [lockedOrder, setLockedOrder] = useState<Order | null>(null);
+  const [confirmAcceptId, setConfirmAcceptId] = useState<string | null>(null);
   const [fulfillment, setFulfillment] = useState("PROVIDER_DELIVERY");
   const [paymentMode, setPaymentMode] = useState("CASH");
   const [message, setMessage] = useState("");
@@ -144,8 +145,16 @@ export function RequestDetailPage() {
     return () => window.clearInterval(t);
   }, [id]);
 
-  async function accept(quoteId: string) {
+  async function accept(quoteId: string, force = false) {
+    if (!force) {
+      const otherPending = quotes.some((q) => q.id !== quoteId && q.status === "PENDING");
+      if (otherPending) {
+        setConfirmAcceptId(quoteId);
+        return;
+      }
+    }
     try {
+      setConfirmAcceptId(null);
       const { data } = await api.post<Order>("/orders/accept", {
         quote_id: quoteId,
         fulfillment_type: fulfillment,
@@ -224,6 +233,37 @@ export function RequestDetailPage() {
                 <button className="btn" type="button" onClick={() => setMessage("")}>
                   OK
                 </button>
+              </div>
+            </div>,
+            document.body,
+          )}
+
+        {confirmAcceptId &&
+          createPortal(
+            <div
+              className="modal-backdrop request-detail-popup-backdrop"
+              onClick={() => setConfirmAcceptId(null)}
+              role="presentation"
+            >
+              <div
+                className="modal-dialog card request-detail-popup"
+                role="alertdialog"
+                aria-modal="true"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <p className="dash-eyebrow">Confirm Action</p>
+                <h3>Accept Quote</h3>
+                <p className="request-detail-popup-message text-ink">
+                  Accepting this quote will automatically reject your other pending quotes. Are you sure you want to proceed?
+                </p>
+                <div className="flex gap-3 justify-end mt-4">
+                  <button className="btn secondary" type="button" onClick={() => setConfirmAcceptId(null)}>
+                    Cancel
+                  </button>
+                  <button className="btn" type="button" onClick={() => void accept(confirmAcceptId, true)}>
+                    Yes, accept quote
+                  </button>
+                </div>
               </div>
             </div>,
             document.body,

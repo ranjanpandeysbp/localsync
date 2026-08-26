@@ -202,6 +202,7 @@ export function AdminPage() {
   const [configAccordion, setConfigAccordion] = useState<ConfigAccordion>(null);
   const [categoryView, setCategoryView] = useState<"manage" | "create">("manage");
   const [categorySearch, setCategorySearch] = useState("");
+  const [emptyParentsOnly, setEmptyParentsOnly] = useState(false);
   const [overviewRefresh, setOverviewRefresh] = useState(0);
   const [providersPage, setProvidersPage] = useState(1);
   const [consumersPage, setConsumersPage] = useState(1);
@@ -440,8 +441,12 @@ export function AdminPage() {
 
 
   const filteredParents = useMemo(() => {
+    let result = parents;
+    if (emptyParentsOnly) {
+      result = result.filter((p) => !p.children || p.children.length === 0);
+    }
     const q = categorySearch.trim().toLowerCase();
-    if (!q) return parents;
+    if (!q) return result;
 
     const matches = (cat: Category) => {
       const haystack = [cat.name, cat.slug, cat.description || ""]
@@ -450,7 +455,7 @@ export function AdminPage() {
       return haystack.includes(q);
     };
 
-    return parents
+    return result
       .map((p) => {
         const parentMatch = matches(p);
         const matchingChildren = (p.children || []).filter(matches);
@@ -459,7 +464,7 @@ export function AdminPage() {
         return null;
       })
       .filter((p): p is Category => p !== null);
-  }, [parents, categorySearch]);
+  }, [parents, categorySearch, emptyParentsOnly]);
 
   if (invalidSection || ((section === "config" || section === "customer-service") && !isAdmin)) {
     return <Navigate to={`${base}/overview`} replace />;
@@ -1706,6 +1711,16 @@ export function AdminPage() {
                     onChange={(e) => setCategorySearch(e.target.value)}
                     autoComplete="off"
                   />
+                  <div style={{ marginTop: '0.75rem' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 'normal', cursor: 'pointer' }}>
+                      <input 
+                        type="checkbox" 
+                        checked={emptyParentsOnly} 
+                        onChange={(e) => setEmptyParentsOnly(e.target.checked)} 
+                      />
+                      <span>Show only parent categories with no subcategories</span>
+                    </label>
+                  </div>
                 </div>
 
                 <div className="admin-categories-stats">

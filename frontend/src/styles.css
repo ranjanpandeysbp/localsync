@@ -1,27 +1,27 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Manrope", "Segoe UI", sans-serif;
-  --font-display: "Sora", "Manrope", sans-serif;
+  --font-sans: "Inter", "Segoe UI", sans-serif;
+  --font-display: "Plus Jakarta Sans", "Inter", sans-serif;
 
-  --color-primary: #0f4c43;
-  --color-primary-deep: #0a3a34;
-  --color-accent: #eaa11d;
-  --color-accent-deep: #d08e12;
-  --color-bg: #faf9f5;
-  --color-bg-deep: #f0eee6;
-  --color-canvas: #faf9f5;
-  --color-ink: #1d242b;
-  --color-muted: #5c656e;
-  --color-brand: #0f4c43;
-  --color-brand-dark: #0f4c43;
-  --color-card: #fffefb;
-  --color-line: #e3e0d6;
-  --color-danger: #b42318;
-  --color-ok: #0f4c43;
-  --color-on-brand: #faf9f5;
-  --color-on-accent: #1d242b;
-  --color-charcoal: #1d242b;
+  --color-primary: #C85A17;
+  --color-primary-deep: #D9531E;
+  --color-accent: #C85A17;
+  --color-accent-deep: #D9531E;
+  --color-bg: #F9F7F5;
+  --color-bg-deep: #F8FAFC;
+  --color-canvas: #F9F7F5;
+  --color-ink: #0F172A;
+  --color-muted: #1E293B;
+  --color-brand: #C85A17;
+  --color-brand-dark: #D9531E;
+  --color-card: #FFFFFF;
+  --color-line: #E2E8F0;
+  --color-danger: #D97706;
+  --color-ok: #059669;
+  --color-on-brand: #FFFFFF;
+  --color-on-accent: #FFFFFF;
+  --color-charcoal: #0F172A;
 
   --shadow-soft: 0 14px 36px rgba(29, 36, 43, 0.07);
   --shadow-card: 0 10px 30px rgba(29, 36, 43, 0.05);
@@ -96,28 +96,28 @@ html { font-size: 14px; }
 
 :root {
   /* Master palette — 60 / 30 / 10 */
-  --canvas: #faf9f5;
-  --primary: #0f4c43;
-  --primary-deep: #0a3a34;
-  --accent: #eaa11d;
-  --accent-deep: #d08e12;
-  --charcoal: #1d242b;
+  --canvas: #F9F7F5;
+  --primary: #C85A17;
+  --primary-deep: #D9531E;
+  --accent: #C85A17;
+  --accent-deep: #D9531E;
+  --charcoal: #0F172A;
 
-  --bg: #faf9f5;
-  --bg-deep: #f0eee6;
-  --ink: #1d242b;
-  --muted: #5c656e;
-  --brand: #0f4c43;
-  --brand-dark: #0f4c43;
-  --card: #fffefb;
-  --line: #e3e0d6;
-  --danger: #b42318;
-  --ok: #0f4c43;
-  --on-brand: #faf9f5;
-  --on-accent: #1d242b;
-  --shadow: 0 14px 36px rgba(29, 36, 43, 0.07);
-  --font-sans: "Manrope", "Segoe UI", sans-serif;
-  --font-display: "Sora", "Manrope", sans-serif;
+  --bg: #F9F7F5;
+  --bg-deep: #F8FAFC;
+  --ink: #0F172A;
+  --muted: #1E293B;
+  --brand: #C85A17;
+  --brand-dark: #D9531E;
+  --card: #FFFFFF;
+  --line: #E2E8F0;
+  --danger: #D97706;
+  --ok: #059669;
+  --on-brand: #FFFFFF;
+  --on-accent: #FFFFFF;
+  --shadow: 0 14px 36px rgba(15, 23, 42, 0.07);
+  --font-sans: "Inter", "Segoe UI", sans-serif;
+  --font-display: "Plus Jakarta Sans", "Inter", sans-serif;
   font-family: var(--font-sans);
   color: var(--ink);
   background: var(--bg);
@@ -135,6 +135,15 @@ html { font-size: 14px; }
   box-sizing: border-box;
 }
 
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
 html {
   overflow-x: clip;
   max-width: 100%;
@@ -146,9 +155,9 @@ body {
   max-width: 100%;
   overflow-x: clip;
   background:
-    radial-gradient(circle at top left, rgba(15, 76, 67, 0.07), transparent 38%),
-    radial-gradient(circle at 85% 8%, rgba(234, 161, 29, 0.08), transparent 30%),
-    linear-gradient(180deg, #faf9f5 0%, #f3f1ea 100%);
+    radial-gradient(circle at top left, rgba(200, 90, 23, 0.07), transparent 38%),
+    radial-gradient(circle at 85% 8%, rgba(15, 23, 42, 0.08), transparent 30%),
+    linear-gradient(180deg, #F9F7F5 0%, #F8FAFC 100%);
 }
 
 #root {

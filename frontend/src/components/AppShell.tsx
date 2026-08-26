@@ -9,6 +9,8 @@ import { unlockNotificationSound } from "../services/sounds";
 import { isStaffRole, roleHome, staffPathBase, type UserRole } from "../types";
 import { CONSUMER_NAV } from "../nav/consumer";
 import { KoshalCityLogo } from "./KoshalCityLogo";
+import { CitySearchBox } from "./CitySearchBox";
+import { readSavedServiceCity, saveServiceCity, findServiceCityByName, type ServiceCity } from "../utils/serviceCities";
 import {
   btnSecondary,
   cn,
@@ -118,6 +120,8 @@ export function AppShell({
   const navigate = useNavigate();
   const location = useLocation();
   const [open, setOpen] = useState(false);
+  const [city, setCity] = useState<ServiceCity | null>(() => readSavedServiceCity());
+  const [showCityPicker, setShowCityPicker] = useState(false);
   const counts = useAdminNav((s) => s.counts);
   const refreshCounts = useAdminNav((s) => s.refreshCounts);
   const countsLoading = useAdminNav((s) => s.loading);
@@ -418,6 +422,34 @@ export function AppShell({
               <span className={connected ? pillOnline : pillOffline}>
                 {connected ? "Live" : "Reconnecting"}
               </span>
+            )}
+            {(!user || user?.role === "CONSUMER") && (
+              <div className="relative">
+                <button
+                  type="button"
+                  className={cn(pill, "cursor-pointer hover:bg-black/5 hover:text-black")}
+                  onClick={() => setShowCityPicker((s) => !s)}
+                >
+                  📍 {city ? city.name : "Select City"}
+                </button>
+                {showCityPicker && (
+                  <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-xl shadow-[0_10px_40px_rgba(0,0,0,0.12)] border border-slate-200 z-50 p-4">
+                    <CitySearchBox
+                      value={city?.name || ""}
+                      onChange={(c) => {
+                        const newCity = findServiceCityByName(c);
+                        if (newCity) {
+                          saveServiceCity(newCity);
+                          setCity(newCity);
+                        }
+                        setShowCityPicker(false);
+                        window.location.reload();
+                      }}
+                      autoFocus
+                    />
+                  </div>
+                )}
+              </div>
             )}
             <span className={cn(pill, "max-[900px]:hidden")}>{user?.full_name}</span>
             <button

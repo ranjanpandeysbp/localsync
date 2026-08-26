@@ -846,9 +846,13 @@ export function ProviderDashboard() {
               </p>
             )}
           {profile?.verification_status === "REJECTED" && (
-            <p className="provider-overview-banner error">
-              Your verification was rejected. You can update My profile and message admin.
-            </p>
+            <div className="provider-overview-banner error" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <strong>Verification Rejected</strong>
+              <p>
+                Your verification was rejected. Please re-upload valid documents in <strong>My profile</strong>.
+                Once updated, your profile will automatically be queued for review.
+              </p>
+            </div>
           )}
           {profile?.verification_status === "REVOKED" && (
             <p className="provider-overview-banner error">
@@ -905,6 +909,11 @@ export function ProviderDashboard() {
                             <span className="muted">
                               {formatEta(r.expires_at) || "Open"}
                               {r.target_mode === "TARGETED" ? " · Sent to you" : ""}
+                              {hoursUntil(r.expires_at) != null && hoursUntil(r.expires_at)! <= 2 && hoursUntil(r.expires_at)! > 0 && (
+                                <span className="nav-badge" style={{ backgroundColor: '#D97706', color: '#fff', fontSize: '0.75rem', padding: '0.125rem 0.5rem', marginLeft: '0.5rem' }}>
+                                  &lt; 2h
+                                </span>
+                              )}
                             </span>
                           </Link>
                         </li>
@@ -1467,7 +1476,14 @@ export function ProviderDashboard() {
                   conversations.find((c) => c.consumer_id === r.consumer_id)?.unread_count || 0;
                 return (
                 <div key={r.id} className="list-item">
-                  <strong>{r.title}</strong>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <strong>{r.title}</strong>
+                    {hoursUntil(r.expires_at) != null && hoursUntil(r.expires_at)! <= 2 && hoursUntil(r.expires_at)! > 0 && (
+                      <span className="nav-badge" style={{ backgroundColor: '#D97706', color: '#fff', fontSize: '0.75rem', padding: '0.125rem 0.5rem' }}>
+                        &lt; 2 hours remaining
+                      </span>
+                    )}
+                  </div>
                   <p className="muted">{r.description}</p>
                   <p className="muted" style={{ fontSize: "0.85rem" }}>
                     {r.target_mode === "TARGETED" ? "Sent to you" : "Nearby broadcast"}

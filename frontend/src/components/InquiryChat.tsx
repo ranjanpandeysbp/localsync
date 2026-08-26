@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { api } from "../services/api";
 import { useAuth } from "../store/auth";
 import type { AdminSupportConversation, Conversation } from "../types";
+import { cn } from "../ui";
 
 type ChatRow = {
   id: string;
@@ -58,6 +59,7 @@ export function InquiryChatPanel({
   const [body, setBody] = useState("");
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
+  const [conversation, setConversation] = useState<Conversation | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const chatBoxRef = useRef<HTMLDivElement>(null);
   const onMessagesLoadedRef = useRef(onMessagesLoaded);
@@ -70,6 +72,14 @@ export function InquiryChatPanel({
   async function load(opts?: { notify?: boolean }) {
     const { data } = await api.get<ChatRow[]>(path);
     setMessages(data);
+    if (path.startsWith("/conversations/")) {
+      try {
+        const conv = await api.get<Conversation>(`/conversations/${conversationId}`);
+        setConversation(conv.data);
+      } catch (e) {
+        // ignore
+      }
+    }
     if (opts?.notify && !notifiedReadRef.current) {
       notifiedReadRef.current = true;
       onMessagesLoadedRef.current?.();
@@ -175,19 +185,57 @@ export function InquiryChatPanel({
             <p>{emptyHint}</p>
           </div>
         ) : (
-          messages.map((m) => {
-            const mine = m.sender_id === user?.id;
-            return (
-              <div key={m.id} className={`inquiry-sleek-row${mine ? " is-mine" : ""}`}>
-                <div className={`inquiry-sleek-bubble${mine ? " is-mine" : ""}`}>
-                  <p>{m.body}</p>
-                  {m.created_at && (
-                    <time dateTime={m.created_at}>{formatChatTime(m.created_at)}</time>
+          (() => {
+            let lastGroup = "";
+            return messages.map((m) => {
+              const mine = m.sender_id === user?.id;
+              
+              const msgDate = new Date(m.created_at);
+              const groupTime = msgDate.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+              
+              let showGroup = false;
+              if (groupTime !== lastGroup) {
+                showGroup = true;
+                lastGroup = groupTime;
+              }
+
+              let isRead = false;
+              if (mine && conversation && m.created_at) {
+                const myRole = conversation.consumer_id === user?.id ? "CONSUMER" : "PROVIDER";
+                const theirReadAt = myRole === "CONSUMER" ? conversation.provider_last_read_at : conversation.consumer_last_read_at;
+                if (theirReadAt && msgDate <= new Date(theirReadAt)) {
+                  isRead = true;
+                }
+              }
+
+              return (
+                <div key={m.id}>
+                  {showGroup && (
+                    <div className="flex justify-center my-3">
+                      <span className="text-[0.7rem] text-slate-400 font-medium px-2 py-1 bg-slate-50/80 rounded-full border border-slate-100">{groupTime}</span>
+                    </div>
                   )}
+                  <div className={`inquiry-sleek-row${mine ? " is-mine" : ""}`}>
+                    <div className={`inquiry-sleek-bubble${mine ? " is-mine" : ""}`}>
+                      <p>{m.body}</p>
+                      {m.created_at && (
+                        <div className="flex justify-end items-center gap-1 mt-1">
+                          <time dateTime={m.created_at} className="text-[0.65rem] opacity-70">
+                            {formatChatTime(m.created_at)}
+                          </time>
+                          {mine && (
+                            <span className={cn("text-[0.7rem]", isRead ? "text-blue-500" : "text-slate-400 opacity-50")}>
+                              {isRead ? "✓✓" : "✓"}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            );
-          })
+              );
+            });
+          })()
         )}
       </div>
 

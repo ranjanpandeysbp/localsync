@@ -2414,7 +2414,7 @@ function ProviderCard({
       )}
     >
       <div className={accent} aria-hidden="true" />
-      <div className="flex flex-col gap-[0.7rem] pt-4 pr-[1.05rem] pb-4 pl-4 min-w-0">
+      <div className="flex flex-col gap-[0.7rem] pt-4 pr-[1.05rem] pb-4 pl-4 min-w-0 max-sm:p-3 max-sm:gap-2">
         <div className="flex gap-[0.85rem] items-start min-w-0">
           {selectable && (
             <label className="grid place-items-center shrink-0 mt-[0.35rem] cursor-pointer">
@@ -2448,7 +2448,7 @@ function ProviderCard({
               </span>
             </div>
             {p.full_name && <p className={`${muted} mt-[0.15rem] mb-0 text-[0.88rem]`}>{p.full_name}</p>}
-            <div className="flex flex-wrap items-center gap-[0.35rem] mt-[0.45rem]">
+            <div className="flex flex-wrap items-center gap-[0.35rem] mt-[0.45rem] max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:pb-1 max-sm:[mask-image:linear-gradient(to_right,black_90%,transparent_100%)]">
               <VerifiedLocalPartnerBadge verificationStatus={p.verification_status} />
               <span className={kindPill}>{offerKindLabel(kind)}</span>
               {distanceLabel && (
@@ -2456,6 +2456,9 @@ function ProviderCard({
                   {distanceLabel} away
                 </span>
               )}
+              <span className="hidden max-sm:inline-flex items-center max-w-full py-[0.2rem] px-[0.65rem] rounded-full border border-solid border-[rgba(29,36,43,0.08)] bg-[rgba(29,36,43,0.03)] text-ink text-[0.78rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
+                ★ {(p.average_rating ?? 0).toFixed(1)}
+              </span>
               {categoryTags.slice(0, 3).map((cat) => (
                 <span
                   key={cat}
@@ -2474,7 +2477,7 @@ function ProviderCard({
           </p>
         )}
 
-        <div className="flex flex-wrap gap-x-[0.85rem] gap-y-[0.35rem] text-[0.86rem] text-ink">
+        <div className="flex flex-wrap gap-x-[0.85rem] gap-y-[0.35rem] text-[0.86rem] text-ink max-sm:hidden">
           <span>
             ★ {(p.average_rating ?? 0).toFixed(1)}
             <span className={muted}> ({p.rating_count})</span>
@@ -2538,8 +2541,9 @@ function ProviderCard({
                 )}
               </button>
             )}
-            <Link className={btn} to={providerPublicPath(p)}>
-              View profile
+            <Link className={cn(btn, "max-sm:flex-1 max-sm:justify-center max-sm:bg-primary max-sm:text-white")} to={providerPublicPath(p)}>
+              <span className="max-sm:hidden">View profile</span>
+              <span className="hidden max-sm:inline">Get Quote</span>
             </Link>
           </div>
         </div>

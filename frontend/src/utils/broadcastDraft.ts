@@ -12,7 +12,11 @@ export const BROADCAST_DRAFT_KEY = "ls_broadcast_draft";
 
 export function saveBroadcastDraft(draft: BroadcastRequestDraft): void {
   try {
-    sessionStorage.setItem(BROADCAST_DRAFT_KEY, JSON.stringify(draft));
+    const payload = {
+      draft,
+      timestamp: Date.now(),
+    };
+    localStorage.setItem(BROADCAST_DRAFT_KEY, JSON.stringify(payload));
   } catch {
     /* ignore */
   }
@@ -20,9 +24,17 @@ export function saveBroadcastDraft(draft: BroadcastRequestDraft): void {
 
 export function readBroadcastDraft(): BroadcastRequestDraft | null {
   try {
-    const raw = sessionStorage.getItem(BROADCAST_DRAFT_KEY);
+    const raw = localStorage.getItem(BROADCAST_DRAFT_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as BroadcastRequestDraft;
+    const parsedObj = JSON.parse(raw);
+    const parsed = parsedObj.draft as BroadcastRequestDraft;
+    const timestamp = parsedObj.timestamp as number;
+    
+    // Auto-expire after 24 hours (24 * 60 * 60 * 1000)
+    if (!timestamp || Date.now() - timestamp > 86400000) {
+      clearBroadcastDraft();
+      return null;
+    }
     if (
       parsed == null ||
       typeof parsed.categoryId !== "number" ||
@@ -48,7 +60,7 @@ export function readBroadcastDraft(): BroadcastRequestDraft | null {
 
 export function clearBroadcastDraft(): void {
   try {
-    sessionStorage.removeItem(BROADCAST_DRAFT_KEY);
+    localStorage.removeItem(BROADCAST_DRAFT_KEY);
   } catch {
     /* ignore */
   }
